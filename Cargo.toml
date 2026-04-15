@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "corim",
+    "corim-macros",
+    "corim-cli",
+]
+resolver = "2"
+
+[workspace.dependencies]
+corim-macros = { path = "corim-macros", version = "0.1.0" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
