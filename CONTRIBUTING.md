@@ -16,7 +16,7 @@ contact [opencode@microsoft.com](mailto:opencode@microsoft.com) with any additio
 
 ### Reporting Issues
 
-Please search the [existing issues](https://github.com/mingweishih/corim/issues) before filing new
+Please search the [existing issues](https://github.com/Azure/corim/issues) before filing new
 issues to avoid duplicates. For new issues, file your bug or feature request as a new Issue.
 
 When filing a bug report, please include:
@@ -41,7 +41,7 @@ When filing a bug report, please include:
 
 ```bash
 # Clone and build
-git clone https://github.com/mingweishih/corim.git
+git clone https://github.com/Azure/corim.git
 cd corim
 cargo build
 

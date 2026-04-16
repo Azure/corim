@@ -3,11 +3,11 @@
 ## How to file issues and get help
 
 This project uses GitHub Issues to track bugs and feature requests. Please search the
-[existing issues](https://github.com/mingweishih/corim/issues) before filing new issues to
+[existing issues](https://github.com/Azure/corim/issues) before filing new issues to
 avoid duplicates. For new issues, file your bug or feature request as a new Issue.
 
 For help and questions about using this project, please file a
-[GitHub Issue](https://github.com/mingweishih/corim/issues/new).
+[GitHub Issue](https://github.com/Azure/corim/issues/new).
 
 ## Microsoft Support Policy
 

@@ -8,7 +8,7 @@ edition = "2021"
 description = "CLI tool for validating and inspecting CoRIM (Concise Reference Integrity Manifest) documents."
 license = "MIT"
 authors = ["Microsoft"]
-repository = "https://github.com/mingweishih/corim"
+repository = "https://github.com/Azure/corim"
 keywords = ["corim", "comid", "cbor", "attestation", "cli"]
 categories = ["command-line-utilities"]
 
