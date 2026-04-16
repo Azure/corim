@@ -91,4 +91,4 @@ corim = { version = "0.1", default-features = false }
 
 ## License
 
-[MIT](https://github.com/mingweishih/corim/blob/main/LICENSE)
+[MIT](https://github.com/Azure/corim/blob/main/LICENSE)

@@ -36,4 +36,4 @@ ordering and `non-empty` constraint support.
 
 ## License
 
-[MIT](https://github.com/mingweishih/corim/blob/main/LICENSE)
+[MIT](https://github.com/Azure/corim/blob/main/LICENSE)
