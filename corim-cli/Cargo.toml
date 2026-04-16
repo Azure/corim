@@ -1,0 +1,30 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+name = "corim-cli"
+version = "0.1.0"
+edition = "2021"
+description = "CLI tool for validating and inspecting CoRIM (Concise Reference Integrity Manifest) documents."
+license = "MIT"
+authors = ["Microsoft"]
+repository = "https://github.com/mingweishih/corim"
+keywords = ["corim", "comid", "cbor", "attestation", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "corim-cli"
+path = "src/main.rs"
+
+[[bin]]
+name = "corim-gen-sample"
+path = "src/gen_sample.rs"
+
+[[bin]]
+name = "corim-gen-signed-sample"
+path = "src/gen_signed_sample.rs"
+
+[dependencies]
+corim = { path = "../corim" }
+clap = { version = "4", features = ["derive"] }
+hex = "0.4"

@@ -1,0 +1,22 @@
+# Copyright (c) Microsoft Corporation.
+# Licensed under the MIT License.
+
+[package]
+name = "corim-macros"
+version = "0.1.0"
+edition = "2021"
+description = "Internal proc-macro derive crate for the corim crate. Provides CborSerialize/CborDeserialize derives for CBOR integer-keyed map encoding."
+license = "MIT"
+authors = ["Microsoft"]
+repository = "https://github.com/mingweishih/corim"
+readme = "README.md"
+keywords = ["corim", "cbor", "derive", "proc-macro"]
+categories = ["encoding"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+proc-macro2 = "1"
+quote = "1"
+syn = { version = "2", features = ["full", "extra-traits"] }
