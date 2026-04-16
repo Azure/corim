@@ -1,0 +1,119 @@
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+//! Attribute parsing for `#[cbor(...)]`.
+
+use syn::Attribute;
+
+/// Struct-level attributes.
+#[derive(Debug, Default)]
+pub struct StructAttrs {
+    /// If set, wrap the serialized form in this CBOR tag number.
+    pub tag: Option<u64>,
+    /// If true, at least one field must be present (CDDL `non-empty<M>`).
+    pub non_empty: bool,
+}
+
+/// Field-level attributes.
+#[derive(Debug)]
+pub struct FieldAttrs {
+    /// The CBOR integer key for this field.
+    pub key: i64,
+    /// Whether the field is optional (`Option<T>`).
+    pub optional: bool,
+}
+
+impl StructAttrs {
+    pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Self> {
+        let mut result = Self::default();
+
+        for attr in attrs {
+            if !attr.path().is_ident("cbor") {
+                continue;
+            }
+
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("tag") {
+                    let _eq: syn::Token![=] = meta.input.parse()?;
+                    let lit: syn::LitInt = meta.input.parse()?;
+                    result.tag = Some(lit.base10_parse::<u64>()?);
+                    Ok(())
+                } else if meta.path.is_ident("non_empty") {
+                    result.non_empty = true;
+                    Ok(())
+                } else {
+                    Err(meta.error("unknown cbor struct attribute"))
+                }
+            })?;
+        }
+
+        Ok(result)
+    }
+}
+
+impl FieldAttrs {
+    pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
+        let mut key: Option<i64> = None;
+        let mut optional = false;
+
+        for attr in attrs {
+            if !attr.path().is_ident("cbor") {
+                continue;
+            }
+
+            attr.parse_nested_meta(|meta| {
+                if meta.path.is_ident("key") {
+                    let _eq: syn::Token![=] = meta.input.parse()?;
+                    let lit: syn::LitInt = meta.input.parse()?;
+                    key = Some(lit.base10_parse::<i64>()?);
+                    Ok(())
+                } else if meta.path.is_ident("optional") {
+                    optional = true;
+                    Ok(())
+                } else {
+                    Err(meta.error("unknown cbor field attribute"))
+                }
+            })?;
+        }
+
+        match key {
+            Some(k) => Ok(Some(FieldAttrs { key: k, optional })),
+            None if optional => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(optional)] requires #[cbor(key = ...)]",
+            )),
+            None => Ok(None),
+        }
+    }
+}
+
+/// Parsed field info for code generation.
+pub struct CborField {
+    pub ident: syn::Ident,
+    pub attrs: FieldAttrs,
+}
+
+/// Extract all CBOR-annotated fields from a struct.
+pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<CborField>> {
+    let mut fields = Vec::new();
+
+    for field in &data.fields {
+        let ident = field
+            .ident
+            .clone()
+            .ok_or_else(|| syn::Error::new_spanned(field, "tuple structs not supported"))?;
+
+        if let Some(attrs) = FieldAttrs::from_attrs(&field.attrs)? {
+            fields.push(CborField { ident, attrs });
+        }
+    }
+
+    if fields.is_empty() {
+        return Err(syn::Error::new(
+            proc_macro2::Span::call_site(),
+            "at least one field must have #[cbor(key = ...)]",
+        ));
+    }
+
+    Ok(fields)
+}
