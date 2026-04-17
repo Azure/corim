@@ -182,6 +182,7 @@ This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 |----------|-----|---------|
 | CBOR Tags | https://www.iana.org/assignments/cbor-tags | `types/tags.rs` — tags 1, 18, 37, 111, 501, 505, 506, 508, 550–564 |
 | COSE Algorithms | https://www.iana.org/assignments/cose/cose.xhtml#algorithms | `types/signed.rs` → `CoseAlgorithm` enum (RFC 9864 fully-specified identifiers) |
+| COSE Header Parameters | https://www.iana.org/assignments/cose/cose.xhtml#header-parameters | `types/signed.rs` → X.509 fields (RFC 9360) |
 | Named Information Hash Algorithm | https://www.iana.org/assignments/named-information | `types/measurement.rs` — `Digest` algorithm IDs |
 | CoSWID Items | https://www.iana.org/assignments/coswid | `types/tags.rs` — CoSWID key indices 0–57 |
 
@@ -213,6 +214,30 @@ PS256/PS384/PS512 are NOT deprecated by RFC 9864 (§6.1).
 The deprecated variants are retained in `CoseAlgorithm` for decode interop
 with existing signed CoRIM documents. `CoseAlgorithm::is_deprecated()`
 returns `true` for the old polymorphic identifiers.
+
+---
+
+### RFC 9360 — COSE Header Parameters for X.509 Certificates
+
+| | |
+|-|-|
+| **Status** | Standards Track — **Stable** (February 2023) |
+| **URL** | https://www.rfc-editor.org/rfc/rfc9360.html |
+| **Used in** | `types/signed.rs` → `CoseX509`, `CoseCertHash` types |
+
+#### Header parameters implemented
+
+| Label | Key | CDDL Type | Status | Rust Type |
+|-------|-----|-----------|--------|-----------|
+| `kid` | 4 | `bstr` | ✅ | `Option<Vec<u8>>` |
+| `x5bag` | 32 | `COSE_X509` | ✅ | `Option<CoseX509>` |
+| `x5chain` | 33 | `COSE_X509` | ✅ | `Option<CoseX509>` |
+| `x5t` | 34 | `COSE_CertHash` | ✅ | `Option<CoseCertHash>` |
+| `x5u` | 35 | `uri` | ✅ | `Option<String>` |
+
+The `CoseX509` type handles both single cert (`bstr`) and cert chain
+(`[ 2*certs: bstr ]`) per the RFC 9360 CDDL. Certificates are stored
+as raw DER-encoded bytes — no X.509 parsing is performed.
 
 ---
 
