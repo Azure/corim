@@ -88,9 +88,9 @@ fn value_ser_bool_round_trip() {
 
 #[test]
 fn value_ser_floats() {
-    let bytes = cbor::encode(&3.14f64).unwrap();
+    let bytes = cbor::encode(&core::f64::consts::PI).unwrap();
     let v: f64 = cbor::decode(&bytes).unwrap();
-    assert!((v - 3.14).abs() < 0.001);
+    assert!((v - core::f64::consts::PI).abs() < 0.001);
 
     let bytes32 = cbor::encode(&2.5f32).unwrap();
     let v32: f64 = cbor::decode(&bytes32).unwrap();
@@ -167,11 +167,11 @@ fn value_de_negative_i64() {
 
 #[test]
 fn value_de_float_round_trip_via_value() {
-    let v = Value::Float(2.718);
+    let v = Value::Float(core::f64::consts::E);
     let bytes = cbor::encode(&v).unwrap();
     let decoded: Value = cbor::decode(&bytes).unwrap();
     if let Value::Float(f) = decoded {
-        assert!((f - 2.718).abs() < 0.001);
+        assert!((f - core::f64::consts::E).abs() < 0.001);
     } else {
         panic!("expected float");
     }
@@ -1146,7 +1146,7 @@ mod json_coverage_tests {
 
     #[test]
     fn json_number_float_to_value() {
-        let j = serde_json::json!(3.14);
+        let j = serde_json::json!(core::f64::consts::PI);
         let v = json_to_value(&j);
         assert!(matches!(v, Value::Float(_)));
     }

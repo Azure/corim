@@ -1100,10 +1100,18 @@ pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::Decode
     };
 
     let mut it = arr.into_iter();
-    let protected_val = it.next().unwrap();
-    let unprotected_val = it.next().unwrap();
-    let payload_val = it.next().unwrap();
-    let signature_val = it.next().unwrap();
+    let protected_val = it.next().ok_or_else(|| {
+        DecodeError::InvalidStructure("COSE_Sign1 missing protected header".into())
+    })?;
+    let unprotected_val = it.next().ok_or_else(|| {
+        DecodeError::InvalidStructure("COSE_Sign1 missing unprotected header".into())
+    })?;
+    let payload_val = it
+        .next()
+        .ok_or_else(|| DecodeError::InvalidStructure("COSE_Sign1 missing payload".into()))?;
+    let signature_val = it
+        .next()
+        .ok_or_else(|| DecodeError::InvalidStructure("COSE_Sign1 missing signature".into()))?;
 
     // [0] protected: bstr
     let protected_header_bytes = match protected_val {

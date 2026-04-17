@@ -180,11 +180,15 @@ impl<'de> Deserialize<'de> for RawValueChoice {
             },
             Value::Tag(TAG_MASKED_RAW_VALUE, inner) => match *inner {
                 Value::Array(mut a) if a.len() == 2 => {
-                    let mask = match a.pop().unwrap() {
+                    let mask = match a.pop().ok_or_else(|| {
+                        serde::de::Error::custom("tag 563 must wrap [value, mask]")
+                    })? {
                         Value::Bytes(b) => b,
                         _ => return Err(serde::de::Error::custom("mask must be bytes")),
                     };
-                    let value = match a.pop().unwrap() {
+                    let value = match a.pop().ok_or_else(|| {
+                        serde::de::Error::custom("tag 563 must wrap [value, mask]")
+                    })? {
                         Value::Bytes(b) => b,
                         _ => return Err(serde::de::Error::custom("value must be bytes")),
                     };
@@ -225,11 +229,15 @@ impl<'de> Deserialize<'de> for MacAddr {
         let val = Value::deserialize(d)?;
         match val {
             Value::Bytes(b) if b.len() == 6 => {
-                let arr: [u8; 6] = b.try_into().unwrap();
+                let arr: [u8; 6] = b
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("MAC address must be 6 bytes"))?;
                 Ok(MacAddr::Eui48(arr))
             }
             Value::Bytes(b) if b.len() == 8 => {
-                let arr: [u8; 8] = b.try_into().unwrap();
+                let arr: [u8; 8] = b
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("MAC address must be 8 bytes"))?;
                 Ok(MacAddr::Eui64(arr))
             }
             Value::Bytes(_) => Err(serde::de::Error::custom("MAC address must be 6 or 8 bytes")),
@@ -266,11 +274,15 @@ impl<'de> Deserialize<'de> for IpAddr {
         let val = Value::deserialize(d)?;
         match val {
             Value::Bytes(b) if b.len() == 4 => {
-                let arr: [u8; 4] = b.try_into().unwrap();
+                let arr: [u8; 4] = b
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("IP address must be 4 bytes"))?;
                 Ok(IpAddr::V4(arr))
             }
             Value::Bytes(b) if b.len() == 16 => {
-                let arr: [u8; 16] = b.try_into().unwrap();
+                let arr: [u8; 16] = b
+                    .try_into()
+                    .map_err(|_| serde::de::Error::custom("IP address must be 16 bytes"))?;
                 Ok(IpAddr::V6(arr))
             }
             Value::Bytes(_) => Err(serde::de::Error::custom("IP address must be 4 or 16 bytes")),
@@ -444,7 +456,9 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                                 match item {
                                     Value::Array(pair) if pair.len() == 2 => {
                                         let mut it = pair.into_iter();
-                                        let alg = match it.next().unwrap() {
+                                        let alg = match it.next().ok_or_else(|| {
+                                            serde::de::Error::custom("digest must be [alg, val]")
+                                        })? {
                                             Value::Integer(n) => {
                                                 i64::try_from(n).map_err(|_| {
                                                     serde::de::Error::custom(
@@ -458,7 +472,9 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                                                 ))
                                             }
                                         };
-                                        let val = match it.next().unwrap() {
+                                        let val = match it.next().ok_or_else(|| {
+                                            serde::de::Error::custom("digest must be [alg, val]")
+                                        })? {
                                             Value::Bytes(b) => b,
                                             _ => {
                                                 return Err(serde::de::Error::custom(
