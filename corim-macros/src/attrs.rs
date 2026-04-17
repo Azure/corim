@@ -115,5 +115,32 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<CborField>> {
         ));
     }
 
+    // Validate keys are strictly ascending (required for deterministic CBOR
+    // per RFC 8949 §4.2.1) and unique.
+    let mut prev_key: Option<i64> = None;
+    for f in &fields {
+        if let Some(prev) = prev_key {
+            if f.attrs.key == prev {
+                return Err(syn::Error::new_spanned(
+                    &f.ident,
+                    format!(
+                        "duplicate #[cbor(key = {})] — each field must have a unique key",
+                        f.attrs.key
+                    ),
+                ));
+            }
+            if f.attrs.key < prev {
+                return Err(syn::Error::new_spanned(
+                    &f.ident,
+                    format!(
+                        "#[cbor(key = {})] follows key {} — keys must be in strictly ascending order for deterministic CBOR (RFC 8949 §4.2.1)",
+                        f.attrs.key, prev
+                    ),
+                ));
+            }
+        }
+        prev_key = Some(f.attrs.key);
+    }
+
     Ok(fields)
 }
