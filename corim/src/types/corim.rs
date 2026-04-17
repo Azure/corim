@@ -300,20 +300,19 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Array(ref arr) if !arr.is_empty() => {
+            Value::Array(arr) if !arr.is_empty() => {
                 // Check if it's a single digest [alg, val] or array of digests [[alg,val],...]
                 match &arr[0] {
                     Value::Array(_) => {
                         // Array of digests: [[alg, val], ...]
-                        let Value::Array(outer) = val else {
-                            unreachable!()
-                        };
                         let mut ds = Vec::new();
-                        for item in outer {
+                        for item in arr {
                             match item {
                                 Value::Array(pair) if pair.len() == 2 => {
                                     let mut it = pair.into_iter();
-                                    let alg = match it.next().unwrap() {
+                                    let alg = match it.next().ok_or_else(|| {
+                                        serde::de::Error::custom("digest must be [alg, val]")
+                                    })? {
                                         Value::Integer(n) => i64::try_from(n).map_err(|_| {
                                             serde::de::Error::custom("digest alg out of i64 range")
                                         })?,
@@ -325,7 +324,9 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                                             ))
                                         }
                                     };
-                                    let v = match it.next().unwrap() {
+                                    let v = match it.next().ok_or_else(|| {
+                                        serde::de::Error::custom("digest must be [alg, val]")
+                                    })? {
                                         Value::Bytes(b) => b,
                                         _ => {
                                             return Err(serde::de::Error::custom(
@@ -346,14 +347,14 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                     }
                     _ => {
                         // Single digest [alg, val]
-                        let Value::Array(pair) = val else {
-                            unreachable!()
-                        };
-                        if pair.len() != 2 {
+                        if arr.len() != 2 {
                             return Err(serde::de::Error::custom("digest must be [alg, val]"));
                         }
-                        let mut it = pair.into_iter();
-                        let alg = match it.next().unwrap() {
+                        let mut it = arr.into_iter();
+                        let alg = match it
+                            .next()
+                            .ok_or_else(|| serde::de::Error::custom("digest must be [alg, val]"))?
+                        {
                             Value::Integer(n) => i64::try_from(n).map_err(|_| {
                                 serde::de::Error::custom("digest alg out of i64 range")
                             })?,
@@ -365,7 +366,10 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                                 ))
                             }
                         };
-                        let v = match it.next().unwrap() {
+                        let v = match it
+                            .next()
+                            .ok_or_else(|| serde::de::Error::custom("digest must be [alg, val]"))?
+                        {
                             Value::Bytes(b) => b,
                             _ => return Err(serde::de::Error::custom("digest val must be bytes")),
                         };

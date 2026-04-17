@@ -623,7 +623,10 @@ fn digest_from_value_array<E: serde::de::Error>(arr: Vec<Value>) -> Result<Diges
         return Err(E::custom("digest must be [alg, val]"));
     }
     let mut it = arr.into_iter();
-    let alg = match it.next().unwrap() {
+    let alg = match it
+        .next()
+        .ok_or_else(|| E::custom("digest must be [alg, val]"))?
+    {
         Value::Integer(n) => {
             i64::try_from(n).map_err(|_| E::custom("digest alg out of i64 range"))?
         }
@@ -634,7 +637,10 @@ fn digest_from_value_array<E: serde::de::Error>(arr: Vec<Value>) -> Result<Diges
         }
         _ => return Err(E::custom("digest alg must be int or text")),
     };
-    let val = match it.next().unwrap() {
+    let val = match it
+        .next()
+        .ok_or_else(|| E::custom("digest must be [alg, val]"))?
+    {
         Value::Bytes(b) => b,
         _ => return Err(E::custom("digest val must be bytes")),
     };

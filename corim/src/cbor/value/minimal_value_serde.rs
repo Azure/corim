@@ -158,8 +158,12 @@ impl<'de> de::Visitor<'de> for ValueVisitor {
         }
 
         if is_tag && arr.len() == 2 {
-            let inner = arr.pop().unwrap();
-            let tag_val = arr.pop().unwrap();
+            let inner = arr
+                .pop()
+                .ok_or_else(|| de::Error::custom("tag sequence must have 2 elements"))?;
+            let tag_val = arr
+                .pop()
+                .ok_or_else(|| de::Error::custom("tag sequence must have 2 elements"))?;
             if let Value::Integer(t) = tag_val {
                 if let Ok(tag) = u64::try_from(t) {
                     return Ok(Value::Tag(tag, Box::new(inner)));

@@ -227,8 +227,12 @@ impl ser::SerializeTupleStruct for SeqSerializer {
     fn end(self) -> Result<Value, Error> {
         if self.tag_mode && self.items.len() == 2 {
             let mut items = self.items;
-            let inner = items.pop().unwrap();
-            let tag_val = items.pop().unwrap();
+            let inner = items
+                .pop()
+                .ok_or_else(|| Error("tag tuple must have 2 elements".into()))?;
+            let tag_val = items
+                .pop()
+                .ok_or_else(|| Error("tag tuple must have 2 elements".into()))?;
             if let Value::Integer(n) = tag_val {
                 if let Ok(tag) = u64::try_from(n) {
                     return Ok(Value::Tag(tag, Box::new(inner)));
