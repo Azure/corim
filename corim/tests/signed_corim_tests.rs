@@ -131,6 +131,11 @@ fn protected_header_with_corim_meta_round_trip() {
         corim_meta: Some(meta.clone()),
         cwt_claims: None,
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -162,6 +167,11 @@ fn protected_header_with_cwt_claims_round_trip() {
         corim_meta: None,
         cwt_claims: Some(claims),
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -186,6 +196,11 @@ fn protected_header_with_both_meta_and_cwt() {
         corim_meta: Some(make_corim_meta()),
         cwt_claims: Some(make_cwt_claims()),
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
 
     assert!(header.valid().is_ok());
@@ -237,6 +252,11 @@ fn protected_header_validate_inline_mode() {
         corim_meta: Some(make_corim_meta()),
         cwt_claims: None,
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
     assert!(header.valid().is_ok());
 }
@@ -252,6 +272,11 @@ fn protected_header_validate_inline_missing_content_type() {
         corim_meta: Some(make_corim_meta()),
         cwt_claims: None,
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
     assert!(header.valid().is_err());
 }
@@ -267,6 +292,11 @@ fn protected_header_validate_hash_envelope_mode() {
         corim_meta: Some(make_corim_meta()),
         cwt_claims: None,
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
     assert!(header.valid().is_ok());
     assert!(header.is_hash_envelope());
@@ -285,6 +315,11 @@ fn protected_header_validate_meta_cwt_mismatch() {
         corim_meta: Some(meta),
         cwt_claims: Some(make_cwt_claims()),
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
     let result = header.valid();
     assert!(result.is_err());
@@ -570,6 +605,11 @@ fn encode_decode_round_trip() {
         corim_meta: Some(make_corim_meta()),
         cwt_claims: None,
         extra: std::collections::BTreeMap::new(),
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
     let protected_header_bytes = cbor::encode(&protected).unwrap();
 
@@ -745,6 +785,11 @@ fn protected_header_extra_fields_preserved() {
             m.insert(99, Value::Text("custom-value".into()));
             m
         },
+        kid: None,
+        x5bag: None,
+        x5chain: None,
+        x5t: None,
+        x5u: None,
     };
 
     let bytes = cbor::encode(&header).unwrap();

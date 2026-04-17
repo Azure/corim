@@ -37,7 +37,8 @@ pub use self::measurement::{
     MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
 pub use self::signed::{
-    CoseAlgorithm, CoseSign1Corim, CwtClaims, ProtectedCorimHeaderMap, SignedCorimBuilder,
+    CoseAlgorithm, CoseCertHash, CoseSign1Corim, CoseX509, CwtClaims, ProtectedCorimHeaderMap,
+    SignedCorimBuilder,
 };
 pub use self::triples::{
     AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,

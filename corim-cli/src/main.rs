@@ -210,6 +210,9 @@ struct SignedInfo {
     has_cwt_claims: bool,
     has_corim_meta: bool,
     is_detached: bool,
+    x5chain_count: usize,
+    has_x5t: bool,
+    has_kid: bool,
 }
 
 /// Result when signed CoRIM decode partially fails.
@@ -257,6 +260,14 @@ fn try_decode_signed(
         has_cwt_claims: signed.protected.cwt_claims.is_some(),
         has_corim_meta: signed.protected.corim_meta.is_some(),
         is_detached: signed.is_detached(),
+        x5chain_count: signed
+            .protected
+            .x5chain
+            .as_ref()
+            .map(|x| x.certs().len())
+            .unwrap_or(0),
+        has_x5t: signed.protected.x5t.is_some(),
+        has_kid: signed.protected.kid.is_some(),
     };
 
     let payload = match &signed.payload {
@@ -308,6 +319,15 @@ fn print_signed_header_only(info: &SignedInfo) {
     );
     if info.signature_len > 0 {
         println!("  Signature: {} bytes", info.signature_len);
+    }
+    if info.x5chain_count > 0 {
+        println!("  X.509 chain: {} certificate(s)", info.x5chain_count);
+    }
+    if info.has_x5t {
+        println!("  X.509 thumbprint: present");
+    }
+    if info.has_kid {
+        println!("  Key ID (kid): present");
     }
     if info.is_detached {
         println!("  Payload: detached (nil) — inner CoRIM not embedded");
@@ -389,6 +409,15 @@ fn print_text_output(
             },
         );
         println!("    Signature: {} bytes", info.signature_len);
+        if info.x5chain_count > 0 {
+            println!("    X.509 chain: {} certificate(s)", info.x5chain_count);
+        }
+        if info.has_x5t {
+            println!("    X.509 thumbprint: present");
+        }
+        if info.has_kid {
+            println!("    Key ID (kid): present");
+        }
         println!();
     }
 

@@ -188,6 +188,70 @@ pub const COSE_HEADER_PAYLOAD_PREIMAGE_CT: i64 = 259;
 pub const COSE_HEADER_PAYLOAD_LOCATION: i64 = 260;
 
 // ===================================================================
+// X.509 COSE Header Parameters (RFC 9360)
+// ===================================================================
+
+/// COSE header: `kid` (key 4) — Key identifier.
+pub const COSE_HEADER_KID: i64 = 4;
+/// COSE header: `x5bag` (key 32) — Unordered bag of X.509 certificates.
+pub const COSE_HEADER_X5BAG: i64 = 32;
+/// COSE header: `x5chain` (key 33) — Ordered chain of X.509 certificates.
+pub const COSE_HEADER_X5CHAIN: i64 = 33;
+/// COSE header: `x5t` (key 34) — Hash of an X.509 certificate.
+pub const COSE_HEADER_X5T: i64 = 34;
+/// COSE header: `x5u` (key 35) — URI pointing to an X.509 certificate.
+pub const COSE_HEADER_X5U: i64 = 35;
+
+/// X.509 certificate chain or single certificate per RFC 9360.
+///
+/// ```text
+/// COSE_X509 = bstr / [ 2*certs: bstr ]
+/// ```
+///
+/// Each `bstr` contains DER-encoded X.509 certificate bytes.
+/// For `x5chain`, certificates are ordered: end-entity first, then issuer chain.
+/// For `x5bag`, the order is unspecified.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum CoseX509 {
+    /// A single DER-encoded X.509 certificate.
+    Single(Vec<u8>),
+    /// Multiple DER-encoded X.509 certificates.
+    Chain(Vec<Vec<u8>>),
+}
+
+impl CoseX509 {
+    /// Return all certificates as a slice of byte vectors.
+    pub fn certs(&self) -> Vec<&[u8]> {
+        match self {
+            Self::Single(c) => alloc::vec![c.as_slice()],
+            Self::Chain(cs) => cs.iter().map(|c| c.as_slice()).collect(),
+        }
+    }
+
+    /// Return the end-entity (leaf) certificate bytes, if present.
+    pub fn end_entity(&self) -> &[u8] {
+        match self {
+            Self::Single(c) => c,
+            Self::Chain(cs) => &cs[0],
+        }
+    }
+}
+
+/// X.509 certificate thumbprint per RFC 9360.
+///
+/// ```text
+/// COSE_CertHash = [ hashAlg: (int / tstr), hashValue: bstr ]
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CoseCertHash {
+    /// Hash algorithm identifier (typically an integer from the COSE Algorithms registry).
+    pub hash_alg: i64,
+    /// The hash value computed over the DER-encoded certificate.
+    pub hash_value: Vec<u8>,
+}
+
+// ===================================================================
 // CWT Claim Keys (RFC 8392 §4)
 // ===================================================================
 
@@ -417,6 +481,18 @@ pub struct ProtectedCorimHeaderMap {
     /// `CWT-Claims` (key 15): CWT claims identifying the signer.
     pub cwt_claims: Option<CwtClaims>,
 
+    // X.509 certificate fields (RFC 9360)
+    /// `kid` (key 4): Key identifier (opaque bytes).
+    pub kid: Option<Vec<u8>>,
+    /// `x5bag` (key 32): Unordered bag of X.509 certificates.
+    pub x5bag: Option<CoseX509>,
+    /// `x5chain` (key 33): Ordered chain of X.509 certificates.
+    pub x5chain: Option<CoseX509>,
+    /// `x5t` (key 34): Hash of the end-entity X.509 certificate.
+    pub x5t: Option<CoseCertHash>,
+    /// `x5u` (key 35): URI pointing to an X.509 certificate.
+    pub x5u: Option<String>,
+
     /// Any additional COSE header labels not explicitly modeled above.
     pub extra: BTreeMap<i64, Value>,
 }
@@ -426,6 +502,53 @@ impl ProtectedCorimHeaderMap {
     pub fn is_hash_envelope(&self) -> bool {
         self.payload_hash_alg.is_some()
     }
+}
+
+/// Serialize a `CoseX509` to a `Value` (bstr or array of bstr).
+fn serialize_cose_x509(x: &CoseX509) -> Value {
+    match x {
+        CoseX509::Single(c) => Value::Bytes(c.clone()),
+        CoseX509::Chain(cs) => Value::Array(cs.iter().map(|c| Value::Bytes(c.clone())).collect()),
+    }
+}
+
+/// Deserialize a `Value` into a `CoseX509` (bstr or array of bstr).
+fn deserialize_cose_x509<E: serde::de::Error>(v: Value) -> Result<CoseX509, E> {
+    match v {
+        Value::Bytes(b) => Ok(CoseX509::Single(b)),
+        Value::Array(arr) => {
+            let mut certs = Vec::with_capacity(arr.len());
+            for item in arr {
+                match item {
+                    Value::Bytes(b) => certs.push(b),
+                    _ => return Err(E::custom("x5chain/x5bag cert must be bstr")),
+                }
+            }
+            Ok(CoseX509::Chain(certs))
+        }
+        _ => Err(E::custom("COSE_X509 must be bstr or array of bstr")),
+    }
+}
+
+/// Deserialize a `Value` into a `CoseCertHash` ([hashAlg, hashValue]).
+fn deserialize_cose_cert_hash<E: serde::de::Error>(v: Value) -> Result<CoseCertHash, E> {
+    let arr = match v {
+        Value::Array(a) if a.len() == 2 => a,
+        _ => return Err(E::custom("COSE_CertHash must be [hashAlg, hashValue]")),
+    };
+    let mut it = arr.into_iter();
+    let hash_alg = match it.next().unwrap() {
+        Value::Integer(n) => i64::try_from(n).map_err(|_| E::custom("x5t hashAlg out of range"))?,
+        _ => return Err(E::custom("x5t hashAlg must be int")),
+    };
+    let hash_value = match it.next().unwrap() {
+        Value::Bytes(b) => b,
+        _ => return Err(E::custom("x5t hashValue must be bstr")),
+    };
+    Ok(CoseCertHash {
+        hash_alg,
+        hash_value,
+    })
 }
 
 impl Serialize for ProtectedCorimHeaderMap {
@@ -451,6 +574,21 @@ impl Serialize for ProtectedCorimHeaderMap {
         if self.cwt_claims.is_some() {
             count += 1;
         }
+        if self.kid.is_some() {
+            count += 1;
+        }
+        if self.x5bag.is_some() {
+            count += 1;
+        }
+        if self.x5chain.is_some() {
+            count += 1;
+        }
+        if self.x5t.is_some() {
+            count += 1;
+        }
+        if self.x5u.is_some() {
+            count += 1;
+        }
         count += self.extra.len();
 
         let mut map = s.serialize_map(Some(count))?;
@@ -468,6 +606,27 @@ impl Serialize for ProtectedCorimHeaderMap {
         }
         if let Some(ref claims) = self.cwt_claims {
             map.serialize_entry(&COSE_HEADER_CWT_CLAIMS, claims)?;
+        }
+        // X.509 fields (RFC 9360)
+        if let Some(ref kid) = self.kid {
+            let kid_val = Value::Bytes(kid.clone());
+            map.serialize_entry(&COSE_HEADER_KID, &kid_val)?;
+        }
+        if let Some(ref x5bag) = self.x5bag {
+            map.serialize_entry(&COSE_HEADER_X5BAG, &serialize_cose_x509(x5bag))?;
+        }
+        if let Some(ref x5chain) = self.x5chain {
+            map.serialize_entry(&COSE_HEADER_X5CHAIN, &serialize_cose_x509(x5chain))?;
+        }
+        if let Some(ref x5t) = self.x5t {
+            let arr = Value::Array(alloc::vec![
+                Value::Integer(x5t.hash_alg as i128),
+                Value::Bytes(x5t.hash_value.clone()),
+            ]);
+            map.serialize_entry(&COSE_HEADER_X5T, &arr)?;
+        }
+        if let Some(ref x5u) = self.x5u {
+            map.serialize_entry(&COSE_HEADER_X5U, x5u)?;
         }
         if let Some(alg) = self.payload_hash_alg {
             map.serialize_entry(&COSE_HEADER_PAYLOAD_HASH_ALG, &alg)?;
@@ -504,6 +663,11 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
         let mut payload_location: Option<String> = None;
         let mut corim_meta: Option<CorimMetaMap> = None;
         let mut cwt_claims: Option<CwtClaims> = None;
+        let mut kid: Option<Vec<u8>> = None;
+        let mut x5bag: Option<CoseX509> = None;
+        let mut x5chain: Option<CoseX509> = None;
+        let mut x5t: Option<CoseCertHash> = None;
+        let mut x5u: Option<String> = None;
         let mut extra = BTreeMap::new();
 
         // CWT claims may appear flat in the header (keys 1/2/4/5) rather than
@@ -564,10 +728,13 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     });
                 }
                 CWT_CLAIM_EXP => {
-                    // Key 4: CWT `exp` (int/float) or COSE header (other).
-                    match &v {
+                    // Key 4: CWT `exp` (int/float) or COSE `kid` (bstr).
+                    match v {
                         Value::Integer(_) | Value::Float(_) => {
                             cwt_exp = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
+                        }
+                        Value::Bytes(b) => {
+                            kid = Some(b);
                         }
                         _ => {
                             extra.insert(key, v);
@@ -636,6 +803,22 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                         _ => return Err(serde::de::Error::custom("payload_location must be tstr")),
                     });
                 }
+                // X.509 certificate header parameters (RFC 9360)
+                COSE_HEADER_X5BAG => {
+                    x5bag = Some(deserialize_cose_x509(v)?);
+                }
+                COSE_HEADER_X5CHAIN => {
+                    x5chain = Some(deserialize_cose_x509(v)?);
+                }
+                COSE_HEADER_X5T => {
+                    x5t = Some(deserialize_cose_cert_hash(v)?);
+                }
+                COSE_HEADER_X5U => {
+                    x5u = Some(match v {
+                        Value::Text(t) => t,
+                        _ => return Err(serde::de::Error::custom("x5u must be tstr")),
+                    });
+                }
                 _ => {
                     extra.insert(key, v);
                 }
@@ -675,6 +858,11 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
             payload_location,
             corim_meta,
             cwt_claims,
+            kid,
+            x5bag,
+            x5chain,
+            x5t,
+            x5u,
             extra,
         })
     }
@@ -1162,6 +1350,11 @@ impl SignedCorimBuilder {
             payload_location: None,
             corim_meta: self.corim_meta.clone(),
             cwt_claims: self.cwt_claims.clone(),
+            kid: None,
+            x5bag: None,
+            x5chain: None,
+            x5t: None,
+            x5u: None,
             extra: self.extra_protected.clone(),
         })
     }
