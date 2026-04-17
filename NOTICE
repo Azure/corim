@@ -1,0 +1,72 @@
+NOTICES AND INFORMATION
+
+This project incorporates material from the third-party open source
+software components listed below. The original copyright notices and
+license terms are listed below and are provided for informational
+purposes only. Microsoft licenses this software to you under the terms
+of the MIT License. Microsoft reserves all other rights not expressly
+granted under the MIT License, whether by implication, estoppel or
+otherwise.
+
+All third-party dependencies are used under their respective licenses
+and are automatically managed via Cargo (the Rust package manager).
+No third-party source code is vendored in this repository.
+
+========================================================================
+
+serde — https://github.com/serde-rs/serde
+License: MIT OR Apache-2.0
+Copyright: David Tolnay and contributors
+
+serde_json — https://github.com/serde-rs/json
+License: MIT OR Apache-2.0
+Copyright: David Tolnay and contributors
+
+thiserror — https://github.com/dtolnay/thiserror
+License: MIT OR Apache-2.0
+Copyright: David Tolnay
+
+proc-macro2 — https://github.com/dtolnay/proc-macro2
+License: MIT OR Apache-2.0
+Copyright: David Tolnay and Alex Crichton
+
+quote — https://github.com/dtolnay/quote
+License: MIT OR Apache-2.0
+Copyright: David Tolnay
+
+syn — https://github.com/dtolnay/syn
+License: MIT OR Apache-2.0
+Copyright: David Tolnay
+
+unicode-ident — https://github.com/dtolnay/unicode-ident
+License: (MIT OR Apache-2.0) AND Unicode-3.0
+Copyright: David Tolnay
+
+itoa — https://github.com/dtolnay/itoa
+License: MIT OR Apache-2.0
+Copyright: David Tolnay
+
+memchr — https://github.com/BurntSushi/memchr
+License: Unlicense OR MIT
+Copyright: Andrew Gallant
+
+zmij — https://github.com/serde-rs/json (internal dep of serde_json)
+License: MIT
+Copyright: David Tolnay
+
+clap — https://github.com/clap-rs/clap (corim-cli only)
+License: MIT OR Apache-2.0
+Copyright: Kevin K. and clap contributors
+
+hex — https://github.com/KokaKiwi/rust-hex (corim-cli only)
+License: MIT OR Apache-2.0
+Copyright: KokaKiwi and contributors
+
+========================================================================
+
+Full license texts for the MIT License and the Apache License,
+Version 2.0, can be found at:
+  - MIT: https://opensource.org/licenses/MIT
+  - Apache-2.0: https://www.apache.org/licenses/LICENSE-2.0
+  - Unlicense: https://unlicense.org/
+  - Unicode-3.0: https://www.unicode.org/license.txt
