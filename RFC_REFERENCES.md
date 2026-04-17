@@ -6,7 +6,7 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 - The implementation adds support for a new specification
 - An RFC errata affects our implementation
 
-**Last reviewed**: April 13, 2026
+**Last reviewed**: April 17, 2026
 
 ---
 
@@ -181,8 +181,38 @@ This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 | Registry | URL | Used in |
 |----------|-----|---------|
 | CBOR Tags | https://www.iana.org/assignments/cbor-tags | `types/tags.rs` — tags 1, 18, 37, 111, 501, 505, 506, 508, 550–564 |
+| COSE Algorithms | https://www.iana.org/assignments/cose/cose.xhtml#algorithms | `types/signed.rs` → `CoseAlgorithm` enum (RFC 9864 fully-specified identifiers) |
 | Named Information Hash Algorithm | https://www.iana.org/assignments/named-information | `types/measurement.rs` — `Digest` algorithm IDs |
 | CoSWID Items | https://www.iana.org/assignments/coswid | `types/tags.rs` — CoSWID key indices 0–57 |
+
+---
+
+### RFC 9864 — Fully-Specified Algorithms for JOSE and COSE
+
+| | |
+|-|-|
+| **Status** | Standards Track — **Stable** (October 2025) |
+| **URL** | https://www.rfc-editor.org/rfc/rfc9864.html |
+| **Updates** | RFC 7518, RFC 8037, RFC 9053 |
+| **Used in** | `types/signed.rs` → `CoseAlgorithm` enum |
+
+#### Impact on this crate
+
+RFC 9864 deprecates polymorphic COSE algorithm identifiers and defines
+fully-specified replacements:
+
+| Deprecated | Value | Replacement | Value | Status in our enum |
+|-----------|-------|-------------|-------|--------------------|
+| ES256 | -7 | ESP256 | -9 | Both modeled; ES256 marked deprecated |
+| ES384 | -35 | ESP384 | -51 | Both modeled; ES384 marked deprecated |
+| ES512 | -36 | ESP512 | -52 | Both modeled; ES512 marked deprecated |
+| EdDSA | -8 | Ed25519 / Ed448 | -19 / -53 | Both modeled; EdDSA marked deprecated |
+
+PS256/PS384/PS512 are NOT deprecated by RFC 9864 (§6.1).
+
+The deprecated variants are retained in `CoseAlgorithm` for decode interop
+with existing signed CoRIM documents. `CoseAlgorithm::is_deprecated()`
+returns `true` for the old polymorphic identifiers.
 
 ---
 

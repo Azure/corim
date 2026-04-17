@@ -123,7 +123,7 @@ fn cwt_claims_missing_iss_fails() {
 fn protected_header_with_corim_meta_round_trip() {
     let meta = make_corim_meta();
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -136,7 +136,7 @@ fn protected_header_with_corim_meta_round_trip() {
     let bytes = cbor::encode(&header).unwrap();
     let decoded: ProtectedCorimHeaderMap = cbor::decode(&bytes).unwrap();
 
-    assert_eq!(decoded.alg, -7);
+    assert_eq!(decoded.alg, CoseAlgorithm::Es256);
     assert_eq!(
         decoded.content_type.as_deref(),
         Some("application/rim+cbor")
@@ -154,7 +154,7 @@ fn protected_header_with_corim_meta_round_trip() {
 fn protected_header_with_cwt_claims_round_trip() {
     let claims = make_cwt_claims();
     let header = ProtectedCorimHeaderMap {
-        alg: -35,
+        alg: CoseAlgorithm::Es384,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -167,7 +167,7 @@ fn protected_header_with_cwt_claims_round_trip() {
     let bytes = cbor::encode(&header).unwrap();
     let decoded: ProtectedCorimHeaderMap = cbor::decode(&bytes).unwrap();
 
-    assert_eq!(decoded.alg, -35);
+    assert_eq!(decoded.alg, CoseAlgorithm::Es384);
     assert!(decoded.cwt_claims.is_some());
     let dc = decoded.cwt_claims.unwrap();
     assert_eq!(dc.iss, "ACME Corp");
@@ -178,7 +178,7 @@ fn protected_header_with_cwt_claims_round_trip() {
 #[test]
 fn protected_header_with_both_meta_and_cwt() {
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -229,7 +229,7 @@ fn protected_header_missing_alg_fails_decode() {
 #[test]
 fn protected_header_validate_inline_mode() {
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -244,7 +244,7 @@ fn protected_header_validate_inline_mode() {
 #[test]
 fn protected_header_validate_inline_missing_content_type() {
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: None,
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -259,7 +259,7 @@ fn protected_header_validate_inline_missing_content_type() {
 #[test]
 fn protected_header_validate_hash_envelope_mode() {
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: None,
         payload_hash_alg: Some(1), // SHA-256
         payload_preimage_content_type: Some("application/rim+cbor".into()),
@@ -277,7 +277,7 @@ fn protected_header_validate_meta_cwt_mismatch() {
     let mut meta = make_corim_meta();
     meta.signer.signer_name = "Different Corp".into();
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -335,7 +335,7 @@ fn signed_corim_builder_with_corim_meta() {
 
     // Decode it back
     let signed = decode_signed_corim(&signed_bytes).unwrap();
-    assert_eq!(signed.protected.alg, -35);
+    assert_eq!(signed.protected.alg, CoseAlgorithm::Es384);
     assert!(signed.protected.corim_meta.is_some());
     assert_eq!(
         signed
@@ -424,7 +424,7 @@ fn decode_signed_corim_valid() {
     let signed_bytes = builder.build_with_signature(vec![0x42; 64]).unwrap();
 
     let signed = decode_signed_corim(&signed_bytes).unwrap();
-    assert_eq!(signed.protected.alg, -7);
+    assert_eq!(signed.protected.alg, CoseAlgorithm::Es256);
     assert!(signed.payload.is_some());
     assert_eq!(signed.signature, vec![0x42; 64]);
 }
@@ -562,7 +562,7 @@ fn encode_decode_round_trip() {
     let corim_bytes = build_sample_corim_bytes();
 
     let protected = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -584,7 +584,7 @@ fn encode_decode_round_trip() {
     let encoded = encode_signed_corim(&signed).unwrap();
     let decoded = decode_signed_corim(&encoded).unwrap();
 
-    assert_eq!(decoded.protected.alg, -7);
+    assert_eq!(decoded.protected.alg, CoseAlgorithm::Es256);
     assert_eq!(decoded.protected_header_bytes, protected_header_bytes);
     assert_eq!(decoded.signature, vec![0xEE; 64]);
     assert!(decoded.payload.is_some());
@@ -686,7 +686,7 @@ fn full_signed_corim_workflow() {
 
     // Step 6: Decode the signed CoRIM
     let signed = decode_signed_corim(&signed_bytes).unwrap();
-    assert_eq!(signed.protected.alg, -7);
+    assert_eq!(signed.protected.alg, CoseAlgorithm::Es256);
     assert!(signed.protected.cwt_claims.is_some());
     assert_eq!(signed.signature, fake_signature);
 
@@ -718,7 +718,7 @@ fn full_workflow_with_corim_meta() {
     let signed_bytes = builder.build_with_signature(vec![0x99; 48]).unwrap();
 
     let signed = decode_signed_corim(&signed_bytes).unwrap();
-    assert_eq!(signed.protected.alg, -35);
+    assert_eq!(signed.protected.alg, CoseAlgorithm::Es384);
     let meta = signed.protected.corim_meta.as_ref().unwrap();
     assert_eq!(meta.signer.signer_name, "Meta Signer");
 
@@ -733,7 +733,7 @@ fn full_workflow_with_corim_meta() {
 #[test]
 fn protected_header_extra_fields_preserved() {
     let header = ProtectedCorimHeaderMap {
-        alg: -7,
+        alg: CoseAlgorithm::Es256,
         content_type: Some("application/rim+cbor".into()),
         payload_hash_alg: None,
         payload_preimage_content_type: None,
@@ -987,7 +987,7 @@ fn full_detached_workflow() {
     // Step 4: Decode the envelope
     let envelope = decode_signed_corim(&envelope_bytes).unwrap();
     assert!(envelope.is_detached());
-    assert_eq!(envelope.protected.alg, -35);
+    assert_eq!(envelope.protected.alg, CoseAlgorithm::Es384);
 
     // Step 5: Reconstruct TBS from envelope + detached payload
     let tbs2 = envelope.to_be_signed_detached(&corim_bytes, &[]).unwrap();
