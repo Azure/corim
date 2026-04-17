@@ -203,7 +203,7 @@ fn main() {
 
 /// Information extracted from a signed CoRIM's COSE_Sign1 wrapper.
 struct SignedInfo {
-    alg: i64,
+    alg: corim::types::signed::CoseAlgorithm,
     signer_name: Option<String>,
     content_type: Option<String>,
     signature_len: usize,
@@ -282,7 +282,7 @@ fn try_decode_signed(
 fn print_signed_header_only(info: &SignedInfo) {
     println!("✓ Signed CoRIM (tag 18) — header decoded\n");
     println!("═══ COSE_Sign1 Header ═══");
-    println!("  Algorithm: {}", cose_alg_name(info.alg));
+    println!("  Algorithm: {}", info.alg);
     if let Some(ref ct) = info.content_type {
         println!("  Content-Type: {}", ct);
     }
@@ -364,7 +364,7 @@ fn print_text_output(
     // Show signed CoRIM info if present
     if let Some(ref info) = signed_info {
         println!("  [SIGNED] COSE_Sign1 (tag 18)");
-        println!("    Algorithm: {}", cose_alg_name(info.alg));
+        println!("    Algorithm: {}", info.alg);
         if let Some(ref ct) = info.content_type {
             println!("    Content-Type: {}", ct);
         }
@@ -478,21 +478,4 @@ fn json_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
-}
-
-/// Map a COSE algorithm identifier to a human-readable name.
-fn cose_alg_name(alg: i64) -> String {
-    match alg {
-        -7 => "ES256 (-7)".into(),
-        -35 => "ES384 (-35)".into(),
-        -36 => "ES512 (-36)".into(),
-        -37 => "PS256 (-37)".into(),
-        -38 => "PS384 (-38)".into(),
-        -39 => "PS512 (-39)".into(),
-        -257 => "PS256 (-257)".into(),
-        -258 => "PS384 (-258)".into(),
-        -259 => "PS512 (-259)".into(),
-        -65535 => "HSS-LMS (-65535)".into(),
-        other => format!("{}", other),
-    }
 }

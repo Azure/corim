@@ -36,7 +36,9 @@ pub use self::measurement::{
     Digest, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr, MeasurementMap,
     MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
-pub use self::signed::{CoseSign1Corim, CwtClaims, ProtectedCorimHeaderMap, SignedCorimBuilder};
+pub use self::signed::{
+    CoseAlgorithm, CoseSign1Corim, CwtClaims, ProtectedCorimHeaderMap, SignedCorimBuilder,
+};
 pub use self::triples::{
     AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,
     ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainDependencyTriple,
