@@ -33,12 +33,12 @@ pub use self::corim::{
 pub use self::coswid::{ConciseSwidTag, SwidEntity, SwidLink};
 pub use self::environment::{ClassMap, EnvironmentMap};
 pub use self::measurement::{
-    Digest, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr, MeasurementMap,
-    MeasurementValuesMap, RawValueChoice, SvnChoice,
+    Digest, DigestAlg, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr,
+    MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
 pub use self::signed::{
     CoseAlgorithm, CoseCertHash, CoseSign1Corim, CoseX509, CwtClaims, ProtectedCorimHeaderMap,
-    SignedCorimBuilder,
+    ProtectedCorimHeaderMapBuilder, SignedCorimBuilder,
 };
 pub use self::triples::{
     AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,

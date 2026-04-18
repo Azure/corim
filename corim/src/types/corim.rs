@@ -9,7 +9,7 @@ use corim_macros::{CborDeserialize, CborSerialize};
 use serde::{Deserialize, Serialize};
 
 use super::common::{EntityMap, TagIdentity, ValidityMap};
-use super::measurement::Digest;
+use super::measurement::{Digest, DigestAlg};
 use super::tags::*;
 use crate::cbor;
 use crate::cbor::value::{self, Value};
@@ -313,11 +313,14 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                                     let alg = match it.next().ok_or_else(|| {
                                         serde::de::Error::custom("digest must be [alg, val]")
                                     })? {
-                                        Value::Integer(n) => i64::try_from(n).map_err(|_| {
-                                            serde::de::Error::custom("digest alg out of i64 range")
-                                        })?,
-                                        // CDDL: alg = int / text
-                                        Value::Text(_) => -1,
+                                        Value::Integer(n) => {
+                                            DigestAlg::Int(i64::try_from(n).map_err(|_| {
+                                                serde::de::Error::custom(
+                                                    "digest alg out of i64 range",
+                                                )
+                                            })?)
+                                        }
+                                        Value::Text(t) => DigestAlg::Text(t),
                                         _ => {
                                             return Err(serde::de::Error::custom(
                                                 "digest alg must be int or text",
@@ -334,7 +337,7 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                                             ))
                                         }
                                     };
-                                    ds.push(Digest::new(alg, v));
+                                    ds.push(Digest(alg, v));
                                 }
                                 _ => {
                                     return Err(serde::de::Error::custom(
@@ -355,11 +358,12 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                             .next()
                             .ok_or_else(|| serde::de::Error::custom("digest must be [alg, val]"))?
                         {
-                            Value::Integer(n) => i64::try_from(n).map_err(|_| {
-                                serde::de::Error::custom("digest alg out of i64 range")
-                            })?,
-                            // CDDL: alg = int / text
-                            Value::Text(_) => -1,
+                            Value::Integer(n) => {
+                                DigestAlg::Int(i64::try_from(n).map_err(|_| {
+                                    serde::de::Error::custom("digest alg out of i64 range")
+                                })?)
+                            }
+                            Value::Text(t) => DigestAlg::Text(t),
                             _ => {
                                 return Err(serde::de::Error::custom(
                                     "digest alg must be int or text",
@@ -373,7 +377,7 @@ impl<'de> Deserialize<'de> for CorimLocatorThumbprint {
                             Value::Bytes(b) => b,
                             _ => return Err(serde::de::Error::custom("digest val must be bytes")),
                         };
-                        Ok(CorimLocatorThumbprint::Single(Digest::new(alg, v)))
+                        Ok(CorimLocatorThumbprint::Single(Digest(alg, v)))
                     }
                 }
             }

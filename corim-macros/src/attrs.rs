@@ -21,6 +21,9 @@ pub struct FieldAttrs {
     pub key: i64,
     /// Whether the field is optional (`Option<T>`).
     pub optional: bool,
+    /// Whether to serialize the field as CBOR bstr (bytes) instead of array.
+    /// Use for `Vec<u8>` fields that represent byte strings.
+    pub bytes: bool,
 }
 
 impl StructAttrs {
@@ -55,6 +58,7 @@ impl FieldAttrs {
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
         let mut key: Option<i64> = None;
         let mut optional = false;
+        let mut bytes = false;
 
         for attr in attrs {
             if !attr.path().is_ident("cbor") {
@@ -70,6 +74,9 @@ impl FieldAttrs {
                 } else if meta.path.is_ident("optional") {
                     optional = true;
                     Ok(())
+                } else if meta.path.is_ident("bytes") {
+                    bytes = true;
+                    Ok(())
                 } else {
                     Err(meta.error("unknown cbor field attribute"))
                 }
@@ -77,7 +84,11 @@ impl FieldAttrs {
         }
 
         match key {
-            Some(k) => Ok(Some(FieldAttrs { key: k, optional })),
+            Some(k) => Ok(Some(FieldAttrs {
+                key: k,
+                optional,
+                bytes,
+            })),
             None if optional => Err(syn::Error::new_spanned(
                 &attrs[0],
                 "#[cbor(optional)] requires #[cbor(key = ...)]",

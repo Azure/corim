@@ -47,7 +47,13 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .zip(field_types.iter())
         .map(|(f, _ty)| {
             let temp = format_ident!("__field_{}", f.ident);
-            quote! { let mut #temp: Option<#_ty> = None; }
+            if f.attrs.optional && f.attrs.bytes {
+                // For optional bytes fields: temp is Option<Vec<u8>> directly
+                // (the field type is already Option<Vec<u8>>)
+                quote! { let mut #temp: #_ty = None; }
+            } else {
+                quote! { let mut #temp: Option<#_ty> = None; }
+            }
         })
         .collect();
 
@@ -58,16 +64,21 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|(f, _ty)| {
             let key = f.attrs.key;
             let temp = format_ident!("__field_{}", f.ident);
-            if f.attrs.optional {
-                // For optional fields the struct type is Option<Inner>.
-                // We want to deserialize the inner type and wrap in Some.
-                // But the map value is the inner type, not Option<inner>.
-                // We can just deserialize as the full Option<Inner> type or
-                // use the inner. Let's deserialize as the field type directly:
-                // since the value exists in the map, we set Some(value).
+            if f.attrs.bytes {
+                // For bytes fields, deserialize from Value::Bytes → Vec<u8>
                 quote! {
                     #key => {
-                        #temp = Some(map.next_value()?);
+                        let val: crate::cbor::value::Value = map.next_value()?;
+                        match val {
+                            crate::cbor::value::Value::Bytes(b) => {
+                                #temp = Some(b);
+                            }
+                            _ => {
+                                return Err(serde::de::Error::custom(
+                                    concat!("expected bytes for field ", stringify!(#temp))
+                                ));
+                            }
+                        }
                     }
                 }
             } else {
@@ -86,17 +97,11 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             let temp = format_ident!("__field_{}", f.ident);
-            if f.attrs.optional {
-                // Optional fields: if the key wasn't in the map, it's None.
-                // If it was, temp is Some(Option<T>) — but we deserialized as the field type.
-                // Actually we need to be careful. The field type IS Option<Inner>.
-                // When the key is present, we did `temp = Some(map.next_value::<FieldType>()?)`.
-                // That means temp is Option<Option<Inner>>. We want to flatten.
-                // Better approach: deserialize as the inner type directly.
-                // Let's handle it differently. The temp holds Option<FieldType>.
-                // If FieldType is Option<X>, then temp: Option<Option<X>>.
-                // We flatten with .unwrap_or(None) → Option<X>.
-                // Actually .flatten() is cleaner.
+            if f.attrs.optional && f.attrs.bytes {
+                // For optional bytes fields: temp is Option<Vec<u8>>, which IS the field type.
+                quote! { #ident: #temp }
+            } else if f.attrs.optional {
+                // Optional non-bytes fields: temp is Option<Option<Inner>>, flatten to Option<Inner>.
                 quote! { #ident: #temp.flatten() }
             } else {
                 let err_msg = format!("missing required field with key {}", f.attrs.key);

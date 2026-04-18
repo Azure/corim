@@ -446,8 +446,27 @@ fn class_matches(
 
 /// Check if a reference measurement matches any evidence measurement.
 ///
-/// Matching is per §9.4.6: compares `mkey`, `digests` (§9.4.6.1.3),
-/// and `svn` (§9.4.6.1.2) when present in the reference.
+/// Matching is per §9.4.6: compares `mkey`, and then for each field in
+/// `measurement-values-map`, if the reference specifies the field, the
+/// evidence must also have it and the values must match.
+///
+/// Covered codepoints:
+/// - `digests` (key 2) — §9.4.6.1.3, per-algorithm comparison
+/// - `svn` (key 1) — §9.4.6.1.2, exact or minimum
+/// - `version` (key 0) — exact match
+/// - `flags` (key 3) — exact match
+/// - `raw-value` (key 4) — exact match
+/// - `mac-addr` (key 6) — exact match
+/// - `ip-addr` (key 7) — exact match
+/// - `serial-number` (key 8) — exact match
+/// - `ueid` (key 9) — exact match
+/// - `uuid` (key 10) — exact match
+/// - `name` (key 11) — exact match
+/// - `integrity-registers` (key 14) — exact match
+/// - `int-range` (key 15) — exact match
+///
+/// Note: `cryptokeys` (key 13) is not compared — it carries authorized
+/// keys, not a measurement value to match against evidence.
 fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) -> bool {
     for ev_meas in evidence {
         // Match mkey if specified in reference
@@ -465,7 +484,7 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
                     continue;
                 }
             } else {
-                continue; // reference requires digests but evidence lacks them
+                continue;
             }
         }
 
@@ -479,8 +498,69 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
                     continue;
                 }
             } else {
-                continue; // reference requires svn but evidence lacks it
+                continue;
             }
+        }
+
+        // Match version if present in reference
+        if reference.mval.version.is_some() && reference.mval.version != ev_meas.mval.version {
+            continue;
+        }
+
+        // Match flags if present in reference
+        if reference.mval.flags.is_some() && reference.mval.flags != ev_meas.mval.flags {
+            continue;
+        }
+
+        // Match raw-value if present in reference
+        if reference.mval.raw_value.is_some() && reference.mval.raw_value != ev_meas.mval.raw_value
+        {
+            continue;
+        }
+
+        // Match mac-addr if present in reference
+        if reference.mval.mac_addr.is_some() && reference.mval.mac_addr != ev_meas.mval.mac_addr {
+            continue;
+        }
+
+        // Match ip-addr if present in reference
+        if reference.mval.ip_addr.is_some() && reference.mval.ip_addr != ev_meas.mval.ip_addr {
+            continue;
+        }
+
+        // Match serial-number if present in reference
+        if reference.mval.serial_number.is_some()
+            && reference.mval.serial_number != ev_meas.mval.serial_number
+        {
+            continue;
+        }
+
+        // Match ueid if present in reference
+        if reference.mval.ueid.is_some() && reference.mval.ueid != ev_meas.mval.ueid {
+            continue;
+        }
+
+        // Match uuid if present in reference
+        if reference.mval.uuid.is_some() && reference.mval.uuid != ev_meas.mval.uuid {
+            continue;
+        }
+
+        // Match name if present in reference
+        if reference.mval.name.is_some() && reference.mval.name != ev_meas.mval.name {
+            continue;
+        }
+
+        // Match integrity-registers if present in reference
+        if reference.mval.integrity_registers.is_some()
+            && reference.mval.integrity_registers != ev_meas.mval.integrity_registers
+        {
+            continue;
+        }
+
+        // Match int-range if present in reference
+        if reference.mval.int_range.is_some() && reference.mval.int_range != ev_meas.mval.int_range
+        {
+            continue;
         }
 
         return true;

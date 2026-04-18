@@ -1196,7 +1196,7 @@ fn digest_text_alg_accepted() {
     let bytes = cbor::encode(&v).unwrap();
     let key: CryptoKey = cbor::decode(&bytes).unwrap();
     match key {
-        CryptoKey::KeyThumbprint(d) => assert_eq!(d.alg(), -1),
+        CryptoKey::KeyThumbprint(d) => assert!(matches!(d.alg(), DigestAlg::Text(_))),
         other => panic!("expected KeyThumbprint, got {:?}", other),
     }
 }

@@ -75,11 +75,23 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             let key = f.attrs.key;
-            if f.attrs.optional {
+            if f.attrs.optional && f.attrs.bytes {
+                // Optional bytes field: serialize as CBOR bstr
+                quote! {
+                    if let Some(ref val) = self.#ident {
+                        map.serialize_entry(&#key, &crate::cbor::value::Value::Bytes(val.clone()))?;
+                    }
+                }
+            } else if f.attrs.optional {
                 quote! {
                     if let Some(ref val) = self.#ident {
                         map.serialize_entry(&#key, val)?;
                     }
+                }
+            } else if f.attrs.bytes {
+                // Required bytes field: serialize as CBOR bstr
+                quote! {
+                    map.serialize_entry(&#key, &crate::cbor::value::Value::Bytes(self.#ident.clone()))?;
                 }
             } else {
                 quote! {
