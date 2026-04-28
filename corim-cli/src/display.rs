@@ -44,29 +44,15 @@ pub fn print_corim(corim: &CorimMap, show_raw: bool) {
 
     if show_raw {
         for (i, tag) in corim.tags.iter().enumerate() {
-            match tag {
-                ConciseTagChoice::Coswid(b) => {
-                    println!(
-                        "  tags[{}] (CoSWID): {} bytes — {}",
-                        i,
-                        b.len(),
-                        hex_short(b)
-                    );
-                }
-                ConciseTagChoice::Cotl(b) => {
-                    println!("  tags[{}] (CoTL): {} bytes — {}", i, b.len(), hex_short(b));
-                }
-                ConciseTagChoice::Unknown(t, b) => {
-                    println!(
-                        "  tags[{}] (unknown tag {}): {} bytes — {}",
-                        i,
-                        t,
-                        b.len(),
-                        hex_short(b)
-                    );
-                }
-                _ => {} // CoMIDs are printed separately
-            }
+            let (label, bytes) = match tag {
+                ConciseTagChoice::Comid(b) => (format!("tags[{}] (CoMID)", i), b),
+                ConciseTagChoice::Coswid(b) => (format!("tags[{}] (CoSWID)", i), b),
+                ConciseTagChoice::Cotl(b) => (format!("tags[{}] (CoTL)", i), b),
+                ConciseTagChoice::Unknown(t, b) => (format!("tags[{}] (unknown tag {})", i, t), b),
+                _ => continue,
+            };
+            println!("  {}: {} bytes", label, bytes.len());
+            print_hex_block(bytes, "    ", 32);
         }
     }
 }
@@ -616,6 +602,24 @@ fn hex_short(bytes: &[u8]) -> String {
         hex::encode(bytes)
     } else {
         format!("{}...({} bytes)", hex::encode(&bytes[..16]), bytes.len())
+    }
+}
+
+/// Print a byte buffer as lowercase hex with line wrapping.
+///
+/// Each line is prefixed with `indent` and contains at most
+/// `bytes_per_line` bytes (`bytes_per_line * 2` hex characters).
+/// An empty buffer prints `(empty)`.
+pub fn print_hex_block(bytes: &[u8], indent: &str, bytes_per_line: usize) {
+    if bytes.is_empty() {
+        println!("{}(empty)", indent);
+        return;
+    }
+    let chunk_chars = bytes_per_line * 2;
+    let hex = hex::encode(bytes);
+    for line in hex.as_bytes().chunks(chunk_chars) {
+        // Safe: hex::encode produces ASCII only.
+        println!("{}{}", indent, core::str::from_utf8(line).unwrap());
     }
 }
 

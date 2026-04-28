@@ -30,7 +30,9 @@ struct Cli {
     #[arg(long)]
     skip_expiry: bool,
 
-    /// Show raw hex of tag payloads (CoMID/CoSWID/CoTL bytes).
+    /// Show raw hex of tag payloads (CoMID/CoSWID/CoTL bytes) and,
+    /// for signed CoRIMs, the four COSE_Sign1 sections (protected /
+    /// unprotected / payload / signature).
     #[arg(long)]
     show_raw: bool,
 }
@@ -58,7 +60,7 @@ fn main() {
             Err(SignedDecodeResult::HeaderOnly(info)) => {
                 // Signed CoRIM decoded but payload is detached/non-standard.
                 // Show header info only.
-                print_signed_header_only(&info);
+                print_signed_header_only(&info, cli.show_raw);
                 process::exit(0);
             }
             Err(SignedDecodeResult::Failed(e)) => {
@@ -202,17 +204,31 @@ fn main() {
 }
 
 /// Information extracted from a signed CoRIM's COSE_Sign1 wrapper.
+///
+/// Mirrors the four elements of the RFC 9052 §4 `COSE_Sign1` array:
+///   `[ protected, unprotected, payload, signature ]`
 struct SignedInfo {
+    // -- protected header (decoded fields + raw bstr) --
     alg: corim::types::signed::CoseAlgorithm,
     signer_name: Option<String>,
     content_type: Option<String>,
-    signature_len: usize,
     has_cwt_claims: bool,
     has_corim_meta: bool,
-    is_detached: bool,
     x5chain_count: usize,
     has_x5t: bool,
     has_kid: bool,
+    protected_header_bytes: Vec<u8>,
+
+    // -- unprotected header (re-encoded CBOR map) --
+    unprotected_entries: usize,
+    unprotected_bytes: Vec<u8>,
+
+    // -- payload (raw bstr or nil) --
+    is_detached: bool,
+    payload_bytes: Vec<u8>,
+
+    // -- signature (raw bstr) --
+    signature: Vec<u8>,
 }
 
 /// Result when signed CoRIM decode partially fails.
@@ -252,14 +268,19 @@ fn try_decode_signed(
                 .map(|m| m.signer.signer_name.clone())
         });
 
+    // Re-encode the unprotected header map so we can display its raw CBOR bytes
+    // alongside the other COSE_Sign1 sections. Failures here are non-fatal —
+    // an empty Vec just means we won't render bytes for that section.
+    let unprotected_bytes =
+        corim::cbor::encode(&corim::cbor::value::Value::Map(signed.unprotected.clone()))
+            .unwrap_or_default();
+
     let info = SignedInfo {
         alg: signed.protected.alg,
         signer_name,
         content_type: signed.protected.content_type.clone(),
-        signature_len: signed.signature.len(),
         has_cwt_claims: signed.protected.cwt_claims.is_some(),
         has_corim_meta: signed.protected.corim_meta.is_some(),
-        is_detached: signed.is_detached(),
         x5chain_count: signed
             .protected
             .x5chain
@@ -268,6 +289,12 @@ fn try_decode_signed(
             .unwrap_or(0),
         has_x5t: signed.protected.x5t.is_some(),
         has_kid: signed.protected.kid.is_some(),
+        protected_header_bytes: signed.protected_header_bytes.clone(),
+        unprotected_entries: signed.unprotected.len(),
+        unprotected_bytes,
+        is_detached: signed.is_detached(),
+        payload_bytes: signed.payload.clone().unwrap_or_default(),
+        signature: signed.signature.clone(),
     };
 
     let payload = match &signed.payload {
@@ -290,49 +317,95 @@ fn try_decode_signed(
 }
 
 /// Print signed CoRIM header info when the inner payload can't be decoded.
-fn print_signed_header_only(info: &SignedInfo) {
+fn print_signed_header_only(info: &SignedInfo, show_raw: bool) {
     println!("✓ Signed CoRIM (tag 18) — header decoded\n");
-    println!("═══ COSE_Sign1 Header ═══");
-    println!("  Algorithm: {}", info.alg);
+    print_cose_sign1(info, "  ", show_raw);
+}
+
+/// Render the four COSE_Sign1 elements per RFC 9052 §4:
+///   `[ protected, unprotected, payload, signature ]`
+///
+/// `indent` is the leading whitespace for the section headers (sub-fields
+/// are indented further to make the structure visually obvious).
+///
+/// When `show_raw` is true, each section is followed by a hex dump of its
+/// raw CBOR bytes. Otherwise only summary metadata and section sizes are
+/// shown to keep the default output readable.
+fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
+    let sub = format!("{}  ", indent);
+    let hex_indent = format!("{}  ", sub);
+
+    println!("{}═══ COSE_Sign1 (tag 18) ═══", indent);
+
+    // [0] Protected header (bstr .cbor protected-corim-header-map)
+    println!(
+        "{}[0] Protected header  ({} bytes, bstr .cbor map)",
+        indent,
+        info.protected_header_bytes.len()
+    );
+    println!("{}Algorithm:    {}", sub, info.alg);
     if let Some(ref ct) = info.content_type {
-        println!("  Content-Type: {}", ct);
+        println!("{}Content-Type: {}", sub, ct);
     }
     if let Some(ref name) = info.signer_name {
-        println!("  Signer: {}", name);
+        println!("{}Signer:       {}", sub, name);
     }
-    println!(
-        "  Metadata: {}{}",
-        if info.has_cwt_claims {
-            "CWT-Claims"
-        } else {
-            ""
-        },
-        if info.has_corim_meta {
-            if info.has_cwt_claims {
-                " + corim-meta"
-            } else {
-                "corim-meta"
-            }
-        } else {
-            ""
-        },
-    );
-    if info.signature_len > 0 {
-        println!("  Signature: {} bytes", info.signature_len);
+    let metadata = match (info.has_cwt_claims, info.has_corim_meta) {
+        (true, true) => "CWT-Claims + corim-meta",
+        (true, false) => "CWT-Claims",
+        (false, true) => "corim-meta",
+        (false, false) => "(none)",
+    };
+    println!("{}Metadata:     {}", sub, metadata);
+    if info.has_kid {
+        println!("{}Key ID (kid): present", sub);
     }
     if info.x5chain_count > 0 {
-        println!("  X.509 chain: {} certificate(s)", info.x5chain_count);
+        println!("{}X.509 chain:  {} certificate(s)", sub, info.x5chain_count);
     }
     if info.has_x5t {
-        println!("  X.509 thumbprint: present");
+        println!("{}X.509 thumbprint: present", sub);
     }
-    if info.has_kid {
-        println!("  Key ID (kid): present");
+    if show_raw {
+        println!("{}Raw bytes:", sub);
+        display::print_hex_block(&info.protected_header_bytes, &hex_indent, 32);
     }
+
+    // [1] Unprotected header (map)
+    println!(
+        "{}[1] Unprotected header  ({} entries, {} bytes)",
+        indent,
+        info.unprotected_entries,
+        info.unprotected_bytes.len()
+    );
+    if show_raw {
+        println!("{}Raw bytes:", sub);
+        display::print_hex_block(&info.unprotected_bytes, &hex_indent, 32);
+    }
+
+    // [2] Payload (bstr / nil)
     if info.is_detached {
-        println!("  Payload: detached (nil) — inner CoRIM not embedded");
+        println!(
+            "{}[2] Payload  detached (nil) — inner CoRIM not embedded",
+            indent
+        );
     } else {
-        println!("  Payload: present but could not be decoded as CoRIM");
+        println!(
+            "{}[2] Payload  ({} bytes, bstr .cbor tagged-unsigned-corim-map)",
+            indent,
+            info.payload_bytes.len()
+        );
+        if show_raw {
+            println!("{}Raw bytes:", sub);
+            display::print_hex_block(&info.payload_bytes, &hex_indent, 32);
+        }
+    }
+
+    // [3] Signature (bstr)
+    println!("{}[3] Signature  ({} bytes)", indent, info.signature.len());
+    if show_raw {
+        println!("{}Raw bytes:", sub);
+        display::print_hex_block(&info.signature, &hex_indent, 32);
     }
     println!();
 }
@@ -381,44 +454,9 @@ fn print_text_output(
     // CoRIM header
     println!("═══ CoRIM Map ═══");
 
-    // Show signed CoRIM info if present
+    // Show signed CoRIM info if present (four COSE_Sign1 sections)
     if let Some(ref info) = signed_info {
-        println!("  [SIGNED] COSE_Sign1 (tag 18)");
-        println!("    Algorithm: {}", info.alg);
-        if let Some(ref ct) = info.content_type {
-            println!("    Content-Type: {}", ct);
-        }
-        if let Some(ref name) = info.signer_name {
-            println!("    Signer: {}", name);
-        }
-        println!(
-            "    Metadata: {}{}",
-            if info.has_cwt_claims {
-                "CWT-Claims"
-            } else {
-                ""
-            },
-            if info.has_corim_meta {
-                if info.has_cwt_claims {
-                    " + corim-meta"
-                } else {
-                    "corim-meta"
-                }
-            } else {
-                ""
-            },
-        );
-        println!("    Signature: {} bytes", info.signature_len);
-        if info.x5chain_count > 0 {
-            println!("    X.509 chain: {} certificate(s)", info.x5chain_count);
-        }
-        if info.has_x5t {
-            println!("    X.509 thumbprint: present");
-        }
-        if info.has_kid {
-            println!("    Key ID (kid): present");
-        }
-        println!();
+        print_cose_sign1(info, "  ", show_raw);
     }
 
     display::print_corim(corim, show_raw);
