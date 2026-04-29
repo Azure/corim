@@ -148,7 +148,7 @@ fn protected_header_with_x509_fields_round_trip() {
     header.x5bag = Some(CoseX509::Single(vec![0x30, 0x82]));
     header.x5chain = Some(CoseX509::Chain(vec![vec![0x30, 0x01], vec![0x30, 0x02]]));
     header.x5t = Some(CoseCertHash {
-        hash_alg: 1,
+        hash_alg: corim::types::DigestAlg::Int(1),
         hash_value: vec![0xAA; 32],
     });
     header.x5u = Some("https://example.com/cert.pem".into());
