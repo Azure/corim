@@ -854,3 +854,39 @@ mod measurement_extension_tests {
         assert_eq!(mval.int_range, decoded.int_range);
     }
 }
+
+#[cfg(test)]
+mod bytes_encoding_test {
+    use corim::cbor;
+    use corim::types::measurement::MeasurementValuesMap;
+
+    #[test]
+    fn ueid_encodes_as_bstr_not_array() {
+        let mval = MeasurementValuesMap {
+            ueid: Some(vec![0x02, 0xDE, 0xAD]),
+            ..MeasurementValuesMap::default()
+        };
+        let bytes = cbor::encode(&mval).unwrap();
+        // Decode as Value and check the ueid field is Bytes, not Array
+        let val: corim::cbor::value::Value = cbor::decode(&bytes).unwrap();
+        if let corim::cbor::value::Value::Map(entries) = val {
+            // key 9 = ueid
+            let ueid_entry = entries
+                .iter()
+                .find(|(k, _)| matches!(k, corim::cbor::value::Value::Integer(9)));
+            assert!(ueid_entry.is_some(), "ueid key 9 not found");
+            let (_, v) = ueid_entry.unwrap();
+            match v {
+                corim::cbor::value::Value::Bytes(b) => {
+                    assert_eq!(b, &[0x02, 0xDE, 0xAD]);
+                }
+                corim::cbor::value::Value::Array(_) => {
+                    panic!("ueid encoded as CBOR array instead of bstr!");
+                }
+                other => panic!("unexpected ueid value: {:?}", other),
+            }
+        } else {
+            panic!("expected map");
+        }
+    }
+}

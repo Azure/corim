@@ -175,7 +175,9 @@ fn locator_thumbprint_multi_digest_text_alg_accepted() {
     let bytes = cbor::encode(&v).unwrap();
     let loc: CorimLocator = cbor::decode(&bytes).unwrap();
     match loc.thumbprint {
-        Some(CorimLocatorThumbprint::Multiple(ds)) => assert_eq!(ds[0].alg(), -1),
+        Some(CorimLocatorThumbprint::Multiple(ds)) => {
+            assert!(matches!(ds[0].alg(), DigestAlg::Text(_)))
+        }
         other => panic!("expected Multiple, got {:?}", other),
     }
 }
@@ -233,7 +235,7 @@ fn locator_thumbprint_single_digest_text_alg_accepted() {
     let bytes = cbor::encode(&v).unwrap();
     let loc: CorimLocator = cbor::decode(&bytes).unwrap();
     match loc.thumbprint {
-        Some(CorimLocatorThumbprint::Single(d)) => assert_eq!(d.alg(), -1),
+        Some(CorimLocatorThumbprint::Single(d)) => assert!(matches!(d.alg(), DigestAlg::Text(_))),
         other => panic!("expected Single, got {:?}", other),
     }
 }

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::tags::*;
 use crate::cbor::value::{self, Value};
-use crate::types::measurement::Digest;
+use crate::types::measurement::{Digest, DigestAlg};
 
 // ---------------------------------------------------------------------------
 // CborTime — CBOR epoch-based date/time (#6.1)
@@ -52,7 +52,36 @@ impl From<CborTime> for i64 {
 
 impl core::fmt::Display for CborTime {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", self.0)
+        // Format as "YYYY-MM-DD HH:MM:SS UTC" when possible, fallback to epoch.
+        // Algorithm: convert epoch seconds to date components without std.
+        let secs = self.0;
+        if secs < 0 {
+            return write!(f, "{}(epoch)", secs);
+        }
+        let s = secs as u64;
+        let days = s / 86400;
+        let time_of_day = s % 86400;
+        let h = time_of_day / 3600;
+        let m = (time_of_day % 3600) / 60;
+        let sec = time_of_day % 60;
+
+        // Civil date from day count (algorithm from Howard Hinnant)
+        let z = days + 719468;
+        let era = z / 146097;
+        let doe = z - era * 146097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let mon = if mp < 10 { mp + 3 } else { mp - 9 };
+        let year = if mon <= 2 { y + 1 } else { y };
+
+        write!(
+            f,
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            year, mon, d, h, m, sec
+        )
     }
 }
 
@@ -628,13 +657,9 @@ fn digest_from_value_array<E: serde::de::Error>(arr: Vec<Value>) -> Result<Diges
         .ok_or_else(|| E::custom("digest must be [alg, val]"))?
     {
         Value::Integer(n) => {
-            i64::try_from(n).map_err(|_| E::custom("digest alg out of i64 range"))?
+            DigestAlg::Int(i64::try_from(n).map_err(|_| E::custom("digest alg out of i64 range"))?)
         }
-        Value::Text(_) => {
-            // CDDL allows text alg IDs; store as -1 (unrecognized).
-            // Full text-alg support deferred to Digest struct redesign.
-            -1
-        }
+        Value::Text(t) => DigestAlg::Text(t),
         _ => return Err(E::custom("digest alg must be int or text")),
     };
     let val = match it
@@ -644,7 +669,7 @@ fn digest_from_value_array<E: serde::de::Error>(arr: Vec<Value>) -> Result<Diges
         Value::Bytes(b) => b,
         _ => return Err(E::custom("digest val must be bytes")),
     };
-    Ok(Digest::new(alg, val))
+    Ok(Digest(alg, val))
 }
 
 // ---------------------------------------------------------------------------

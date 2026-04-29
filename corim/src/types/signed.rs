@@ -25,6 +25,7 @@ use crate::nostd_prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::corim::CorimMetaMap;
+use super::measurement::DigestAlg;
 use super::tags::*;
 use crate::cbor;
 use crate::cbor::value::Value;
@@ -245,8 +246,8 @@ impl CoseX509 {
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CoseCertHash {
-    /// Hash algorithm identifier (typically an integer from the COSE Algorithms registry).
-    pub hash_alg: i64,
+    /// Hash algorithm identifier (integer from COSE Algorithms registry, or text).
+    pub hash_alg: DigestAlg,
     /// The hash value computed over the DER-encoded certificate.
     pub hash_value: Vec<u8>,
 }
@@ -288,6 +289,11 @@ const SIG_STRUCTURE1_CONTEXT: &str = "Signature1";
 ///   * int => any,
 /// }
 /// ```
+///
+/// **Note on `Eq`:** This type derives `PartialEq` but not `Eq` because
+/// the `extra` map contains [`Value`] entries which may hold CBOR
+/// floating-point values. IEEE 754 floats do not satisfy the reflexive
+/// property (`NaN != NaN`), so `Eq` cannot be soundly derived.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CwtClaims {
     /// `iss` (key 1): Issuer — identifies the CoRIM signer.
@@ -504,6 +510,134 @@ impl ProtectedCorimHeaderMap {
     }
 }
 
+/// Builder for [`ProtectedCorimHeaderMap`].
+///
+/// The only required field is `alg`. At least one of `corim_meta` or
+/// `cwt_claims` should be set to satisfy the meta-group constraint (§4.2.1),
+/// but this is validated at sign time, not build time.
+///
+/// # Example
+///
+/// ```
+/// use corim::types::{CoseAlgorithm, ProtectedCorimHeaderMapBuilder};
+/// use corim::types::corim::{CorimMetaMap, CorimSignerMap};
+///
+/// let header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256)
+///     .content_type("application/rim+cbor")
+///     .corim_meta(CorimMetaMap {
+///         signer: CorimSignerMap {
+///             signer_name: "ACME Ltd.".into(),
+///             signer_uri: None,
+///         },
+///         signature_validity: None,
+///     })
+///     .build();
+/// ```
+#[must_use]
+pub struct ProtectedCorimHeaderMapBuilder {
+    inner: ProtectedCorimHeaderMap,
+}
+
+impl ProtectedCorimHeaderMapBuilder {
+    /// Create a new builder with the required algorithm identifier.
+    pub fn new(alg: CoseAlgorithm) -> Self {
+        Self {
+            inner: ProtectedCorimHeaderMap {
+                alg,
+                content_type: None,
+                payload_hash_alg: None,
+                payload_preimage_content_type: None,
+                payload_location: None,
+                corim_meta: None,
+                cwt_claims: None,
+                kid: None,
+                x5bag: None,
+                x5chain: None,
+                x5t: None,
+                x5u: None,
+                extra: BTreeMap::new(),
+            },
+        }
+    }
+
+    /// Set the content type (key 3) for inline signing mode.
+    pub fn content_type(mut self, ct: impl Into<String>) -> Self {
+        self.inner.content_type = Some(ct.into());
+        self
+    }
+
+    /// Set `corim-meta` (key 8).
+    pub fn corim_meta(mut self, meta: CorimMetaMap) -> Self {
+        self.inner.corim_meta = Some(meta);
+        self
+    }
+
+    /// Set CWT claims (key 15).
+    pub fn cwt_claims(mut self, claims: CwtClaims) -> Self {
+        self.inner.cwt_claims = Some(claims);
+        self
+    }
+
+    /// Set the key identifier (key 4).
+    pub fn kid(mut self, kid: Vec<u8>) -> Self {
+        self.inner.kid = Some(kid);
+        self
+    }
+
+    /// Set the X.509 certificate bag (key 32).
+    pub fn x5bag(mut self, bag: CoseX509) -> Self {
+        self.inner.x5bag = Some(bag);
+        self
+    }
+
+    /// Set the X.509 certificate chain (key 33).
+    pub fn x5chain(mut self, chain: CoseX509) -> Self {
+        self.inner.x5chain = Some(chain);
+        self
+    }
+
+    /// Set the X.509 certificate thumbprint (key 34).
+    pub fn x5t(mut self, hash: CoseCertHash) -> Self {
+        self.inner.x5t = Some(hash);
+        self
+    }
+
+    /// Set the X.509 certificate URI (key 35).
+    pub fn x5u(mut self, uri: impl Into<String>) -> Self {
+        self.inner.x5u = Some(uri.into());
+        self
+    }
+
+    /// Set hash-envelope payload hash algorithm (key 258).
+    pub fn payload_hash_alg(mut self, alg: i64) -> Self {
+        self.inner.payload_hash_alg = Some(alg);
+        self
+    }
+
+    /// Set hash-envelope payload preimage content type (key 259).
+    pub fn payload_preimage_content_type(mut self, ct: impl Into<String>) -> Self {
+        self.inner.payload_preimage_content_type = Some(ct.into());
+        self
+    }
+
+    /// Set hash-envelope payload location (key 260).
+    pub fn payload_location(mut self, loc: impl Into<String>) -> Self {
+        self.inner.payload_location = Some(loc.into());
+        self
+    }
+
+    /// Add an extra COSE header label.
+    pub fn extra(mut self, key: i64, value: Value) -> Self {
+        self.inner.extra.insert(key, value);
+        self
+    }
+
+    /// Build the [`ProtectedCorimHeaderMap`].
+    pub fn build(self) -> ProtectedCorimHeaderMap {
+        self.inner
+    }
+}
+
 /// Serialize a `CoseX509` to a `Value` (bstr or array of bstr).
 fn serialize_cose_x509(x: &CoseX509) -> Value {
     match x {
@@ -538,8 +672,11 @@ fn deserialize_cose_cert_hash<E: serde::de::Error>(v: Value) -> Result<CoseCertH
     };
     let mut it = arr.into_iter();
     let hash_alg = match it.next().unwrap() {
-        Value::Integer(n) => i64::try_from(n).map_err(|_| E::custom("x5t hashAlg out of range"))?,
-        _ => return Err(E::custom("x5t hashAlg must be int")),
+        Value::Integer(n) => {
+            DigestAlg::Int(i64::try_from(n).map_err(|_| E::custom("x5t hashAlg out of range"))?)
+        }
+        Value::Text(t) => DigestAlg::Text(t),
+        _ => return Err(E::custom("x5t hashAlg must be int or text")),
     };
     let hash_value = match it.next().unwrap() {
         Value::Bytes(b) => b,
@@ -619,10 +756,11 @@ impl Serialize for ProtectedCorimHeaderMap {
             map.serialize_entry(&COSE_HEADER_X5CHAIN, &serialize_cose_x509(x5chain))?;
         }
         if let Some(ref x5t) = self.x5t {
-            let arr = Value::Array(alloc::vec![
-                Value::Integer(x5t.hash_alg as i128),
-                Value::Bytes(x5t.hash_value.clone()),
-            ]);
+            let alg_val = match &x5t.hash_alg {
+                DigestAlg::Int(n) => Value::Integer(*n as i128),
+                DigestAlg::Text(t) => Value::Text(t.clone()),
+            };
+            let arr = Value::Array(alloc::vec![alg_val, Value::Bytes(x5t.hash_value.clone()),]);
             map.serialize_entry(&COSE_HEADER_X5T, &arr)?;
         }
         if let Some(ref x5u) = self.x5u {

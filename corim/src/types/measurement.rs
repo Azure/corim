@@ -16,25 +16,133 @@ use crate::cbor::value::{self, Value};
 use crate::Validate;
 
 // ---------------------------------------------------------------------------
-// digest = [alg: int, val: bytes]
+// digest = [alg: int / text, val: bytes]
 // ---------------------------------------------------------------------------
 
+/// Algorithm identifier for a digest — integer (IANA Named Information
+/// registry) or text (profile-defined).
+///
+/// The CDDL says `alg: int / text`. Most real-world digests use integer
+/// algorithm IDs from the COSE Algorithms registry. Text IDs are accepted
+/// for forward-compatibility.
+#[derive(Clone, Debug, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum DigestAlg {
+    /// Integer algorithm identifier (e.g., 1 = SHA-256, 7 = SHA-384).
+    Int(i64),
+    /// Text algorithm identifier (profile-defined).
+    Text(String),
+}
+
+impl DigestAlg {
+    /// Returns the integer algorithm ID, or `None` for text algorithms.
+    pub fn as_int(&self) -> Option<i64> {
+        match self {
+            DigestAlg::Int(n) => Some(*n),
+            DigestAlg::Text(_) => None,
+        }
+    }
+    /// Returns the text algorithm ID, or `None` for integer algorithms.
+    pub fn as_text(&self) -> Option<&str> {
+        match self {
+            DigestAlg::Text(s) => Some(s),
+            DigestAlg::Int(_) => None,
+        }
+    }
+}
+
+impl core::fmt::Display for DigestAlg {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            DigestAlg::Int(n) => write!(f, "{}", n),
+            DigestAlg::Text(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl From<i64> for DigestAlg {
+    fn from(n: i64) -> Self {
+        DigestAlg::Int(n)
+    }
+}
+
+impl From<String> for DigestAlg {
+    fn from(s: String) -> Self {
+        DigestAlg::Text(s)
+    }
+}
+
+impl From<&str> for DigestAlg {
+    fn from(s: &str) -> Self {
+        DigestAlg::Text(s.to_owned())
+    }
+}
+
 /// `eatmc.digest` — a `[algorithm-id, digest-value]` pair.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Digest(pub i64, #[serde(with = "serde_bytes")] pub Vec<u8>);
+///
+/// The algorithm identifier can be an integer (from the COSE Algorithms
+/// registry) or a text string (profile-defined).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Digest(pub DigestAlg, #[allow(missing_docs)] pub Vec<u8>);
 
 impl Digest {
-    /// Create a new digest.
+    /// Create a new digest with an integer algorithm identifier.
     pub fn new(alg: i64, value: Vec<u8>) -> Self {
-        Self(alg, value)
+        Self(DigestAlg::Int(alg), value)
+    }
+    /// Create a new digest with a text algorithm identifier.
+    pub fn new_text(alg: impl Into<String>, value: Vec<u8>) -> Self {
+        Self(DigestAlg::Text(alg.into()), value)
     }
     /// Get the algorithm identifier.
-    pub fn alg(&self) -> i64 {
-        self.0
+    pub fn alg(&self) -> &DigestAlg {
+        &self.0
     }
     /// Get the digest value bytes.
     pub fn value(&self) -> &[u8] {
         &self.1
+    }
+}
+
+impl Serialize for Digest {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let alg_val = match &self.0 {
+            DigestAlg::Int(n) => Value::Integer(*n as i128),
+            DigestAlg::Text(t) => Value::Text(t.clone()),
+        };
+        let arr = Value::Array(vec![alg_val, Value::Bytes(self.1.clone())]);
+        arr.serialize(s)
+    }
+}
+
+impl<'de> Deserialize<'de> for Digest {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let val = Value::deserialize(d)?;
+        match val {
+            Value::Array(arr) if arr.len() == 2 => {
+                let mut it = arr.into_iter();
+                let alg = match it
+                    .next()
+                    .ok_or_else(|| serde::de::Error::custom("digest must be [alg, val]"))?
+                {
+                    Value::Integer(n) => DigestAlg::Int(
+                        i64::try_from(n)
+                            .map_err(|_| serde::de::Error::custom("digest alg out of i64 range"))?,
+                    ),
+                    Value::Text(t) => DigestAlg::Text(t),
+                    _ => return Err(serde::de::Error::custom("digest alg must be int or text")),
+                };
+                let val = match it
+                    .next()
+                    .ok_or_else(|| serde::de::Error::custom("digest must be [alg, val]"))?
+                {
+                    Value::Bytes(b) => b,
+                    _ => return Err(serde::de::Error::custom("digest val must be bytes")),
+                };
+                Ok(Digest(alg, val))
+            }
+            _ => Err(serde::de::Error::custom("digest must be [alg, val]")),
+        }
     }
 }
 
@@ -539,10 +647,10 @@ pub struct MeasurementValuesMap {
     #[cbor(key = 8, optional)]
     pub serial_number: Option<String>,
     /// `ueid` (key 9).
-    #[cbor(key = 9, optional)]
+    #[cbor(key = 9, optional, bytes)]
     pub ueid: Option<Vec<u8>>,
     /// `uuid` (key 10).
-    #[cbor(key = 10, optional)]
+    #[cbor(key = 10, optional, bytes)]
     pub uuid: Option<Vec<u8>>,
     /// `name` (key 11).
     #[cbor(key = 11, optional)]
@@ -643,45 +751,4 @@ pub struct MeasurementMap {
     /// `authorized-by` (key 2): optional authority keys.
     #[cbor(key = 2, optional)]
     pub authorized_by: Option<Vec<CryptoKey>>,
-}
-
-/// Serde helper for bytes fields in Digest.
-mod serde_bytes {
-    use crate::cbor::value::Value;
-    use serde::{self, Deserialize, Deserializer, Serializer};
-
-    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        serializer.serialize_bytes(bytes)
-    }
-
-    pub fn deserialize<'de, D>(deserializer: D) -> Result<alloc::vec::Vec<u8>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        let val = Value::deserialize(deserializer)?;
-        match val {
-            Value::Bytes(b) => Ok(b),
-            Value::Array(arr) => {
-                let mut bytes = alloc::vec::Vec::with_capacity(arr.len());
-                for v in arr {
-                    match v {
-                        Value::Integer(i) => {
-                            let b: u8 = i
-                                .try_into()
-                                .map_err(|_| serde::de::Error::custom("byte value out of range"))?;
-                            bytes.push(b);
-                        }
-                        _ => {
-                            return Err(serde::de::Error::custom("expected integer in byte array"))
-                        }
-                    }
-                }
-                Ok(bytes)
-            }
-            _ => Err(serde::de::Error::custom("expected bytes")),
-        }
-    }
 }

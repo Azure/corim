@@ -357,7 +357,10 @@ fn display_profile_choice() {
 #[test]
 fn display_cbor_time() {
     let t = CborTime::new(1234567890);
-    assert_eq!(format!("{}", t), "1234567890");
+    assert_eq!(format!("{}", t), "2009-02-13T23:31:30Z");
+    // Negative epoch falls back to raw format
+    let t2 = CborTime::new(-100);
+    assert_eq!(format!("{}", t2), "-100(epoch)");
 }
 
 // ===========================================================================
