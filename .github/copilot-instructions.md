@@ -4,6 +4,92 @@ This document describes the code patterns and conventions used throughout the
 `corim` Rust crate. Follow these rules when generating or modifying code to
 ensure consistency across the codebase.
 
+## Working principles (read first)
+
+These principles govern *how* changes are made, not *what* the code looks
+like. They take precedence over the style rules below when in conflict.
+
+### 1. Strategic vs tactical roles
+
+The user is the strategic designer. The assistant is the tactical
+programmer. For any decision with more than one viable answer (API shape,
+module boundary, error-type design, behavior in an underspecified case),
+present 2–3 options with concrete trade-offs and **stop**. Do not pick
+unilaterally and ship. Wait for the user to choose.
+
+Tactical decisions (variable names, internal helper structure, which
+serde method to call) belong to the assistant and do not need approval.
+
+### 2. Small commits, TDD-first for bugs
+
+When fixing a bug, write the failing regression test as its own commit
+(`test: add failing test for <bug>`) before the fix commit
+(`fix: <thing>`). The Phase 2 ueid/uuid CBOR-bstr bug is the canonical
+example: it was caught only because a sanity-check test happened to
+fail; doing this deliberately would have produced a clear two-commit
+story instead of a 1190-line single commit.
+
+For new features, prefer a sequence of small commits over a single
+sweeping one. The rate of feedback is the speed limit.
+
+### 3. Do not write planning/audit/release-notes markdown reflexively
+
+For ephemeral planning within a session, use the todo-list tool — it
+does not pollute the repo. Only commit a markdown doc when:
+- the user explicitly requests it, or
+- there is a concrete downstream consumer (CHANGELOG.md for releases,
+  ARCHITECTURE.md for onboarding) and the user has agreed to maintain it.
+
+Past anti-patterns to avoid: `PLAN.md`, `PLAN_v020.md`, `PLANv020.md`,
+per-task audit summaries, `RELEASE_NOTES_v0.x.x.md` files. These get
+written, become stale, and have to be deleted.
+
+### 4. Grill-me before high-ambiguity work
+
+For any feature that touches the public API, the wire format, or
+introduces a new abstraction, ask clarifying questions until a shared
+understanding exists *before* writing code. Topics worth grilling on:
+which RFC section governs the choice, what the encode/decode invariants
+are, who the downstream consumer is, what the error-handling contract
+is. Stop when the user signals "enough — go".
+
+For trivial changes (renaming, formatting, fixing a clippy warning,
+adding a test for an existing behavior), skip grilling and act.
+
+### 5. Re-check the parent decision when adding a leaf
+
+When adding the Nth field/variant/method to an existing type, pause and
+ask whether the type is still the right boundary. The X.509 header
+fields added to `ProtectedCorimHeaderMap` are an example of *not* doing
+this — five fields and 200 lines of serde were tacked on without
+revisiting whether the struct should split.
+
+Trigger phrase: *"this is the Nth optional field on this type. Should
+the type still be one type?"*
+
+### 6. Per-change design check (Beck)
+
+Every non-trivial change should answer in its commit message or PR
+description: **did this leave the design better, worse, or unchanged?**
+
+- "Better" — reduced duplication, removed dead code, tightened a
+  boundary, eliminated a sentinel value.
+- "Worse" — added a field to a god module, special-cased a caller,
+  introduced a new way to do something that already had a way.
+- "Unchanged" — pure bug fix, doc fix, test addition.
+
+If the answer is "worse", flag it and propose follow-up.
+
+### 7. No coverage-driven tests
+
+Do not write tests whose primary purpose is to push a coverage number.
+The existing `coverage_*_tests.rs` files are frozen — no new entries
+of that pattern. New tests come from new behaviors or new bugs only.
+The unit/mock/behavior decisions made when writing a test must be
+deliberate, not derived from "this line is uncovered".
+
+---
+
 ## Project overview
 
 A Rust implementation of Concise Reference Integrity Manifest (CoRIM) per
