@@ -35,6 +35,14 @@ struct Cli {
     /// unprotected / payload / signature).
     #[arg(long)]
     show_raw: bool,
+
+    /// Run a non-aborting structural diagnose pass and print a human-readable
+    /// report (envelope kind, every recognized issue, summary). Useful when
+    /// strict decoding fails and you need to see *all* problems at once.
+    /// When set, the strict decode path is skipped; exit code is 0 if no
+    /// errors are found, 2 otherwise.
+    #[arg(long)]
+    diagnose: bool,
 }
 
 fn main() {
@@ -51,6 +59,14 @@ fn main() {
     if bytes.is_empty() {
         eprintln!("Error: input is empty");
         process::exit(1);
+    }
+
+    // --diagnose: best-effort structural inspection that does NOT abort on
+    // the first error. Prints all issues, then exits.
+    if cli.diagnose {
+        let report = corim::diagnose::inspect(&bytes);
+        print!("{}", report);
+        process::exit(if report.error_count() == 0 { 0 } else { 2 });
     }
 
     // Step 1: Detect format — try signed CoRIM (tag 18) first, then unsigned (tag 501)

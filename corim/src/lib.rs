@@ -155,6 +155,10 @@ pub mod error;
 pub mod types;
 
 pub mod builder;
+/// **Unstable** — debugging-only structural inspector. The shapes of the
+/// types in this module may change between minor versions without a
+/// deprecation cycle. Production code should use [`validate::decode_and_validate`].
+pub mod diagnose;
 pub mod validate;
 
 #[cfg(feature = "json")]
