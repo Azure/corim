@@ -20,8 +20,8 @@
 # Test data / binary artifacts
 *.cbor
 *.cose
-data/
-
-# Internal planning documents (tracked locally, not published)
-PLAN.md
-OPENSOURCE_CHECKLIST.md
+# ...except fixtures that are checked in as regression test inputs.
+# See corim/tests/fixtures/README.md for provenance and how each file
+# was produced.
+!corim/tests/fixtures/README.md
+!corim/tests/fixtures/nvidia_cx7_tcg_wrapped.cbor

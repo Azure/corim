@@ -49,6 +49,7 @@ pub fn print_corim(corim: &CorimMap, show_raw: bool) {
                 ConciseTagChoice::Coswid(b) => (format!("tags[{}] (CoSWID)", i), b),
                 ConciseTagChoice::Cotl(b) => (format!("tags[{}] (CoTL)", i), b),
                 ConciseTagChoice::Unknown(t, b) => (format!("tags[{}] (unknown tag {})", i, t), b),
+                ConciseTagChoice::BareBstr(b) => (format!("tags[{}] (bare bstr, TCG-style)", i), b),
                 _ => continue,
             };
             println!("  {}: {} bytes", label, bytes.len());

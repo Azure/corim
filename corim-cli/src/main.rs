@@ -63,11 +63,33 @@ fn main() {
 
     // --diagnose: best-effort structural inspection that does NOT abort on
     // the first error. Prints all issues, then exits.
+    //
+    // Note: --diagnose runs on the *original* bytes so the report can
+    // explicitly call out legacy `#6.500` / `#6.502` outer wrappers.
     if cli.diagnose {
         let report = corim::diagnose::inspect(&bytes);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
     }
+
+    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers
+    // (TCG Endorsement spec / NVIDIA producers) before format detection,
+    // so the `0xD2`-first-byte check below sees the inner #6.18.
+    let bytes: Vec<u8> = match corim::compat::peel_tcg_wrappers(&bytes) {
+        Ok(p) => {
+            if p.was_peeled() {
+                eprintln!(
+                    "note: stripped legacy outer CBOR tag(s) #6.500 / #6.502 \
+(TCG Endorsement spec / pre-draft-10 producer)"
+                );
+            }
+            p.as_bytes().to_vec()
+        }
+        Err(e) => {
+            eprintln!("FAIL: legacy-wrapper peel failed: {}", e);
+            process::exit(2);
+        }
+    };
 
     // Step 1: Detect format — try signed CoRIM (tag 18) first, then unsigned (tag 501)
     let (corim, signed_info) = match try_decode_signed(&bytes) {
@@ -186,6 +208,23 @@ fn main() {
             corim::types::corim::ConciseTagChoice::Unknown(tag_num, _) => {
                 warnings.push(format!("tags[{}]: unknown tag type {}", i, tag_num));
                 unknown_count += 1;
+            }
+            corim::types::corim::ConciseTagChoice::BareBstr(bstr) => {
+                // TCG-style interop: producers omit the outer `#6.506(bstr)`
+                // wrapping. Use the compat helper to surface the inner CoMID.
+                warnings.push(format!(
+                    "tags[{}]: bare bstr ({} bytes) — TCG-style untagged CoMID; \
+decoded via compat::decode_comid_from_tcg_bstr",
+                    i,
+                    bstr.len()
+                ));
+                match corim::compat::decode_comid_from_tcg_bstr(bstr) {
+                    Ok(comid) => comid_tags.push(comid),
+                    Err(e) => errors.push(format!(
+                        "tags[{}] (BareBstr): failed to decode as CoMID — {}",
+                        i, e
+                    )),
+                }
             }
             _ => {
                 warnings.push(format!("tags[{}]: unrecognized tag variant", i));
@@ -318,9 +357,15 @@ fn try_decode_signed(
         None => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
     };
 
-    // Decode the inner CoRIM from the payload
+    // Decode interop: TCG-style producers (e.g. NVIDIA) emit the inner CoRIM
+    // as a bare `corim-map` instead of `#6.501(corim-map)`. Wrap if needed
+    // so the strict decode below sees the spec-compliant tagged form.
+    let payload_for_decode = corim::compat::wrap_bare_corim_map(payload);
+    let payload_bytes = payload_for_decode.as_bytes();
+
+    // Decode the inner CoRIM from the (possibly synthesized) tagged payload
     let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
-        match corim::cbor::decode(payload) {
+        match corim::cbor::decode(payload_bytes) {
             Ok(t) => t,
             Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
         };

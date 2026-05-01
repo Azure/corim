@@ -534,3 +534,108 @@ with only extension keys (e.g., key 10001 for profile-specific data)
 satisfy this constraint. The derive macro tracks `__had_any_entry`
 to correctly handle maps where all known fields are `None` but
 extension keys were present.
+### Legacy outer CBOR tags `#6.500` / `#6.502`
+
+Early CoRIM drafts and the TCG Endorsement specification wrap the
+CoRIM in `#6.500(#6.502(#6.18(...)))` (signed) or `#6.500(#6.501(...))`
+(unsigned). Tags 500 and 502 were dropped from the IETF draft in
+[PR #337][p337] / [issue #333][i333], merged 2025-01-22, but real-world
+producers still emit them — notably NVIDIA NIC firmware CoRIMs (see
+([`corim/tests/fixtures/nvidia_cx7_tcg_wrapped.cbor`](../corim/tests/fixtures/nvidia_cx7_tcg_wrapped.cbor)).
+
+NVIDIA documents this wire format explicitly in
+["NVIDIA Device Attestation and CoRIM-based Reference Measurement
+Sharing v5.0 — CoRIM Structure"][nv-corim] (last updated 2026-03-05),
+where their published CDDL still uses the pre-PR-#337 shape:
+
+```cddl
+corim = #6.500(corim-type-choice)
+$corim-type-choice /= #6.501(corim-map)
+$corim-type-choice /= #6.502(signed-corim)
+```
+
+This is therefore a *documented*, *intentional* divergence from the
+IETF draft, not a producer bug — there is no NVIDIA migration path
+without coordinated NIC firmware updates across deployed fleets.
+Accepting the wrappers on decode is the only way to interoperate.
+
+[`crate::compat::peel_tcg_wrappers`](../corim/src/compat.rs) strips
+these wrappers transparently before strict decode. Both
+`validate::decode_and_validate*` and `types::signed::decode_signed_corim`
+call it at their top. Constants live in `types/tags.rs` as
+`TAG_LEGACY_TOP` (500) and `TAG_LEGACY_SIGNED` (502).
+
+The CLI prints a one-line `note:` to stderr when peeling occurred.
+The `--diagnose` walker emits a `[warn ]` issue at `$` and recurses
+into the inner value so the user gets full diagnostics.
+
+This relaxation is **decode-only** — `SignedCorimBuilder` and
+`CorimBuilder` always emit draft-10 wire format (no `#6.500`, no
+`#6.502`). Builder tests and round-trip tests verify this.
+
+#### Bare (untagged) `corim-map` payload
+
+The pre-PR-#337 CDDL allowed `payload: bstr .cbor (tagged-corim-map /
+corim-map)` because the outer `#6.502` provided context. The IETF
+draft-10 now requires `tagged-corim-map = #6.501(corim-map)`, but
+TCG-style producers (including NVIDIA) still emit the bare form.
+
+[`crate::compat::wrap_bare_corim_map`](../corim/src/compat.rs) prefixes
+the synthetic `#6.501` tag header (3 bytes: `0xD9 0x01 0xF5`) onto
+inputs that start with a definite-length CBOR map header
+(`0xA0..=0xBB`). It runs inside `validate::decode_and_validate_full_impl`
+right after `peel_tcg_wrappers`, so both relaxations chain naturally.
+
+The `--diagnose` walker emits a `[warn ]` issue at `$.payload`
+explaining the divergence and recurses into the inner map.
+
+This relaxation is **decode-only** — encoders always emit `#6.501`.
+
+#### Bare (untagged) `bstr` `tags[]` entries
+
+The IETF CDDL requires every entry in the unsigned-corim-map's `tags[]`
+array to be a tagged item: `#6.505(bstr)` (CoSWID), `#6.506(bstr)`
+(CoMID), or `#6.508(bstr)` (CoTL). TCG-style producers (notably
+NVIDIA NIC firmware CoRIMs) emit each entry as a **bare** `bstr`,
+relying on the historical outer `#6.500` / `#6.502` envelope for
+disambiguation.
+
+The `ConciseTagChoice` enum has a [`BareBstr(Vec<u8>)`][cb] variant
+that accepts these on decode. The strict `validate.rs` path routes
+`BareBstr` entries through [`compat::decode_comid_from_tcg_bstr`][dc],
+which itself accepts both NVIDIA's swapped nesting (the inner bytes
+are `#6.506(map)` rather than the spec's `#6.506(bstr .cbor map)`)
+and the bare-map nesting.
+
+Reference oracle: `cocli@v0.0.1-compat` (NVIDIA's recommended tool,
+per [their docs][nv-tools]) accepts the same shape via the older
+`Tag = []byte` representation in `corim` package commit
+[`0bbdd6c78526`][cocli-corim], which predates the `{Number, Content}`
+struct refactor. Our explicit `BareBstr` variant is the type-safe
+equivalent.
+
+This relaxation is **decode-only** — encoders always emit `#6.506(bstr)`.
+The variant is `#[non_exhaustive]`-friendly: it cannot be constructed
+from outside the crate, so callers cannot accidentally use it on the
+encode path.
+
+[cb]: ../corim/src/types/corim.rs
+[dc]: ../corim/src/compat.rs
+[nv-tools]: https://docs.nvidia.com/networking/display/dpunicattestation/Tools-and-Utilities
+[cocli-corim]: https://github.com/veraison/corim/tree/0bbdd6c78526
+
+#### Tag-32 wrapping on URIs (RFC 8949 §3.4.5.3)
+
+CoRIM `corim-locator-map.href` is typed as `uri / [+ uri]`. The CoRIM
+CDDL doesn't pin down the wire form of `uri`, but per RFC 8949
+§3.4.5.3, URIs are conventionally encoded as `#6.32(text)`. NVIDIA
+producers emit the tagged form; some other producers emit a bare
+`text`. The `CorimLocatorHref` deserializer accepts both. This is a
+spec-compliance fix, not a TCG-specific relaxation — encoders still
+emit bare `text` for compatibility with our existing test corpus.
+
+[p337]: https://github.com/ietf-rats-wg/draft-ietf-rats-corim/pull/337
+[i333]: https://github.com/ietf-rats-wg/draft-ietf-rats-corim/issues/333
+[nv-corim]: https://docs.nvidia.com/networking/display/dpunicattestation/corim-structure
+[nv-sdk]: https://github.com/NVIDIA/attestation-sdk
+[nv-rim-todo]: https://github.com/NVIDIA/attestation-sdk/blob/main/nv-attestation-sdk-cpp/src/rim.cpp#L574

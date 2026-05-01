@@ -1201,6 +1201,11 @@ pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::Decode
         )));
     }
 
+    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
+    // present. See `crate::compat::peel_tcg_wrappers`.
+    let peeled = crate::compat::peel_tcg_wrappers(bytes)?;
+    let bytes = peeled.as_bytes();
+
     // Decode the top-level tagged value
     let val: Value = cbor::decode(bytes)
         .map_err(|e| DecodeError::Deserialization(format!("cannot decode CBOR: {}", e)))?;

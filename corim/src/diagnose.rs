@@ -54,8 +54,8 @@ use crate::types::signed::{
 };
 use crate::types::tags::{
     CORIM_KEY_DEPENDENT_RIMS, CORIM_KEY_ENTITIES, CORIM_KEY_ID, CORIM_KEY_PROFILE,
-    CORIM_KEY_RIM_VALIDITY, CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_OID,
-    TAG_SIGNED_CORIM, TAG_UUID,
+    CORIM_KEY_RIM_VALIDITY, CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL,
+    TAG_LEGACY_SIGNED, TAG_LEGACY_TOP, TAG_OID, TAG_SIGNED_CORIM, TAG_UUID,
 };
 
 use core::fmt;
@@ -286,13 +286,41 @@ pub fn inspect(bytes: &[u8]) -> DecodeReport {
     };
 
     match top {
+        Value::Tag(TAG_LEGACY_TOP, inner) | Value::Tag(TAG_LEGACY_SIGNED, inner) => {
+            // Producer used a legacy outer wrapper (TCG Endorsement spec /
+            // early CoRIM drafts / NVIDIA NIC firmware). Warn and recurse
+            // into the inner value so the user still gets full diagnostics.
+            let outer_tag = match cbor::decode::<Value>(bytes).ok() {
+                Some(Value::Tag(t, _)) => t,
+                _ => 0, // unreachable in practice
+            };
+            ins.warn(
+                "$",
+                format!(
+                    "found legacy outer tag #6.{} — dropped from IETF draft-10 (PR #337, Jan 2025); \
+still emitted by the TCG Endorsement spec and some real-world producers (e.g. NVIDIA). \
+The library accepts these on decode; encode always uses draft-10 tags.",
+                    outer_tag
+                ),
+            );
+            inspect_top_value(&mut ins, *inner);
+        }
+        other => inspect_top_value(&mut ins, other),
+    }
+
+    ins.report
+}
+
+/// Dispatch on the top-level (post-peel) [`Value`] of a CoRIM document.
+fn inspect_top_value(ins: &mut Inspector, top: Value) {
+    match top {
         Value::Tag(TAG_SIGNED_CORIM, inner) => {
             ins.report.envelope = EnvelopeKind::Signed;
             ins.info(
                 "$",
                 format!("recognized CBOR tag {} (signed-corim)", TAG_SIGNED_CORIM),
             );
-            inspect_cose_sign1(&mut ins, *inner);
+            inspect_cose_sign1(ins, *inner);
         }
         Value::Tag(TAG_CORIM, inner) => {
             ins.report.envelope = EnvelopeKind::Unsigned;
@@ -303,7 +331,12 @@ pub fn inspect(bytes: &[u8]) -> DecodeReport {
                     TAG_CORIM
                 ),
             );
-            inspect_corim_map(&mut ins, "$", *inner);
+            inspect_corim_map(ins, "$", *inner);
+        }
+        Value::Tag(TAG_LEGACY_TOP, inner) | Value::Tag(TAG_LEGACY_SIGNED, inner) => {
+            // Nested legacy wrapper (e.g. NVIDIA emits 500(502(18(...)))).
+            // Recurse silently — the outermost was already warned about.
+            inspect_top_value(ins, *inner);
         }
         Value::Tag(t, _) => {
             ins.err(
@@ -326,8 +359,6 @@ pub fn inspect(bytes: &[u8]) -> DecodeReport {
             );
         }
     }
-
-    ins.report
 }
 
 // ===========================================================================
@@ -468,6 +499,21 @@ fn inspect_cose_payload(ins: &mut Inspector, v: Value) {
                         ),
                         "If this is a hash-envelope, payload should be raw digest bytes (no CBOR wrapping)",
                     );
+                }
+                Ok(Value::Map(m)) => {
+                    // Bare `corim-map` payload — TCG-style untagged form.
+                    // The library accepts this via `compat::wrap_bare_corim_map`,
+                    // so this is informational, not a warning.
+                    ins.warn(
+                        "$.payload",
+                        format!(
+                            "payload is a bare CBOR map (not #6.{}-tagged) — TCG-style untagged corim-map. \
+The library accepts this on decode; encoders always emit the tag.",
+                            TAG_CORIM
+                        ),
+                    );
+                    // Recurse into the map so the user gets full diagnostics.
+                    inspect_corim_map(ins, "$.payload", Value::Map(m));
                 }
                 Ok(other) => {
                     // Could be a hash-envelope digest (raw bytes that happen to be valid CBOR).
@@ -1025,10 +1071,22 @@ fn inspect_tags_array(ins: &mut Inspector, base_path: &str, v: Value) {
                     t, TAG_COSWID, TAG_COMID, TAG_COTL
                 ),
             ),
+            Value::Bytes(b) => ins.warn(
+                path,
+                format!(
+                    "tags[] entry is a bare bstr ({} bytes), not the spec-required \
+#6.{}/{}/{}-tagged form. The library accepts this as a TCG-style interop \
+relaxation and routes it through `compat::decode_comid_from_tcg_bstr`.",
+                    b.len(),
+                    TAG_COSWID,
+                    TAG_COMID,
+                    TAG_COTL
+                ),
+            ),
             other => ins.err(
                 path,
                 format!(
-                    "tags[] entry must be a CBOR-tagged item, found bare {}",
+                    "tags[] entry must be a CBOR-tagged item or a bare bstr, found {}",
                     value_kind(&other)
                 ),
             ),
@@ -1165,5 +1223,65 @@ mod tests {
             .any(|i| i.message.contains("4") && i.severity == Severity::Error));
         // Element 0 (empty protected bstr) should still be inspected.
         assert!(r.issues.iter().any(|i| i.path == "$.protected"));
+    }
+
+    #[test]
+    fn legacy_500_wrapper_warns_and_recurses() {
+        // #6.500(#6.501({...minimal corim...}))
+        let inner_comid = Value::Map(vec![(Value::Integer(1), Value::Text("t".into()))]);
+        let comid_bytes = encode(&inner_comid).unwrap();
+        let corim_inner = Value::Map(vec![
+            (Value::Integer(0), Value::Text("my-id".into())),
+            (
+                Value::Integer(1),
+                Value::Array(vec![Value::Tag(
+                    TAG_COMID,
+                    Box::new(Value::Bytes(comid_bytes)),
+                )]),
+            ),
+        ]);
+        let corim_tagged = Value::Tag(TAG_CORIM, Box::new(corim_inner));
+        let bytes = encode(&Tagged::new(TAG_LEGACY_TOP, corim_tagged)).unwrap();
+        let r = inspect(&bytes);
+        // Envelope should be recognized as Unsigned (we recursed past 500).
+        assert_eq!(r.envelope, EnvelopeKind::Unsigned);
+        // A warning about the legacy tag must be present.
+        let warned = r
+            .issues
+            .iter()
+            .find(|i| i.severity == Severity::Warning && i.message.contains("legacy"))
+            .expect("expected a legacy-tag warning");
+        assert!(warned.message.contains("500"));
+        assert_eq!(r.error_count(), 0, "issues: {:#?}", r.issues);
+    }
+
+    #[test]
+    fn nested_500_502_18_envelope_is_recognized_as_signed() {
+        // The NVIDIA shape: #6.500(#6.502(#6.18([prot, {}, nil, sig])))
+        let protected_inner = Value::Map(vec![
+            (Value::Integer(1), Value::Integer(-7)),
+            (Value::Integer(3), Value::Text(CORIM_CONTENT_TYPE.into())),
+            (
+                Value::Integer(8),
+                Value::Bytes(encode(&Value::Map(vec![])).unwrap()),
+            ),
+        ]);
+        let protected_bytes = encode(&protected_inner).unwrap();
+        let cose = Value::Array(vec![
+            Value::Bytes(protected_bytes),
+            Value::Map(vec![]),
+            Value::Null,
+            Value::Bytes(vec![0xAA; 64]),
+        ]);
+        let cose_tagged = Value::Tag(TAG_SIGNED_CORIM, Box::new(cose));
+        let inner502 = Value::Tag(TAG_LEGACY_SIGNED, Box::new(cose_tagged));
+        let bytes = encode(&Tagged::new(TAG_LEGACY_TOP, inner502)).unwrap();
+        let r = inspect(&bytes);
+        assert_eq!(r.envelope, EnvelopeKind::Signed);
+        // Outer warning present, inner cose-sign1 shape OK.
+        assert!(r
+            .issues
+            .iter()
+            .any(|i| i.severity == Severity::Warning && i.message.contains("legacy")));
     }
 }

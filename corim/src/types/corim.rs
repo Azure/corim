@@ -172,6 +172,19 @@ pub enum ConciseTagChoice {
     Cotl(Vec<u8>),
     /// Unknown tag type.
     Unknown(u64, Vec<u8>),
+    /// **Decode-only interop variant** — a bare CBOR byte string with no
+    /// outer `#6.505` / `#6.506` / `#6.508` tag.
+    ///
+    /// The IETF spec requires every `tags[]` entry to be one of the three
+    /// tagged forms above, but TCG-style producers (notably NVIDIA NIC
+    /// firmware CoRIMs) emit bare `bstr` entries because the historical
+    /// outer `#6.500` / `#6.502` envelope provided enough disambiguation.
+    /// See `crate::compat::decode_comid_from_tcg_bstr` for the canonical
+    /// recipe to interpret these bytes as a [`crate::types::comid::ComidTag`].
+    ///
+    /// Encoders in this crate **never** produce `BareBstr`; serializing this
+    /// variant emits the raw bytes verbatim (no synthetic tag is added).
+    BareBstr(Vec<u8>),
 }
 
 impl Serialize for ConciseTagChoice {
@@ -184,6 +197,7 @@ impl Serialize for ConciseTagChoice {
                 let val = Value::Tag(*tag, Box::new(Value::Bytes(bytes.clone())));
                 val.serialize(s)
             }
+            ConciseTagChoice::BareBstr(bytes) => Value::Bytes(bytes.clone()).serialize(s),
         }
     }
 }
@@ -208,7 +222,15 @@ impl<'de> Deserialize<'de> for ConciseTagChoice {
                 let raw_bytes = cbor::encode(&*inner).map_err(serde::de::Error::custom)?;
                 Ok(ConciseTagChoice::Unknown(tag, raw_bytes))
             }
-            _ => Err(serde::de::Error::custom("expected a tagged concise tag")),
+            // Decode-only interop: TCG-style producers (e.g. NVIDIA NIC
+            // firmware CoRIMs) emit `tags[]` entries as bare `bstr` rather
+            // than the spec-required `#6.505/506/508(bstr)` envelope. We
+            // surface those as `BareBstr` so downstream code can decide how
+            // to interpret them. See `crate::compat::decode_comid_from_tcg_bstr`.
+            Value::Bytes(b) => Ok(ConciseTagChoice::BareBstr(b)),
+            _ => Err(serde::de::Error::custom(
+                "expected a tagged concise tag or a bare bstr (TCG-style)",
+            )),
         }
     }
 }
@@ -258,21 +280,36 @@ impl Serialize for CorimLocatorHref {
 impl<'de> Deserialize<'de> for CorimLocatorHref {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
+        // Helper: accept either a bare text string or `#6.32(text)` (RFC 8949
+        // §3.4.5.3 URI tag). Some real-world producers (e.g. NVIDIA NIC
+        // firmware CoRIMs) tag every URI; others emit the bare string. The
+        // CDDL `uri` rule is conventionally `#6.32(text)` but bare text is
+        // widely seen in CoRIM-adjacent producers.
+        fn extract_uri<E: serde::de::Error>(v: Value) -> Result<String, E> {
+            match v {
+                Value::Text(t) => Ok(t),
+                Value::Tag(32, inner) => match *inner {
+                    Value::Text(t) => Ok(t),
+                    other => Err(E::custom(format!(
+                        "URI tag #6.32 must wrap text, got {:?}",
+                        other
+                    ))),
+                },
+                other => Err(E::custom(format!(
+                    "expected text or #6.32(text) for URI, got {:?}",
+                    other
+                ))),
+            }
+        }
         match val {
-            Value::Text(t) => Ok(CorimLocatorHref::Single(t)),
             Value::Array(arr) => {
                 let mut uris = Vec::new();
                 for v in arr {
-                    match v {
-                        Value::Text(t) => uris.push(t),
-                        _ => {
-                            return Err(serde::de::Error::custom("href array must contain strings"))
-                        }
-                    }
+                    uris.push(extract_uri(v)?);
                 }
                 Ok(CorimLocatorHref::Multiple(uris))
             }
-            _ => Err(serde::de::Error::custom("expected text or array for href")),
+            other => Ok(CorimLocatorHref::Single(extract_uri(other)?)),
         }
     }
 }
