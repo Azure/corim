@@ -91,7 +91,12 @@ fn decode_valid_cbor_but_not_tagged() {
 
 #[test]
 fn decode_wrong_outer_tag() {
-    // Wrap in tag 500 instead of 501
+    // Wrap in tag 999 instead of 501.
+    //
+    // Note: tag 500 used to be tested here, but the library now peels
+    // legacy `#6.500` / `#6.502` wrappers as a decode-only relaxation
+    // (see `corim::compat::peel_tcg_wrappers`). Use a tag that is
+    // unambiguously wrong instead.
     let comid = corim::builder::ComidBuilder::new(TagIdChoice::Text("t".into()))
         .add_reference_triple(ReferenceTriple::new(make_env(), vec![make_meas()]))
         .build()
@@ -101,14 +106,14 @@ fn decode_wrong_outer_tag() {
         .unwrap()
         .build()
         .unwrap();
-    let tagged = corim::cbor::value::Tagged::new(500, corim_map); // wrong tag!
+    let tagged = corim::cbor::value::Tagged::new(999, corim_map); // wrong tag!
     let bytes = cbor::encode(&tagged).unwrap();
 
     let result = corim::validate::decode_and_validate(&bytes);
     assert!(result.is_err());
     let err = format!("{}", result.unwrap_err());
     assert!(
-        err.contains("501") || err.contains("500"),
+        err.contains("501") || err.contains("999"),
         "error should mention tags: {}",
         err
     );

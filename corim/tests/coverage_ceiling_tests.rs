@@ -877,7 +877,13 @@ fn corim_locator_href_non_text_array_items() {
         Value::Array(vec![Value::Integer(42)]),
     )]);
     let err = decode_err::<CorimLocator>(&v);
-    assert!(err.contains("string"), "got: {err}");
+    // Behavior contract: non-text/non-#6.32(text) array items must be rejected.
+    // Error wording changed when the deserializer started accepting #6.32-tagged
+    // URIs (real-world producers like NVIDIA emit them).
+    assert!(
+        err.contains("text") || err.contains("URI") || err.contains("string"),
+        "got: {err}"
+    );
 }
 
 #[test]

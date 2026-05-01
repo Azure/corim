@@ -34,6 +34,29 @@ pub const TAG_OID: u64 = 111;
 /// `tagged-unsigned-corim-map` = `#6.501(unsigned-corim-map)`.
 pub const TAG_CORIM: u64 = 501;
 
+// ---------------------------------------------------------------------------
+// Legacy / TCG-compatibility tags
+// ---------------------------------------------------------------------------
+//
+// Tags 500 and 502 were defined in early drafts of CoRIM and are still used
+// by the TCG Endorsement specification (see DICE errata) and by some
+// real-world producers (e.g. NVIDIA NIC firmware CoRIMs, observed 2026).
+// They were dropped from the IETF draft in PR #337 (issue #333), merged
+// 2025-01-22.
+//
+// We accept them on **decode only** by transparently peeling them in
+// `crate::compat::peel_tcg_wrappers`. Encoding always uses the draft-10
+// shape (tag 18 for signed, tag 501 for unsigned).
+
+/// `#6.500(...)` — legacy outer wrapper from early CoRIM drafts and the
+/// TCG Endorsement spec. Not part of draft-ietf-rats-corim-10.
+pub const TAG_LEGACY_TOP: u64 = 500;
+
+/// `#6.502(signed-corim)` — legacy wrapper around `#6.18(COSE_Sign1)` from
+/// early CoRIM drafts and the TCG Endorsement spec. Not part of
+/// draft-ietf-rats-corim-10.
+pub const TAG_LEGACY_SIGNED: u64 = 502;
+
 /// `tagged-concise-swid-tag` = `#6.505(bytes .cbor concise-swid-tag)`.
 pub const TAG_COSWID: u64 = 505;
 

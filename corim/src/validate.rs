@@ -145,6 +145,17 @@ fn decode_and_validate_full_impl(
             max: MAX_PAYLOAD_SIZE,
         });
     }
+    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
+    // present (TCG Endorsement spec / NVIDIA producers). See
+    // `crate::compat::peel_tcg_wrappers`.
+    let peeled = crate::compat::peel_tcg_wrappers(bytes).map_err(ValidationError::Decode)?;
+    let bytes = peeled.as_bytes();
+    // Decode interop: if the input is a bare `corim-map` (no #6.501 wrapper),
+    // synthesize the wrapper so strict decode succeeds. Same producer family
+    // as above (TCG-style implementations omit the inner tag because the
+    // outer #6.500/#6.502 historically provided disambiguation).
+    let wrapped = crate::compat::wrap_bare_corim_map(bytes);
+    let bytes = wrapped.as_bytes();
     // Decode the tag-501 wrapped CoRIM
     let tagged: cbor::value::Tagged<CorimMap> =
         cbor::decode(bytes).map_err(ValidationError::Decode)?;
@@ -197,6 +208,18 @@ fn decode_and_validate_full_impl(
                     }
                     Err(_) => coswid_opaque_count += 1,
                 }
+            }
+            ConciseTagChoice::BareBstr(bytes) => {
+                // TCG-style interop: producers (e.g. NVIDIA) emit `tags[]`
+                // entries as bare `bstr` whose contents are either a
+                // `#6.506`-wrapped CoMID or a bare CoMID map. Use the
+                // tag-tolerant compat decoder; failure here is fatal because
+                // we have no other interpretation for a bare bstr in this
+                // position.
+                let comid = crate::compat::decode_comid_from_tcg_bstr(bytes)
+                    .map_err(ValidationError::Decode)?;
+                validate_comid(&comid)?;
+                comids.push(comid);
             }
             _ => {
                 // Unknown tag types: forward-compat, skip silently

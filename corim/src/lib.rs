@@ -155,6 +155,8 @@ pub mod error;
 pub mod types;
 
 pub mod builder;
+/// Decode-only interop helpers (legacy tag stripping, etc.). See module docs.
+pub mod compat;
 /// **Unstable** — debugging-only structural inspector. The shapes of the
 /// types in this module may change between minor versions without a
 /// deprecation cycle. Production code should use [`validate::decode_and_validate`].
