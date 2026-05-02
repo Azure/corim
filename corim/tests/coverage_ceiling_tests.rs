@@ -515,28 +515,28 @@ fn tag_id_unexpected_type() {
 fn class_id_oid_non_bytes() {
     let v = Value::Tag(TAG_OID, Box::new(Value::Text("not-bytes".into())));
     let err = decode_err::<ClassIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn class_id_uuid_wrong_size() {
     let v = Value::Tag(TAG_UUID, Box::new(Value::Bytes(vec![0; 8])));
     let err = decode_err::<ClassIdChoice>(&v);
-    assert!(err.contains("16 bytes"), "got: {err}");
+    assert!(err.contains("got 8 bytes"), "got: {err}");
 }
 
 #[test]
 fn class_id_uuid_non_bytes() {
     let v = Value::Tag(TAG_UUID, Box::new(Value::Text("x".into())));
     let err = decode_err::<ClassIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn class_id_bytes_non_bytes() {
     let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
     let err = decode_err::<ClassIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]

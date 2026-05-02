@@ -8,7 +8,9 @@
 
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
-use corim_macros::{CborDeserialize, CborSerialize};
+use corim_macros::{
+    CborDeserialize, CborSerialize, CborTagChoiceDeserialize, CborTagChoiceSerialize,
+};
 use serde::{Deserialize, Serialize};
 
 use super::tags::*;
@@ -245,61 +247,26 @@ impl<'de> Deserialize<'de> for TagIdChoice {
 }
 
 /// `$class-id-type-choice` — OID, UUID, or generic bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Decoder accepts a few wire-format relaxations beyond the strict CDDL:
+///
+/// - bare 16-byte `bstr` (no tag) is routed to [`Uuid`](Self::Uuid)
+/// - any other bare `bstr` falls through to [`Bytes`](Self::Bytes)
+///
+/// Encoders always emit the tagged form (`#6.111`, `#6.37`, or `#6.560`).
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
 #[non_exhaustive]
 pub enum ClassIdChoice {
     /// OID (CBOR tag 111).
+    #[cbor(tag = 111, bytes)]
     Oid(Vec<u8>),
-    /// UUID (CBOR tag 37).
+    /// UUID (CBOR tag 37). Bare 16-byte `bstr` (no tag) is also accepted on decode.
+    #[cbor(tag = 37, bytes, accept_bare = "uuid_16")]
     Uuid([u8; 16]),
-    /// Generic tagged bytes (CBOR tag 560).
+    /// Generic tagged bytes (CBOR tag 560). Catch-all for any bare `bstr`
+    /// not already routed to [`Uuid`](Self::Uuid).
+    #[cbor(tag = 560, bytes, catch_bare_bytes)]
     Bytes(Vec<u8>),
-}
-
-impl Serialize for ClassIdChoice {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            ClassIdChoice::Oid(b) => value::serialize_tagged_bytes(TAG_OID, b, s),
-            ClassIdChoice::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u, s),
-            ClassIdChoice::Bytes(b) => value::serialize_tagged_bytes(TAG_BYTES, b, s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for ClassIdChoice {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Tag(TAG_OID, inner) => {
-                Ok(ClassIdChoice::Oid(inner.into_bytes().ok_or_else(|| {
-                    serde::de::Error::custom("tag 111 must wrap bytes")
-                })?))
-            }
-            Value::Tag(TAG_UUID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                Ok(ClassIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Tag(TAG_BYTES, inner) => {
-                Ok(ClassIdChoice::Bytes(inner.into_bytes().ok_or_else(
-                    || serde::de::Error::custom("tag 560 must wrap bytes"),
-                )?))
-            }
-            // Accept bare bytes: 16 bytes → UUID, other sizes → generic bytes (interop).
-            Value::Bytes(b) if b.len() == 16 => {
-                Ok(ClassIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Bytes(b) => Ok(ClassIdChoice::Bytes(b)),
-            _ => Err(serde::de::Error::custom(
-                "expected tagged OID, UUID, or bytes",
-            )),
-        }
-    }
 }
 
 /// `$instance-id-type-choice` — UEID, UUID, bytes, or crypto key types.
