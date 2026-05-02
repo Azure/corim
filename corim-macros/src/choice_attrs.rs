@@ -59,6 +59,7 @@ pub struct ChoiceEnumAttrs {
 
 /// Parsed per-variant attributes for `CborTagChoice`.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // `accept_bare_uuid` is consumed by the Deserialize codegen (commit 2.3)
 pub enum ChoiceVariantKind {
     /// `#[cbor(tag = N)]` — variant is `#6.N(inner)`.
     Tagged {
@@ -95,6 +96,10 @@ pub struct ChoiceVariant {
 }
 
 impl ChoiceEnumAttrs {
+    // `from_attrs` is consumed by the `CborTagChoiceDeserialize` codegen
+    // (commit 2.3). The Serialize codegen (commit 2.2) doesn't read enum-
+    // level attributes since `custom_validate` is a decode-time hook only.
+    #[allow(dead_code)]
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Self> {
         let mut result = Self::default();
         for attr in attrs {
