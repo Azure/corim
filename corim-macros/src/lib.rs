@@ -10,9 +10,7 @@
 //!   CDDL integer-keyed maps (e.g. `corim-map`, `concise-mid-tag`).
 //! - `CborTagChoiceSerialize` / `CborTagChoiceDeserialize` derives for
 //!   **enums** that model CDDL tag-choice productions (e.g.
-//!   `$class-id-type-choice`, `$crypto-key-type-choice`). Codegen for the
-//!   Deserialize half lands in commit 2.3 of PR 2; only the Serialize
-//!   derive is exposed today.
+//!   `$class-id-type-choice`, `$crypto-key-type-choice`).
 //!
 //! # Supported attributes
 //!
@@ -36,6 +34,7 @@ use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
 mod choice_attrs;
+mod choice_de;
 mod choice_ser;
 mod de;
 mod ser;
@@ -85,6 +84,31 @@ pub fn derive_cbor_deserialize(input: TokenStream) -> TokenStream {
 pub fn derive_cbor_tag_choice_serialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
     match choice_ser::expand_tag_choice_serialize(&input) {
+        Ok(ts) => ts.into(),
+        Err(e) => e.to_compile_error().into(),
+    }
+}
+
+/// Derive `serde::Deserialize` for a CBOR tag-choice enum.
+///
+/// See [`CborTagChoiceSerialize`](macro@CborTagChoiceSerialize) for the
+/// shared attribute grammar. The Deserialize half additionally honors:
+///
+/// - `#[cbor(tag = N, accept_bare = "uuid_16")]` on a variant — accepts a
+///   bare 16-byte CBOR `bstr` (no tag) on decode and routes it to that
+///   variant. Used for the interop relaxation observed across CoRIM
+///   producers that omit tag 37 on UUIDs.
+/// - `#[cbor(tag = N, bytes, catch_bare_bytes)]` on at most one variant —
+///   any bare bstr (no tag, any length not already routed by an
+///   `accept_bare` rule) lands here. The variant's inner field must be
+///   `Vec<u8>`.
+/// - `#[cbor(custom_validate = "path::to::fn")]` on the enum — invokes
+///   `fn(&value) -> Result<(), String>` after construction; an `Err(msg)`
+///   becomes `serde::de::Error::custom(msg)`.
+#[proc_macro_derive(CborTagChoiceDeserialize, attributes(cbor))]
+pub fn derive_cbor_tag_choice_deserialize(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input as DeriveInput);
+    match choice_de::expand_tag_choice_deserialize(&input) {
         Ok(ts) => ts.into(),
         Err(e) => e.to_compile_error().into(),
     }

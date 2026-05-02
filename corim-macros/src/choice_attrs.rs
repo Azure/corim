@@ -67,7 +67,6 @@ pub struct ChoiceEnumAttrs {
 
 /// Parsed per-variant attributes for `CborTagChoice`.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // `accept_bare_uuid` is consumed by the Deserialize codegen (commit 2.3)
 pub enum ChoiceVariantKind {
     /// `#[cbor(tag = N)]` — variant is `#6.N(inner)`.
     Tagged {
@@ -110,13 +109,15 @@ pub enum ChoiceVariantKind {
 pub struct ChoiceVariant {
     pub ident: syn::Ident,
     pub kind: ChoiceVariantKind,
+    /// Type of the variant's single tuple field (e.g. `String`, `Vec<u8>`,
+    /// `[u8; 16]`, `Digest`). Codegen uses this to choose between
+    /// `Vec<u8>`-direct vs `[u8; N]::try_from(Vec<u8>)` constructions for
+    /// tagged-bytes variants. The parser already enforced single-field
+    /// tuple shape, so this is always present and unique.
+    pub field_ty: syn::Type,
 }
 
 impl ChoiceEnumAttrs {
-    // `from_attrs` is consumed by the `CborTagChoiceDeserialize` codegen
-    // (commit 2.3). The Serialize codegen (commit 2.2) doesn't read enum-
-    // level attributes since `custom_validate` is a decode-time hook only.
-    #[allow(dead_code)]
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Self> {
         let mut result = Self::default();
         for attr in attrs {
@@ -281,9 +282,18 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
         ChoiceVariantKind::InlineUint
     };
 
+    // Pull out the (single) tuple field type. require_single_field_tuple
+    // already validated the shape; this destructure is infallible.
+    let field_ty = match &variant.fields {
+        syn::Fields::Unnamed(fields) => fields.unnamed.first().unwrap().ty.clone(),
+        // Other shapes already errored out above.
+        _ => unreachable!("require_single_field_tuple should have rejected this"),
+    };
+
     Ok(ChoiceVariant {
         ident: variant.ident.clone(),
         kind,
+        field_ty,
     })
 }
 
