@@ -132,9 +132,8 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
                                 }
                                 other => Err(serde::de::Error::custom(format!(
                                     concat!(
-                                        "tag {} (",
                                         stringify!(#name), "::", stringify!(#vid),
-                                        ") must wrap bstr, got {:?}"
+                                        ": tag {} must wrap bstr, got {:?}"
                                     ),
                                     #tag_lit, core::mem::discriminant(&other)
                                 ))),
@@ -154,9 +153,8 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
                                 }
                                 other => Err(serde::de::Error::custom(format!(
                                     concat!(
-                                        "tag {} (",
                                         stringify!(#name), "::", stringify!(#vid),
-                                        ") must wrap tstr, got {:?}"
+                                        ": tag {} must wrap tstr, got {:?}"
                                     ),
                                     #tag_lit, core::mem::discriminant(&other)
                                 ))),
@@ -174,9 +172,8 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
                                 .map(#name::#vid)
                                 .map_err(|e| serde::de::Error::custom(format!(
                                     concat!(
-                                        "tag {} (",
                                         stringify!(#name), "::", stringify!(#vid),
-                                        ") inner decode: {}"
+                                        ": tag {} inner decode: {}"
                                     ),
                                     #tag_lit, e
                                 )))
@@ -193,12 +190,12 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
 /// `Self::vid(value)` from a `b: Vec<u8>` in scope, returning
 /// `Result<Self, D::Error>`.
 ///
-/// Two shapes are supported:
-///   - `Vec<u8>` — direct: `Ok(Name::vid(b))`
-///   - `[u8; N]` — TryInto: `Ok(Name::vid(b.try_into()?))`
-///
-/// Anything else falls through to `Ok(Name::vid(b))` and lets the compiler
-/// emit a type error if the field doesn't accept `Vec<u8>`.
+/// The parser (`byte_field_kind` in `choice_attrs`) guarantees that any
+/// byte-shaped variant has either `Vec<u8>` or `[u8; N]` as its field
+/// type, so the two arms below are exhaustive in practice. The fallback
+/// `Ok(Name::vid(b))` arm is reachable only if the parser is later
+/// extended without updating this function; it produces a compile error
+/// at macro expansion site if the field doesn't accept `Vec<u8>`.
 fn bytes_to_inner_expr(field_ty: &syn::Type, vid: &syn::Ident, name: &syn::Ident) -> TokenStream {
     if let syn::Type::Array(_) = field_ty {
         // `[u8; N]` for any N — TryFrom<Vec<u8>>::Error is Vec<u8>, so include
@@ -211,7 +208,7 @@ fn bytes_to_inner_expr(field_ty: &syn::Type, vid: &syn::Ident, name: &syn::Ident
                     serde::de::Error::custom(format!(
                         concat!(
                             stringify!(#name), "::", stringify!(#vid),
-                            " requires {} bytes, got {} bytes"
+                            ": requires {} bytes, got {} bytes"
                         ),
                         expected, actual
                     ))
@@ -220,7 +217,6 @@ fn bytes_to_inner_expr(field_ty: &syn::Type, vid: &syn::Ident, name: &syn::Ident
             }
         }
     } else {
-        // Assume Vec<u8>; if not, the compiler will catch it at expansion.
         quote! { Ok(#name::#vid(b)) }
     }
 }
@@ -238,9 +234,8 @@ fn build_bare_uuid_arm(name: &syn::Ident, variants: &[ChoiceVariant]) -> TokenSt
             crate::cbor::value::Value::Bytes(b) if b.len() == 16 => {
                 let arr: [u8; 16] = b.try_into().map_err(|_| {
                     serde::de::Error::custom(concat!(
-                        "bare 16-byte bstr for ",
                         stringify!(#name), "::", stringify!(#vid),
-                        " failed array conversion"
+                        ": bare 16-byte bstr failed array conversion"
                     ))
                 })?;
                 Ok(#name::#vid(arr))
@@ -290,7 +285,7 @@ fn build_inline_uint_arm(name: &syn::Ident, variants: &[ChoiceVariant]) -> Token
                 let n: u64 = n.try_into().map_err(|_| {
                     serde::de::Error::custom(concat!(
                         stringify!(#name), "::", stringify!(#vid),
-                        " requires unsigned integer"
+                        ": requires unsigned integer"
                     ))
                 })?;
                 Ok(#name::#vid(n))

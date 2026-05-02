@@ -8,8 +8,6 @@
 //! parity tests against the existing hand-written serdes land alongside the
 //! conversion commits (2.5–2.8), where they actually replace something.
 
-#![allow(dead_code)] // each enum exercises one variant kind; only Serialize is tested
-
 use corim::cbor;
 use corim_macros::CborTagChoiceSerialize;
 
@@ -177,7 +175,11 @@ fn mixed_enum_dispatches_correctly() {
 enum WithBareAccept {
     #[cbor(tag = 37, bytes, accept_bare = "uuid_16")]
     Uuid([u8; 16]),
+    /// Present so the enum has the same shape as real-world tag-choice enums
+    /// with a catch-all `Bytes` variant; serialization of this variant is
+    /// already covered by other test enums.
     #[cbor(tag = 560, bytes)]
+    #[allow(dead_code)]
     Bytes(Vec<u8>),
 }
 

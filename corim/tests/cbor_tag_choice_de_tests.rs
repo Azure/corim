@@ -7,8 +7,6 @@
 //! enums exercise one variant kind each, plus a mixed enum that covers
 //! the real shape (e.g. `MeasuredElement`, `ClassIdChoice`).
 
-#![allow(dead_code)] // each enum exercises one variant kind; only Deserialize is tested
-
 use corim::cbor;
 use corim_macros::{CborTagChoiceDeserialize, CborTagChoiceSerialize};
 

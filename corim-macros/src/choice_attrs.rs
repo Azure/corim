@@ -166,6 +166,66 @@ impl ChoiceEnumAttrs {
     }
 }
 
+/// Classification of byte-shaped fields used by `parse_variant` to validate
+/// `#[cbor(tag = N, bytes)]` and `#[cbor(... accept_bare = "uuid_16")]`.
+#[derive(Debug, PartialEq, Eq)]
+enum ByteFieldKind {
+    /// `Vec<u8>` (any length on the wire).
+    Vec,
+    /// `[u8; N]` for the contained N. We can validate exact-size constraints
+    /// (e.g. `accept_bare = "uuid_16"` requires `[u8; 16]`) against this.
+    Array(usize),
+}
+
+/// Recognize `Vec<u8>` and `[u8; N]` field types used by byte-shaped variants.
+///
+/// Returns `None` for any other type — including aliases (e.g. a hypothetical
+/// `type Bytes = Vec<u8>;`) which we cannot resolve at macro time. Authors
+/// who want to use such an alias must spell out the underlying type in the
+/// enum variant.
+fn byte_field_kind(ty: &syn::Type) -> Option<ByteFieldKind> {
+    match ty {
+        syn::Type::Array(arr) => {
+            // Must be `[u8; N]` with N a literal usize.
+            let elem_is_u8 = matches!(
+                &*arr.elem,
+                syn::Type::Path(p) if p.path.segments.last().is_some_and(|s| s.ident == "u8")
+            );
+            if !elem_is_u8 {
+                return None;
+            }
+            if let syn::Expr::Lit(syn::ExprLit {
+                lit: syn::Lit::Int(n),
+                ..
+            }) = &arr.len
+            {
+                n.base10_parse::<usize>().ok().map(ByteFieldKind::Array)
+            } else {
+                None
+            }
+        }
+        syn::Type::Path(p) => {
+            let seg = p.path.segments.last()?;
+            if seg.ident != "Vec" {
+                return None;
+            }
+            let syn::PathArguments::AngleBracketed(args) = &seg.arguments else {
+                return None;
+            };
+            let syn::GenericArgument::Type(syn::Type::Path(inner)) = args.args.first()? else {
+                return None;
+            };
+            let inner_seg = inner.path.segments.last()?;
+            if inner_seg.ident == "u8" {
+                Some(ByteFieldKind::Vec)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 /// Verify the variant has exactly one tuple field (so codegen can use
 /// `self.0` / `Variant(inner) => ...` patterns).
 fn require_single_field_tuple(variant: &syn::Variant) -> syn::Result<()> {
@@ -318,6 +378,40 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
         ));
     }
 
+    // Pull the (single) tuple field type up here so we can validate it
+    // against `bytes` / `accept_bare = "uuid_16"` constraints before codegen.
+    // require_single_field_tuple already guarantees exactly one tuple field.
+    let field_ty = match &variant.fields {
+        syn::Fields::Unnamed(fields) => fields.unnamed.first().unwrap().ty.clone(),
+        _ => unreachable!("require_single_field_tuple should have rejected this"),
+    };
+
+    // Item 3: `bytes` requires `Vec<u8>` or `[u8; N]`. Without this check the
+    // generated code falls through to `Ok(Name::Variant(b))` and produces a
+    // confusing type error pointing into macro-expanded source. Catching it
+    // here gives a clean error on the variant itself.
+    if has_tag && bytes && byte_field_kind(&field_ty).is_none() {
+        return Err(syn::Error::new_spanned(
+            &variant.fields,
+            "`#[cbor(tag = N, bytes)]` requires the variant field to be `Vec<u8>` or `[u8; N]`",
+        ));
+    }
+
+    // Item 4: `accept_bare = "uuid_16"` only makes sense when the destination
+    // field is a 16-byte array. Anything else would compile but the bare-uuid
+    // arm would either fail at runtime or never construct the variant.
+    if accept_bare_uuid {
+        match byte_field_kind(&field_ty) {
+            Some(ByteFieldKind::Array(16)) => {}
+            _ => {
+                return Err(syn::Error::new_spanned(
+                    &variant.fields,
+                    "`accept_bare = \"uuid_16\"` requires the variant field to be `[u8; 16]`",
+                ));
+            }
+        }
+    }
+
     let kind = if let Some(tag) = tag {
         ChoiceVariantKind::Tagged {
             tag,
@@ -330,14 +424,6 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
         ChoiceVariantKind::InlineText
     } else {
         ChoiceVariantKind::InlineUint
-    };
-
-    // Pull out the (single) tuple field type. require_single_field_tuple
-    // already validated the shape; this destructure is infallible.
-    let field_ty = match &variant.fields {
-        syn::Fields::Unnamed(fields) => fields.unnamed.first().unwrap().ty.clone(),
-        // Other shapes already errored out above.
-        _ => unreachable!("require_single_field_tuple should have rejected this"),
     };
 
     Ok(ChoiceVariant {
@@ -910,5 +996,65 @@ mod tests {
                 catch_bare_bytes: false,
             }
         ));
+    }
+
+    // -----------------------------------------------------------------
+    // Field-type validation (items 3 + 4 in the post-2.8 review).
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn rejects_bytes_attribute_on_non_byte_field() {
+        // `#[cbor(tag = N, bytes)]` requires `Vec<u8>` or `[u8; N]`.
+        // A String field is a programmer mistake — without this check the
+        // generated code would fail compilation deep inside macro expansion.
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(tag = 37, bytes)] A(String),
+            }
+        });
+        assert!(err.contains("`Vec<u8>` or `[u8; N]`"), "got: {err}");
+    }
+
+    #[test]
+    fn accepts_bytes_attribute_on_vec_u8() {
+        let (vs, _) = parse_enum(parse_quote! {
+            enum E {
+                #[cbor(tag = 560, bytes)] A(Vec<u8>),
+            }
+        });
+        assert_eq!(vs.len(), 1);
+    }
+
+    #[test]
+    fn accepts_bytes_attribute_on_byte_array() {
+        let (vs, _) = parse_enum(parse_quote! {
+            enum E {
+                #[cbor(tag = 37, bytes)] A([u8; 16]),
+            }
+        });
+        assert_eq!(vs.len(), 1);
+    }
+
+    #[test]
+    fn rejects_accept_bare_on_wrong_size_array() {
+        // `accept_bare = "uuid_16"` only makes sense for `[u8; 16]`.
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(tag = 37, bytes, accept_bare = "uuid_16")] A([u8; 32]),
+            }
+        });
+        assert!(err.contains("`[u8; 16]`"), "got: {err}");
+    }
+
+    #[test]
+    fn rejects_accept_bare_on_vec_u8() {
+        // Even though `Vec<u8>` is byte-shaped, the bare-uuid arm constructs
+        // a `[u8; 16]`, so a `Vec<u8>` field would not type-check.
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(tag = 37, bytes, accept_bare = "uuid_16")] A(Vec<u8>),
+            }
+        });
+        assert!(err.contains("`[u8; 16]`"), "got: {err}");
     }
 }
