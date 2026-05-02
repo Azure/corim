@@ -45,6 +45,7 @@ pub fn expand_tag_choice_serialize(input: &DeriveInput) -> syn::Result<TokenStre
                 ChoiceVariantKind::Tagged {
                     tag,
                     bytes,
+                    text,
                     accept_bare_uuid: _,
                     catch_bare_bytes: _,
                 } => {
@@ -55,6 +56,19 @@ pub fn expand_tag_choice_serialize(input: &DeriveInput) -> syn::Result<TokenStre
                         quote! {
                             #name::#vid(inner) => {
                                 crate::cbor::value::serialize_tagged_bytes(#tag, &*inner, s)
+                            }
+                        }
+                    } else if *text {
+                        // Inner is `String` (or `&str`). Wrap as `Value::Text` so
+                        // the tagged form encodes as `#6.N(tstr)` and on decode
+                        // the strict-shape Deserialize requires Value::Text.
+                        quote! {
+                            #name::#vid(inner) => {
+                                crate::cbor::value::serialize_tagged(
+                                    #tag,
+                                    &crate::cbor::value::Value::Text(inner.clone()),
+                                    s,
+                                )
                             }
                         }
                     } else {

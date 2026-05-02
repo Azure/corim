@@ -114,7 +114,9 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
     variants
         .iter()
         .filter_map(|v| match &v.kind {
-            ChoiceVariantKind::Tagged { tag, bytes, .. } => {
+            ChoiceVariantKind::Tagged {
+                tag, bytes, text, ..
+            } => {
                 let vid = &v.ident;
                 let tag_lit = *tag;
                 if *bytes {
@@ -139,10 +141,33 @@ fn build_tagged_arms(name: &syn::Ident, variants: &[ChoiceVariant]) -> Vec<Token
                             }
                         }
                     })
+                } else if *text {
+                    // For text-shaped variants, the inner value must be a tstr.
+                    // Strict shape check rejects e.g. Value::Bytes from being
+                    // silently coerced into String by serde defaults — important
+                    // for RFC types like #6.554 (PEM) where the inner is tstr.
+                    Some(quote! {
+                        crate::cbor::value::Value::Tag(#tag_lit, inner) => {
+                            match *inner {
+                                crate::cbor::value::Value::Text(t) => {
+                                    Ok(#name::#vid(t))
+                                }
+                                other => Err(serde::de::Error::custom(format!(
+                                    concat!(
+                                        "tag {} (",
+                                        stringify!(#name), "::", stringify!(#vid),
+                                        ") must wrap tstr, got {:?}"
+                                    ),
+                                    #tag_lit, core::mem::discriminant(&other)
+                                ))),
+                            }
+                        }
+                    })
                 } else {
-                    // Non-bytes tagged variant: reflow inner Value through serde
-                    // by re-encoding then decoding into the inner type. Avoids
-                    // teaching the macro about each possible inner type.
+                    // Non-bytes, non-text tagged variant: reflow inner Value
+                    // through serde by re-encoding then decoding into the inner
+                    // type. Works for any Serialize/Deserialize type (e.g.,
+                    // Digest, custom newtypes).
                     Some(quote! {
                         crate::cbor::value::Value::Tag(#tag_lit, inner) => {
                             crate::cbor::value::from_value::<_>(&*inner)

@@ -234,6 +234,24 @@ fn macro_matches_direct_serialize_tagged_bytes() {
 }
 
 // ---------------------------------------------------------------------------
+// `#[cbor(tag = N, text)]` — tagged-text variant (RFC types like #6.554)
+// ---------------------------------------------------------------------------
+
+#[derive(CborTagChoiceSerialize)]
+enum TaggedText {
+    #[cbor(tag = 554, text)]
+    PkixKey(String),
+}
+
+#[test]
+fn tag_text_encodes_as_tagged_tstr() {
+    let v = TaggedText::PkixKey("acme".into());
+    let bytes = cbor::encode(&v).unwrap();
+    // d9 02 2a = tag 554; 64 = tstr(4); 61 63 6d 65 = "acme"
+    assert_eq!(bytes, [0xd9, 0x02, 0x2a, 0x64, b'a', b'c', b'm', b'e']);
+}
+
+// ---------------------------------------------------------------------------
 // Helper-imports kept around for readability of the spec-byte assertions.
 // ---------------------------------------------------------------------------
 

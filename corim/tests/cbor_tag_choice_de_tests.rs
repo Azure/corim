@@ -301,6 +301,46 @@ fn custom_validate_rejects_when_fail() {
 }
 
 // ---------------------------------------------------------------------------
+// `#[cbor(tag = N, text)]` — strict tagged-text shape (the CryptoKey case)
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
+enum TaggedText {
+    #[cbor(tag = 554, text)]
+    PkixKey(String),
+}
+
+#[test]
+fn tag_text_round_trip() {
+    let v = TaggedText::PkixKey("acme".into());
+    let bytes = cbor::encode(&v).unwrap();
+    let decoded: TaggedText = cbor::decode(&bytes).unwrap();
+    assert_eq!(decoded, v);
+}
+
+#[test]
+fn tag_text_inner_must_be_tstr() {
+    // #6.554(bstr) — wrong inner type; hand-written code would reject, and so
+    // must the macro. Without #[cbor(tag = N, text)] the macro would silently
+    // accept this via `from_value::<String>(&Value::Bytes(...))`.
+    let bytes = vec![0xd9, 0x02, 0x2a, 0x41, 0x01]; // tag 554, bstr(1), 0x01
+    let err = cbor::decode::<TaggedText>(&bytes).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(
+        msg.contains("must wrap tstr") && msg.contains("TaggedText::PkixKey"),
+        "got: {msg}"
+    );
+}
+
+#[test]
+fn tag_text_inner_int_rejected() {
+    let bytes = vec![0xd9, 0x02, 0x2a, 0x05]; // tag 554, uint(5)
+    let err = cbor::decode::<TaggedText>(&bytes).unwrap_err();
+    let msg = format!("{}", err);
+    assert!(msg.contains("must wrap tstr"), "got: {msg}");
+}
+
+// ---------------------------------------------------------------------------
 // Sanity: macro byte-output equals manually written round-trip
 // ---------------------------------------------------------------------------
 
