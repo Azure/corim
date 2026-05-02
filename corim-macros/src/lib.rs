@@ -27,7 +27,9 @@
 //!
 //! ## Enum (CborTagChoice…)
 //!
-//! See the module docs in [`choice_attrs`] for the full grammar.
+//! See the doc-comments on [`CborTagChoiceSerialize`] and
+//! [`CborTagChoiceDeserialize`] below for the supported variant
+//! attributes.
 
 use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
@@ -79,7 +81,8 @@ pub fn derive_cbor_deserialize(input: TokenStream) -> TokenStream {
 /// The `accept_bare = "uuid_16"` and `custom_validate = "fn"` attributes
 /// affect deserialization only and are silently accepted here.
 ///
-/// See [`choice_attrs`](crate::choice_attrs) for the full grammar.
+/// See [`CborTagChoiceDeserialize`](macro@CborTagChoiceDeserialize) for
+/// the deserialize-only attributes.
 #[proc_macro_derive(CborTagChoiceSerialize, attributes(cbor))]
 pub fn derive_cbor_tag_choice_serialize(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
