@@ -550,7 +550,7 @@ fn class_id_unknown_tag() {
 fn instance_id_ueid_non_bytes() {
     let v = Value::Tag(TAG_UEID, Box::new(Value::Text("x".into())));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
@@ -564,49 +564,49 @@ fn instance_id_ueid_wrong_size() {
 fn instance_id_pkix_key_non_text() {
     let v = Value::Tag(TAG_PKIX_BASE64_KEY, Box::new(Value::Bytes(vec![1])));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("text"), "got: {err}");
+    assert!(err.contains("tstr"), "got: {err}");
 }
 
 #[test]
 fn instance_id_pkix_cert_non_text() {
     let v = Value::Tag(TAG_PKIX_BASE64_CERT, Box::new(Value::Bytes(vec![1])));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("text"), "got: {err}");
+    assert!(err.contains("tstr"), "got: {err}");
 }
 
 #[test]
 fn instance_id_cose_key_non_bytes() {
     let v = Value::Tag(TAG_COSE_KEY, Box::new(Value::Text("x".into())));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn instance_id_key_thumbprint_non_array() {
     let v = Value::Tag(TAG_KEY_THUMBPRINT, Box::new(Value::Text("x".into())));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("array"), "got: {err}");
+    assert!(err.contains("[alg, val]"), "got: {err}");
 }
 
 #[test]
 fn instance_id_cert_thumbprint_non_array() {
     let v = Value::Tag(TAG_CERT_THUMBPRINT, Box::new(Value::Text("x".into())));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("array"), "got: {err}");
+    assert!(err.contains("[alg, val]"), "got: {err}");
 }
 
 #[test]
 fn instance_id_asn1_cert_non_bytes() {
     let v = Value::Tag(TAG_PKIX_ASN1DER_CERT, Box::new(Value::Text("x".into())));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn instance_id_bytes_non_bytes() {
     let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
     let err = decode_err::<InstanceIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]

@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::tags::*;
 use crate::cbor::value::{self, Value};
-use crate::types::measurement::{Digest, DigestAlg};
+use crate::types::measurement::Digest;
 
 // ---------------------------------------------------------------------------
 // CborTime — CBOR epoch-based date/time (#6.1)
@@ -240,128 +240,58 @@ pub enum ClassIdChoice {
 }
 
 /// `$instance-id-type-choice` — UEID, UUID, bytes, or crypto key types.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Decoder accepts the same wire-format relaxations as [`ClassIdChoice`]:
+///
+/// - bare 16-byte `bstr` (no tag) is routed to [`Uuid`](Self::Uuid)
+/// - any other bare `bstr` falls through to [`Bytes`](Self::Bytes)
+///
+/// The UEID variant enforces the RFC 8392 §4 size constraint (7–33
+/// bytes inclusive) via a post-decode `custom_validate` hook.
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
+#[cbor(custom_validate = "validate_instance_id_ueid")]
 #[non_exhaustive]
 pub enum InstanceIdChoice {
-    /// UEID (CBOR tag 550).
+    /// UEID (CBOR tag 550). Length is constrained to 7–33 bytes.
+    #[cbor(tag = 550, bytes)]
     Ueid(Vec<u8>),
-    /// UUID (CBOR tag 37).
+    /// UUID (CBOR tag 37). Bare 16-byte `bstr` is also accepted on decode.
+    #[cbor(tag = 37, bytes, accept_bare = "uuid_16")]
     Uuid([u8; 16]),
-    /// Generic tagged bytes (CBOR tag 560).
+    /// Generic tagged bytes (CBOR tag 560). Catch-all for any bare `bstr`
+    /// not already routed to [`Uuid`](Self::Uuid).
+    #[cbor(tag = 560, bytes, catch_bare_bytes)]
     Bytes(Vec<u8>),
     /// PEM SubjectPublicKeyInfo (CBOR tag 554).
+    #[cbor(tag = 554, text)]
     PkixBase64Key(String),
     /// PEM X.509 certificate (CBOR tag 555).
+    #[cbor(tag = 555, text)]
     PkixBase64Cert(String),
     /// CBOR-encoded COSE_Key (CBOR tag 558).
+    #[cbor(tag = 558, bytes)]
     CoseKey(Vec<u8>),
     /// Key thumbprint digest (CBOR tag 557).
+    #[cbor(tag = 557)]
     KeyThumbprint(Digest),
     /// Cert thumbprint digest (CBOR tag 559).
+    #[cbor(tag = 559)]
     CertThumbprint(Digest),
     /// ASN.1 DER X.509 certificate (CBOR tag 562).
+    #[cbor(tag = 562, bytes)]
     PkixAsn1DerCert(Vec<u8>),
 }
 
-impl Serialize for InstanceIdChoice {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            InstanceIdChoice::Ueid(b) => value::serialize_tagged_bytes(TAG_UEID, b, s),
-            InstanceIdChoice::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u, s),
-            InstanceIdChoice::Bytes(b) => value::serialize_tagged_bytes(TAG_BYTES, b, s),
-            InstanceIdChoice::PkixBase64Key(t) => {
-                value::serialize_tagged(TAG_PKIX_BASE64_KEY, t, s)
-            }
-            InstanceIdChoice::PkixBase64Cert(t) => {
-                value::serialize_tagged(TAG_PKIX_BASE64_CERT, t, s)
-            }
-            InstanceIdChoice::CoseKey(b) => value::serialize_tagged_bytes(TAG_COSE_KEY, b, s),
-            InstanceIdChoice::KeyThumbprint(d) => value::serialize_tagged(TAG_KEY_THUMBPRINT, d, s),
-            InstanceIdChoice::CertThumbprint(d) => {
-                value::serialize_tagged(TAG_CERT_THUMBPRINT, d, s)
-            }
-            InstanceIdChoice::PkixAsn1DerCert(b) => {
-                value::serialize_tagged_bytes(TAG_PKIX_ASN1DER_CERT, b, s)
-            }
+/// Post-decode hook invoked by the `CborTagChoice` derive on
+/// [`InstanceIdChoice`] to enforce the RFC 8392 §4 UEID size range
+/// (7–33 bytes inclusive). Other variants pass through unchanged.
+fn validate_instance_id_ueid(v: &InstanceIdChoice) -> Result<(), String> {
+    if let InstanceIdChoice::Ueid(b) = v {
+        if b.len() < 7 || b.len() > 33 {
+            return Err(format!("UEID must be 7-33 bytes, got {}", b.len()));
         }
     }
-}
-
-impl<'de> Deserialize<'de> for InstanceIdChoice {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Tag(TAG_UEID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 550 must wrap bytes"))?;
-                if b.len() < 7 || b.len() > 33 {
-                    return Err(serde::de::Error::custom(format!(
-                        "UEID must be 7-33 bytes, got {}",
-                        b.len()
-                    )));
-                }
-                Ok(InstanceIdChoice::Ueid(b))
-            }
-            Value::Tag(TAG_UUID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                Ok(InstanceIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Tag(TAG_PKIX_BASE64_KEY, inner) => match *inner {
-                Value::Text(t) => Ok(InstanceIdChoice::PkixBase64Key(t)),
-                _ => Err(serde::de::Error::custom("tag 554 must wrap text")),
-            },
-            Value::Tag(TAG_PKIX_BASE64_CERT, inner) => match *inner {
-                Value::Text(t) => Ok(InstanceIdChoice::PkixBase64Cert(t)),
-                _ => Err(serde::de::Error::custom("tag 555 must wrap text")),
-            },
-            Value::Tag(TAG_COSE_KEY, inner) => {
-                Ok(InstanceIdChoice::CoseKey(inner.into_bytes().ok_or_else(
-                    || serde::de::Error::custom("tag 558 must wrap bytes"),
-                )?))
-            }
-            Value::Tag(TAG_KEY_THUMBPRINT, inner) => {
-                let arr = inner
-                    .into_array()
-                    .ok_or_else(|| serde::de::Error::custom("tag 557 must wrap array"))?;
-                Ok(InstanceIdChoice::KeyThumbprint(digest_from_value_array(
-                    arr,
-                )?))
-            }
-            Value::Tag(TAG_CERT_THUMBPRINT, inner) => {
-                let arr = inner
-                    .into_array()
-                    .ok_or_else(|| serde::de::Error::custom("tag 559 must wrap array"))?;
-                Ok(InstanceIdChoice::CertThumbprint(digest_from_value_array(
-                    arr,
-                )?))
-            }
-            Value::Tag(TAG_PKIX_ASN1DER_CERT, inner) => Ok(InstanceIdChoice::PkixAsn1DerCert(
-                inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 562 must wrap bytes"))?,
-            )),
-            Value::Tag(TAG_BYTES, inner) => {
-                Ok(InstanceIdChoice::Bytes(inner.into_bytes().ok_or_else(
-                    || serde::de::Error::custom("tag 560 must wrap bytes"),
-                )?))
-            }
-            // Accept bare bytes: 16 bytes → UUID, other sizes → generic bytes (interop).
-            Value::Bytes(b) if b.len() == 16 => {
-                Ok(InstanceIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Bytes(b) => Ok(InstanceIdChoice::Bytes(b)),
-            _ => Err(serde::de::Error::custom(
-                "expected tagged UEID, UUID, bytes, or crypto key",
-            )),
-        }
-    }
+    Ok(())
 }
 
 /// `$group-id-type-choice` — UUID or bytes.
@@ -444,40 +374,6 @@ pub struct LinkedTagMap {
     /// `tag-rel` (key 1): supplements(0) or replaces(1).
     #[cbor(key = 1)]
     pub tag_rel: i64,
-}
-
-// ---------------------------------------------------------------------------
-// Digest helper
-// ---------------------------------------------------------------------------
-
-/// Deserialize a `[alg, val]` array of [`Value`]s into a [`Digest`].
-///
-/// The CDDL allows `alg: int / text`. Text algorithm identifiers are
-/// accepted for interop but stored as `alg = -1` since [`Digest`] uses
-/// `i64`. Integer algs are the standard (IANA Named Information registry).
-fn digest_from_value_array<E: serde::de::Error>(arr: Vec<Value>) -> Result<Digest, E> {
-    if arr.len() != 2 {
-        return Err(E::custom("digest must be [alg, val]"));
-    }
-    let mut it = arr.into_iter();
-    let alg = match it
-        .next()
-        .ok_or_else(|| E::custom("digest must be [alg, val]"))?
-    {
-        Value::Integer(n) => {
-            DigestAlg::Int(i64::try_from(n).map_err(|_| E::custom("digest alg out of i64 range"))?)
-        }
-        Value::Text(t) => DigestAlg::Text(t),
-        _ => return Err(E::custom("digest alg must be int or text")),
-    };
-    let val = match it
-        .next()
-        .ok_or_else(|| E::custom("digest must be [alg, val]"))?
-    {
-        Value::Bytes(b) => b,
-        _ => return Err(E::custom("digest val must be bytes")),
-    };
-    Ok(Digest(alg, val))
 }
 
 // ---------------------------------------------------------------------------
