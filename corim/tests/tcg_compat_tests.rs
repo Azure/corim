@@ -197,3 +197,47 @@ fn nvidia_cx7_end_to_end_decode_yields_expected_comid() {
         }
     }
 }
+
+#[test]
+fn as_comid_handles_both_tagged_and_bare_bstr() {
+    // Both shapes from the NVIDIA fixture: when validation extracts the
+    // CoMID it goes through the BareBstr path. We assert that the same
+    // bytes, retrieved via the unsigned CorimMap inside the COSE payload,
+    // can be unwrapped via `ConciseTagChoice::as_comid()` regardless of
+    // which on-the-wire shape they carry.
+    use corim::types::corim::{ConciseTagChoice, CorimMap};
+
+    let peeled = peel_tcg_wrappers(NVIDIA_CX7_BYTES).unwrap();
+    let signed = decode_signed_corim(peeled.as_bytes()).unwrap();
+    let payload = signed.payload.as_ref().expect("attached payload");
+    // Wrap-or-pass the bare corim-map.
+    let wrapped = wrap_bare_corim_map(payload);
+    // Strip the #6.501 tag to get to the CorimMap.
+    use corim::cbor;
+    let tagged: corim::cbor::value::Tagged<CorimMap> = cbor::decode(wrapped.as_bytes()).unwrap();
+    let corim_map = tagged.value;
+
+    // NVIDIA fixture: tags[] entries are BareBstr.
+    let tag = &corim_map.tags[0];
+    assert!(matches!(tag, ConciseTagChoice::BareBstr(_)));
+    let comid = tag.as_comid().expect("as_comid must accept BareBstr");
+    match &comid.tag_identity.tag_id {
+        corim::types::common::TagIdChoice::Text(s) => {
+            assert_eq!(s, "15b3102115b3002300-28.48.1000")
+        }
+        other => panic!("unexpected tag-id: {:?}", other),
+    }
+
+    // Synthetic spec-compliant case: a Comid(bstr .cbor concise-mid-tag).
+    // Re-encode the parsed ComidTag and stuff into ConciseTagChoice::Comid.
+    let inner_bytes = cbor::encode(&comid).unwrap();
+    let spec_tag = ConciseTagChoice::Comid(inner_bytes);
+    let comid2 = spec_tag
+        .as_comid()
+        .expect("as_comid must accept Comid variant");
+    assert_eq!(comid.tag_identity.tag_id, comid2.tag_identity.tag_id);
+
+    // Negative: CoSWID variant should error.
+    let coswid_tag = ConciseTagChoice::Coswid(vec![0xA0]);
+    assert!(coswid_tag.as_comid().is_err());
+}
