@@ -206,13 +206,14 @@ fn bytes_to_inner_expr(field_ty: &syn::Type, vid: &syn::Ident, name: &syn::Ident
         quote! {
             {
                 let actual = b.len();
+                let expected = ::core::mem::size_of::<#field_ty>();
                 let arr: #field_ty = b.try_into().map_err(|_| {
                     serde::de::Error::custom(format!(
                         concat!(
                             stringify!(#name), "::", stringify!(#vid),
-                            " requires fixed-size byte array, got {} bytes"
+                            " requires {} bytes, got {} bytes"
                         ),
-                        actual
+                        expected, actual
                     ))
                 })?;
                 Ok(#name::#vid(arr))

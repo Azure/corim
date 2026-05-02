@@ -77,7 +77,7 @@ fn tag_bytes_array_wrong_length_errors() {
     let err = cbor::decode::<TaggedBytesArray>(&bytes).unwrap_err();
     let msg = format!("{}", err);
     assert!(
-        msg.contains("requires fixed-size byte array, got 15 bytes"),
+        msg.contains("requires 16 bytes, got 15 bytes"),
         "got: {msg}"
     );
 }
