@@ -501,7 +501,7 @@ fn tag_id_bad_uuid_inner() {
     // Tag 37 wrapping text instead of bytes
     let v = Value::Tag(TAG_UUID, Box::new(Value::Text("not-bytes".into())));
     let err = decode_err::<TagIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
@@ -620,21 +620,21 @@ fn instance_id_unknown_tag() {
 fn group_id_uuid_non_bytes() {
     let v = Value::Tag(TAG_UUID, Box::new(Value::Text("x".into())));
     let err = decode_err::<GroupIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn group_id_uuid_wrong_size() {
     let v = Value::Tag(TAG_UUID, Box::new(Value::Bytes(vec![0; 8])));
     let err = decode_err::<GroupIdChoice>(&v);
-    assert!(err.contains("16 bytes"), "got: {err}");
+    assert!(err.contains("got 8 bytes"), "got: {err}");
 }
 
 #[test]
 fn group_id_bytes_non_bytes() {
     let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
     let err = decode_err::<GroupIdChoice>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]

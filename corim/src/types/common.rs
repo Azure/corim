@@ -202,48 +202,18 @@ pub struct VersionMap {
 // ---------------------------------------------------------------------------
 
 /// `$tag-id-type-choice` — text string or UUID.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Decoder accepts a wire-format relaxation: a bare 16-byte `bstr` (no tag)
+/// is routed to [`Uuid`](Self::Uuid). Encoders always emit the tagged form.
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
 #[non_exhaustive]
 pub enum TagIdChoice {
     /// A textual tag identifier.
+    #[cbor(text)]
     Text(String),
-    /// A 16-byte UUID (CBOR tag 37).
+    /// A 16-byte UUID (CBOR tag 37). Bare 16-byte `bstr` is also accepted on decode.
+    #[cbor(tag = 37, bytes, accept_bare = "uuid_16")]
     Uuid([u8; 16]),
-}
-
-impl Serialize for TagIdChoice {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            TagIdChoice::Text(t) => s.serialize_str(t),
-            TagIdChoice::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u.as_slice(), s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for TagIdChoice {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Text(t) => Ok(TagIdChoice::Text(t)),
-            Value::Tag(TAG_UUID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                let arr: [u8; 16] = b
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("UUID must be 16 bytes"))?;
-                Ok(TagIdChoice::Uuid(arr))
-            }
-            // Accept bare 16-byte bytes as untagged UUID for interop.
-            Value::Bytes(b) if b.len() == 16 => {
-                let arr: [u8; 16] = b
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("UUID must be 16 bytes"))?;
-                Ok(TagIdChoice::Uuid(arr))
-            }
-            _ => Err(serde::de::Error::custom("expected text or tagged UUID")),
-        }
-    }
 }
 
 /// `$class-id-type-choice` — OID, UUID, or generic bytes.
@@ -395,51 +365,23 @@ impl<'de> Deserialize<'de> for InstanceIdChoice {
 }
 
 /// `$group-id-type-choice` — UUID or bytes.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// Decoder accepts the same wire-format relaxations as [`ClassIdChoice`]:
+///
+/// - bare 16-byte `bstr` (no tag) is routed to [`Uuid`](Self::Uuid)
+/// - any other bare `bstr` falls through to [`Bytes`](Self::Bytes)
+///
+/// Encoders always emit the tagged form (`#6.37` or `#6.560`).
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
 #[non_exhaustive]
 pub enum GroupIdChoice {
-    /// UUID (CBOR tag 37).
+    /// UUID (CBOR tag 37). Bare 16-byte `bstr` is also accepted on decode.
+    #[cbor(tag = 37, bytes, accept_bare = "uuid_16")]
     Uuid([u8; 16]),
-    /// Generic tagged bytes (CBOR tag 560).
+    /// Generic tagged bytes (CBOR tag 560). Catch-all for any bare `bstr`
+    /// not already routed to [`Uuid`](Self::Uuid).
+    #[cbor(tag = 560, bytes, catch_bare_bytes)]
     Bytes(Vec<u8>),
-}
-
-impl Serialize for GroupIdChoice {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            GroupIdChoice::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u, s),
-            GroupIdChoice::Bytes(b) => value::serialize_tagged_bytes(TAG_BYTES, b, s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for GroupIdChoice {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Tag(TAG_UUID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                Ok(GroupIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Tag(TAG_BYTES, inner) => {
-                Ok(GroupIdChoice::Bytes(inner.into_bytes().ok_or_else(
-                    || serde::de::Error::custom("tag 560 must wrap bytes"),
-                )?))
-            }
-            // Accept bare bytes: 16 bytes → UUID, other sizes → generic bytes (interop).
-            Value::Bytes(b) if b.len() == 16 => {
-                Ok(GroupIdChoice::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Bytes(b) => Ok(GroupIdChoice::Bytes(b)),
-            _ => Err(serde::de::Error::custom("expected tagged UUID or bytes")),
-        }
-    }
 }
 
 /// `$measured-element-type-choice` — OID, UUID, uint, or text.
