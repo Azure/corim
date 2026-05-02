@@ -22,6 +22,11 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod attrs;
+// Codegen for `#[derive(CborTagChoice)]` lands in subsequent commits;
+// the parser already lives here so the attribute grammar can be reviewed
+// in isolation.
+#[allow(dead_code)]
+mod choice_attrs;
 mod de;
 mod ser;
 
