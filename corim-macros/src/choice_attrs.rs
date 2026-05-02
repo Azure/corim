@@ -19,6 +19,14 @@
 //!                                             bstr as untagged UUID on decode
 //!                                             (interop relaxation).  May be
 //!                                             combined with `bytes`.
+//! #[cbor(tag = N, bytes, catch_bare_bytes)]   on decode, accept any bare bstr
+//!                                             (no tag, any length not already
+//!                                             routed by an `accept_bare` rule)
+//!                                             and route it to this variant.
+//!                                             At most one variant per enum may
+//!                                             carry this attribute.  Requires
+//!                                             `bytes` since the inner type must
+//!                                             be byte-shaped.
 //! #[cbor(text)]                               inline text variant (no tag)
 //! #[cbor(uint)]                               inline unsigned integer variant
 //! ```
@@ -81,6 +89,15 @@ pub enum ChoiceVariantKind {
         /// attribute syntactically without breaking existing call sites,
         /// but only one rule exists today and it collapses to a bool.
         accept_bare_uuid: bool,
+        /// `true` if `#[cbor(catch_bare_bytes)]` is also present. On decode,
+        /// any bare bstr (no tag) that wasn't already routed by another
+        /// variant's `accept_bare` rule is routed to this variant. At most
+        /// one variant per enum may carry this. Requires `bytes`.
+        ///
+        /// Used by `ClassIdChoice` / `GroupIdChoice` / `InstanceIdChoice`
+        /// where the CDDL `bytes`-tagged variant doubles as the catch-all
+        /// for non-conformant producers that emit untagged byte strings.
+        catch_bare_bytes: bool,
     },
     /// `#[cbor(text)]` — inline CBOR `tstr`, no tag.
     InlineText,
@@ -158,6 +175,7 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
     let mut tag: Option<u64> = None;
     let mut bytes = false;
     let mut accept_bare_uuid = false;
+    let mut catch_bare_bytes = false;
     let mut inline_text = false;
     let mut inline_uint = false;
     let mut saw_attr = false;
@@ -188,6 +206,9 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
                         )));
                     }
                 }
+                Ok(())
+            } else if meta.path.is_ident("catch_bare_bytes") {
+                catch_bare_bytes = true;
                 Ok(())
             } else if meta.path.is_ident("text") {
                 inline_text = true;
@@ -240,11 +261,19 @@ pub fn parse_variant(variant: &syn::Variant) -> syn::Result<ChoiceVariant> {
         ));
     }
 
+    if catch_bare_bytes && (tag.is_none() || !bytes) {
+        return Err(syn::Error::new_spanned(
+            variant,
+            "`catch_bare_bytes` requires `#[cbor(tag = N, bytes)]` so the catch-all variant has a byte-shaped inner field",
+        ));
+    }
+
     let kind = if let Some(tag) = tag {
         ChoiceVariantKind::Tagged {
             tag,
             bytes,
             accept_bare_uuid,
+            catch_bare_bytes,
         }
     } else if inline_text {
         ChoiceVariantKind::InlineText
@@ -289,9 +318,14 @@ pub fn parse_choice_variants(data: &syn::DataEnum) -> syn::Result<Vec<ChoiceVari
     let mut seen_tags: Vec<(u64, syn::Ident)> = Vec::new();
     let mut seen_inline_text: Option<syn::Ident> = None;
     let mut seen_inline_uint: Option<syn::Ident> = None;
+    let mut seen_catch_bare_bytes: Option<syn::Ident> = None;
     for v in &variants {
         match &v.kind {
-            ChoiceVariantKind::Tagged { tag, .. } => {
+            ChoiceVariantKind::Tagged {
+                tag,
+                catch_bare_bytes,
+                ..
+            } => {
                 if let Some((_, prev)) = seen_tags.iter().find(|(t, _)| *t == *tag) {
                     return Err(syn::Error::new_spanned(
                         &v.ident,
@@ -302,6 +336,19 @@ pub fn parse_choice_variants(data: &syn::DataEnum) -> syn::Result<Vec<ChoiceVari
                     ));
                 }
                 seen_tags.push((*tag, v.ident.clone()));
+
+                if *catch_bare_bytes {
+                    if let Some(prev) = &seen_catch_bare_bytes {
+                        return Err(syn::Error::new_spanned(
+                            &v.ident,
+                            format!(
+                                "duplicate `#[cbor(catch_bare_bytes)]` (also on variant `{}`); at most one variant per enum may carry it",
+                                prev
+                            ),
+                        ));
+                    }
+                    seen_catch_bare_bytes = Some(v.ident.clone());
+                }
             }
             ChoiceVariantKind::InlineText => {
                 if let Some(prev) = &seen_inline_text {
@@ -373,10 +420,12 @@ mod tests {
                 tag,
                 bytes,
                 accept_bare_uuid,
+                catch_bare_bytes,
             } => {
                 assert_eq!(*tag, 111);
                 assert!(!bytes);
                 assert!(!accept_bare_uuid);
+                assert!(!catch_bare_bytes);
             }
             _ => panic!("expected tagged"),
         }
@@ -395,9 +444,10 @@ mod tests {
                 tag: 37,
                 bytes: false,
                 accept_bare_uuid: true,
+                catch_bare_bytes: false,
             } => {}
             other => panic!(
-                "expected Tagged{{tag: 37, bytes: false, accept_bare_uuid: true}}, got {:?}",
+                "expected Tagged{{tag: 37, bytes: false, accept_bare_uuid: true, catch_bare_bytes: false}}, got {:?}",
                 other
             ),
         }
@@ -603,7 +653,8 @@ mod tests {
             ChoiceVariantKind::Tagged {
                 tag: 37,
                 bytes: true,
-                accept_bare_uuid: false
+                accept_bare_uuid: false,
+                catch_bare_bytes: false,
             }
         ));
         assert!(matches!(
@@ -611,7 +662,8 @@ mod tests {
             ChoiceVariantKind::Tagged {
                 tag: 111,
                 bytes: true,
-                accept_bare_uuid: false
+                accept_bare_uuid: false,
+                catch_bare_bytes: false,
             }
         ));
         assert!(matches!(
@@ -619,7 +671,8 @@ mod tests {
             ChoiceVariantKind::Tagged {
                 tag: 554,
                 bytes: false,
-                accept_bare_uuid: false
+                accept_bare_uuid: false,
+                catch_bare_bytes: false,
             }
         ));
     }
@@ -637,7 +690,8 @@ mod tests {
             ChoiceVariantKind::Tagged {
                 tag: 37,
                 bytes: true,
-                accept_bare_uuid: true
+                accept_bare_uuid: true,
+                catch_bare_bytes: false,
             }
         ));
     }
@@ -651,6 +705,68 @@ mod tests {
         });
         assert!(
             err.contains("`bytes` requires `#[cbor(tag = N)]`"),
+            "got: {err}"
+        );
+    }
+
+    // --- catch_bare_bytes attribute ---
+
+    #[test]
+    fn catch_bare_bytes_on_tagged_bytes_variant() {
+        let (vs, _) = parse_enum(parse_quote! {
+            enum E {
+                #[cbor(tag = 37, bytes, accept_bare = "uuid_16")] Uuid([u8; 16]),
+                #[cbor(tag = 560, bytes, catch_bare_bytes)] Bytes(Vec<u8>),
+            }
+        });
+        assert!(matches!(
+            vs[1].kind,
+            ChoiceVariantKind::Tagged {
+                tag: 560,
+                bytes: true,
+                accept_bare_uuid: false,
+                catch_bare_bytes: true,
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_catch_bare_bytes_without_tag() {
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(text, catch_bare_bytes)] X(String),
+            }
+        });
+        assert!(
+            err.contains("`catch_bare_bytes` requires `#[cbor(tag = N, bytes)]`"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_catch_bare_bytes_without_bytes() {
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(tag = 560, catch_bare_bytes)] X(String),
+            }
+        });
+        assert!(
+            err.contains("`catch_bare_bytes` requires `#[cbor(tag = N, bytes)]`"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_duplicate_catch_bare_bytes() {
+        let err = parse_enum_err(parse_quote! {
+            enum E {
+                #[cbor(tag = 560, bytes, catch_bare_bytes)] A(Vec<u8>),
+                #[cbor(tag = 561, bytes, catch_bare_bytes)] B(Vec<u8>),
+            }
+        });
+        assert!(
+            err.contains("duplicate `#[cbor(catch_bare_bytes)]`")
+                && err.contains("at most one variant per enum"),
             "got: {err}"
         );
     }

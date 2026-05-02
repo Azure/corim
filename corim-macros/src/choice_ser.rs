@@ -46,6 +46,7 @@ pub fn expand_tag_choice_serialize(input: &DeriveInput) -> syn::Result<TokenStre
                     tag,
                     bytes,
                     accept_bare_uuid: _,
+                    catch_bare_bytes: _,
                 } => {
                     if *bytes {
                         // `Vec<u8>` and `[u8; M]` both deref/borrow to `&[u8]`.
