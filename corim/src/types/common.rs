@@ -385,155 +385,54 @@ pub enum GroupIdChoice {
 }
 
 /// `$measured-element-type-choice` — OID, UUID, uint, or text.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
 #[non_exhaustive]
 pub enum MeasuredElement {
     /// OID (CBOR tag 111).
+    #[cbor(tag = 111, bytes)]
     Oid(Vec<u8>),
     /// UUID (CBOR tag 37).
+    #[cbor(tag = 37, bytes)]
     Uuid([u8; 16]),
     /// Unsigned integer.
+    #[cbor(uint)]
     Uint(u64),
     /// Text string.
+    #[cbor(text)]
     Text(String),
 }
 
-impl Serialize for MeasuredElement {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            MeasuredElement::Oid(b) => value::serialize_tagged_bytes(TAG_OID, b, s),
-            MeasuredElement::Uuid(u) => value::serialize_tagged_bytes(TAG_UUID, u, s),
-            MeasuredElement::Uint(n) => s.serialize_u64(*n),
-            MeasuredElement::Text(t) => s.serialize_str(t),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for MeasuredElement {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Tag(TAG_OID, inner) => {
-                Ok(MeasuredElement::Oid(inner.into_bytes().ok_or_else(
-                    || serde::de::Error::custom("tag 111 must wrap bytes"),
-                )?))
-            }
-            Value::Tag(TAG_UUID, inner) => {
-                let b = inner
-                    .into_bytes()
-                    .ok_or_else(|| serde::de::Error::custom("tag 37 must wrap bytes"))?;
-                Ok(MeasuredElement::Uuid(b.try_into().map_err(|_| {
-                    serde::de::Error::custom("UUID must be 16 bytes")
-                })?))
-            }
-            Value::Integer(n) => {
-                Ok(MeasuredElement::Uint(n.try_into().map_err(|_| {
-                    serde::de::Error::custom("expected unsigned integer")
-                })?))
-            }
-            Value::Text(t) => Ok(MeasuredElement::Text(t)),
-            _ => Err(serde::de::Error::custom(
-                "expected OID, UUID, uint, or text",
-            )),
-        }
-    }
-}
-
 /// `$crypto-key-type-choice` — covers CBOR tags 554–562.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, CborTagChoiceSerialize, CborTagChoiceDeserialize)]
 #[non_exhaustive]
 pub enum CryptoKey {
     /// PEM SubjectPublicKeyInfo (CBOR tag 554).
+    #[cbor(tag = 554, text)]
     PkixBase64Key(String),
     /// PEM X.509 certificate (CBOR tag 555).
+    #[cbor(tag = 555, text)]
     PkixBase64Cert(String),
     /// PEM X.509 certificate chain (CBOR tag 556).
+    #[cbor(tag = 556, text)]
     PkixBase64CertPath(String),
     /// Key thumbprint `[alg, val]` (CBOR tag 557).
+    #[cbor(tag = 557)]
     KeyThumbprint(Digest),
     /// CBOR-encoded COSE_Key (CBOR tag 558).
+    #[cbor(tag = 558, bytes)]
     CoseKey(Vec<u8>),
     /// Certificate thumbprint (CBOR tag 559).
+    #[cbor(tag = 559)]
     CertThumbprint(Digest),
     /// Certification path thumbprint (CBOR tag 561).
+    #[cbor(tag = 561)]
     CertPathThumbprint(Digest),
     /// ASN.1 DER X.509 certificate (CBOR tag 562).
+    #[cbor(tag = 562, bytes)]
     PkixAsn1DerCert(Vec<u8>),
     /// Opaque key identifier (CBOR tag 560).
+    #[cbor(tag = 560, bytes)]
     Bytes(Vec<u8>),
-}
-
-impl Serialize for CryptoKey {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            CryptoKey::PkixBase64Key(v) => value::serialize_tagged(TAG_PKIX_BASE64_KEY, v, s),
-            CryptoKey::PkixBase64Cert(v) => value::serialize_tagged(TAG_PKIX_BASE64_CERT, v, s),
-            CryptoKey::PkixBase64CertPath(v) => {
-                value::serialize_tagged(TAG_PKIX_BASE64_CERT_PATH, v, s)
-            }
-            CryptoKey::KeyThumbprint(v) => value::serialize_tagged(TAG_KEY_THUMBPRINT, v, s),
-            CryptoKey::CoseKey(v) => value::serialize_tagged_bytes(TAG_COSE_KEY, v, s),
-            CryptoKey::CertThumbprint(v) => value::serialize_tagged(TAG_CERT_THUMBPRINT, v, s),
-            CryptoKey::CertPathThumbprint(v) => {
-                value::serialize_tagged(TAG_CERT_PATH_THUMBPRINT, v, s)
-            }
-            CryptoKey::PkixAsn1DerCert(v) => {
-                value::serialize_tagged_bytes(TAG_PKIX_ASN1DER_CERT, v, s)
-            }
-            CryptoKey::Bytes(v) => value::serialize_tagged_bytes(TAG_BYTES, v, s),
-        }
-    }
-}
-
-impl<'de> Deserialize<'de> for CryptoKey {
-    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let val = Value::deserialize(d)?;
-        match val {
-            Value::Tag(TAG_PKIX_BASE64_KEY, inner) => match *inner {
-                Value::Text(t) => Ok(CryptoKey::PkixBase64Key(t)),
-                _ => Err(serde::de::Error::custom("tag 554 must wrap text")),
-            },
-            Value::Tag(TAG_PKIX_BASE64_CERT, inner) => match *inner {
-                Value::Text(t) => Ok(CryptoKey::PkixBase64Cert(t)),
-                _ => Err(serde::de::Error::custom("tag 555 must wrap text")),
-            },
-            Value::Tag(TAG_PKIX_BASE64_CERT_PATH, inner) => match *inner {
-                Value::Text(t) => Ok(CryptoKey::PkixBase64CertPath(t)),
-                _ => Err(serde::de::Error::custom("tag 556 must wrap text")),
-            },
-            Value::Tag(TAG_KEY_THUMBPRINT, inner) => {
-                let arr = inner
-                    .into_array()
-                    .ok_or_else(|| serde::de::Error::custom("tag 557 must wrap array"))?;
-                Ok(CryptoKey::KeyThumbprint(digest_from_value_array(arr)?))
-            }
-            Value::Tag(TAG_COSE_KEY, inner) => match *inner {
-                Value::Bytes(b) => Ok(CryptoKey::CoseKey(b)),
-                _ => Err(serde::de::Error::custom("tag 558 must wrap bytes")),
-            },
-            Value::Tag(TAG_CERT_THUMBPRINT, inner) => {
-                let arr = inner
-                    .into_array()
-                    .ok_or_else(|| serde::de::Error::custom("tag 559 must wrap array"))?;
-                Ok(CryptoKey::CertThumbprint(digest_from_value_array(arr)?))
-            }
-            Value::Tag(TAG_CERT_PATH_THUMBPRINT, inner) => {
-                let arr = inner
-                    .into_array()
-                    .ok_or_else(|| serde::de::Error::custom("tag 561 must wrap array"))?;
-                Ok(CryptoKey::CertPathThumbprint(digest_from_value_array(arr)?))
-            }
-            Value::Tag(TAG_PKIX_ASN1DER_CERT, inner) => match *inner {
-                Value::Bytes(b) => Ok(CryptoKey::PkixAsn1DerCert(b)),
-                _ => Err(serde::de::Error::custom("tag 562 must wrap bytes")),
-            },
-            Value::Tag(TAG_BYTES, inner) => match *inner {
-                Value::Bytes(b) => Ok(CryptoKey::Bytes(b)),
-                _ => Err(serde::de::Error::custom("tag 560 must wrap bytes")),
-            },
-            _ => Err(serde::de::Error::custom("expected a tagged crypto key")),
-        }
-    }
 }
 
 /// `linked-tag-map` — references another tag.

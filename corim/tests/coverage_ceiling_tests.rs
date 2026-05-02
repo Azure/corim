@@ -662,42 +662,42 @@ fn measured_element_unknown() {
 fn crypto_key_pkix_key_non_text() {
     let v = Value::Tag(TAG_PKIX_BASE64_KEY, Box::new(Value::Bytes(vec![1])));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("text"), "got: {err}");
+    assert!(err.contains("tstr"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_pkix_cert_non_text() {
     let v = Value::Tag(TAG_PKIX_BASE64_CERT, Box::new(Value::Bytes(vec![1])));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("text"), "got: {err}");
+    assert!(err.contains("tstr"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_pkix_cert_path_non_text() {
     let v = Value::Tag(TAG_PKIX_BASE64_CERT_PATH, Box::new(Value::Bytes(vec![1])));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("text"), "got: {err}");
+    assert!(err.contains("tstr"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_cose_key_non_bytes() {
     let v = Value::Tag(TAG_COSE_KEY, Box::new(Value::Text("x".into())));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_asn1_cert_non_bytes() {
     let v = Value::Tag(TAG_PKIX_ASN1DER_CERT, Box::new(Value::Text("x".into())));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_bytes_non_bytes() {
     let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
@@ -711,21 +711,21 @@ fn crypto_key_unknown_tag() {
 fn crypto_key_key_thumbprint_non_array() {
     let v = Value::Tag(TAG_KEY_THUMBPRINT, Box::new(Value::Text("x".into())));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("array"), "got: {err}");
+    assert!(err.contains("[alg, val]"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_cert_thumbprint_non_array() {
     let v = Value::Tag(TAG_CERT_THUMBPRINT, Box::new(Value::Text("x".into())));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("array"), "got: {err}");
+    assert!(err.contains("[alg, val]"), "got: {err}");
 }
 
 #[test]
 fn crypto_key_cert_path_thumbprint_non_array() {
     let v = Value::Tag(TAG_CERT_PATH_THUMBPRINT, Box::new(Value::Text("x".into())));
     let err = decode_err::<CryptoKey>(&v);
-    assert!(err.contains("array"), "got: {err}");
+    assert!(err.contains("[alg, val]"), "got: {err}");
 }
 
 // ===================================================================
