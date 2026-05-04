@@ -1,0 +1,93 @@
+name: Release
+
+# Publishes corim-macros and corim to crates.io when a tag matching v*
+# is pushed. Uses crates.io Trusted Publishing (OIDC) — no API token in
+# repo secrets is required. The corresponding "Trusted Publisher" entries
+# must be configured at:
+#   https://crates.io/crates/corim-macros/settings
+#   https://crates.io/crates/corim/settings
+# with:
+#   Repository owner:    Azure
+#   Repository name:     corim
+#   Workflow filename:   release.yml
+#   Environment name:    crates-io
+#
+# Release runbook:
+#   1. Bump version in workspace + per-crate Cargo.toml; update CHANGELOG.
+#   2. Merge to main.
+#   3. git tag v0.X.Y && git push origin v0.X.Y
+#   4. Approve the `crates-io` environment deployment in the Actions UI.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+  id-token: write   # Required for crates.io Trusted Publishing (OIDC).
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  publish:
+    name: Publish to crates.io
+    runs-on: ubuntu-latest
+    environment: crates-io
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+
+      # Sanity: tag must match versions in Cargo.toml.
+      - name: Verify tag matches crate versions
+        run: |
+          set -euo pipefail
+          tag="${GITHUB_REF_NAME#v}"
+          corim_ver=$(grep -m1 '^version = ' corim/Cargo.toml | cut -d'"' -f2)
+          macros_ver=$(grep -m1 '^version = ' corim-macros/Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag corim=$corim_ver corim-macros=$macros_ver"
+          if [[ "$tag" != "$corim_ver" || "$tag" != "$macros_ver" ]]; then
+            echo "::error::Tag $tag does not match crate versions" >&2
+            exit 1
+          fi
+
+      # Pre-flight: full test + clippy on the exact tagged commit.
+      - name: Test
+        run: cargo test --workspace --features json
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --features json -- -D warnings
+
+      # Exchange the GitHub OIDC token for a crates.io publish token.
+      # Sets CARGO_REGISTRY_TOKEN in the environment for subsequent steps.
+      - name: Authenticate to crates.io
+        uses: rust-lang/crates-io-auth-action@v1
+        id: auth
+
+      - name: Publish corim-macros
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p corim-macros
+
+      # The crates.io sparse index can take 30–60s to surface the newly
+      # published version. corim depends on corim-macros, so we wait
+      # before publishing it.
+      - name: Wait for corim-macros to be indexed
+        run: sleep 60
+
+      - name: Publish corim
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+        run: cargo publish -p corim

@@ -306,7 +306,7 @@ fn base64_decode(s: &str) -> Result<Vec<u8>, ()> {
         }
     }
     let bytes: Vec<u8> = s.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
-    if !bytes.len().is_multiple_of(4) {
+    if bytes.len() % 4 != 0 {
         return Err(());
     }
     let mut result = Vec::new();

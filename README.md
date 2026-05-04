@@ -47,6 +47,16 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 - **Optional JSON** — `json` feature gate adds `Value ↔ serde_json::Value`
   conversion with integer-to-string key remapping and type-choice JSON format.
 
+- **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
+  outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
+  CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
+  firmware). Decode-only; encoders always emit draft-10 wire format.
+  See [`corim::compat`](corim/src/compat.rs) for the full list.
+
+## MSRV
+
+Rust 1.85.
+
 ## Quick start
 
 ```rust
@@ -177,7 +187,20 @@ corim-cli --skip-expiry signed.corim
 
 # JSON output
 corim-cli -f json myfile.corim
+
+# Non-aborting structural diagnose pass — prints issues without rejecting
+corim-cli --diagnose myfile.corim
 ```
+
+Two helper binaries also ship with `corim-cli` for generating fixtures and
+worked examples:
+
+```sh
+corim-gen-sample            # write a minimal unsigned CoRIM fixture
+corim-gen-signed-sample     # write a minimal signed CoRIM fixture
+```
+
+`corim-cli` is a local development tool and is not published to crates.io.
 
 ## Contributing
 

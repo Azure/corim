@@ -75,3 +75,38 @@ cargo clippy --workspace -- -D warnings
 - Keep CBOR backend abstraction intact — types must not import `ciborium` directly.
 - New CDDL type additions should reference the relevant section of
   [draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html).
+
+## Releasing
+
+Releases are published to crates.io by [`.github/workflows/release.yml`](.github/workflows/release.yml)
+via crates.io [Trusted Publishing](https://crates.io/docs/trusted-publishing) (OIDC).
+No long-lived API token is stored in the repo.
+
+Runbook:
+
+1. Bump the version in `corim/Cargo.toml`, `corim-macros/Cargo.toml`,
+   `corim-cli/Cargo.toml`, and the `corim-macros` workspace dependency
+   pin in the root `Cargo.toml`. Update `CHANGELOG.md`.
+2. Run `cargo test --workspace`, `cargo clippy --workspace --all-targets -- -D warnings`,
+   and `cargo deny check` locally.
+3. Open a `release-vX.Y.Z` PR; merge after review.
+4. Tag the merge commit and push:
+   ```bash
+   git tag vX.Y.Z && git push origin vX.Y.Z
+   ```
+5. The `Release` workflow will queue and pause on the `crates-io`
+   environment. Approve the deployment in the Actions UI to publish
+   `corim-macros` first, then `corim`.
+
+The `corim-cli` crate is intentionally not published (`publish = false`).
+
+Trusted Publisher configuration on crates.io (one-time per crate, set at
+`https://crates.io/crates/<name>/settings`):
+
+| Field             | Value         |
+|-------------------|---------------|
+| Repository owner  | `Azure`       |
+| Repository name   | `corim`       |
+| Workflow filename | `release.yml` |
+| Environment name  | `crates-io`   |
+
