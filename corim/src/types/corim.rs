@@ -187,6 +187,40 @@ pub enum ConciseTagChoice {
     BareBstr(Vec<u8>),
 }
 
+impl ConciseTagChoice {
+    /// Decode this entry as a [`crate::types::comid::ComidTag`], if possible.
+    ///
+    /// Handles both spec-compliant `Comid` entries (the inner bytes are
+    /// `bstr .cbor concise-mid-tag`) and the decode-only [`BareBstr`]
+    /// variant emitted by TCG-style producers (notably NVIDIA NIC firmware
+    /// CoRIMs). Other variants return [`crate::error::DecodeError::InvalidStructure`].
+    ///
+    /// This is the recommended way for callers to consume CoMID entries
+    /// without needing to know which on-the-wire shape the producer used.
+    ///
+    /// [`BareBstr`]: ConciseTagChoice::BareBstr
+    pub fn as_comid(&self) -> Result<crate::types::comid::ComidTag, crate::error::DecodeError> {
+        match self {
+            ConciseTagChoice::Comid(bytes) => cbor::decode(bytes).map_err(|e| {
+                crate::error::DecodeError::Deserialization(format!(
+                    "as_comid: ComidTag decode: {}",
+                    e
+                ))
+            }),
+            ConciseTagChoice::BareBstr(bytes) => crate::compat::decode_comid_from_tcg_bstr(bytes),
+            ConciseTagChoice::Coswid(_) => Err(crate::error::DecodeError::InvalidStructure(
+                "as_comid: tag is CoSWID (#6.505), not CoMID".into(),
+            )),
+            ConciseTagChoice::Cotl(_) => Err(crate::error::DecodeError::InvalidStructure(
+                "as_comid: tag is CoTL (#6.508), not CoMID".into(),
+            )),
+            ConciseTagChoice::Unknown(t, _) => Err(crate::error::DecodeError::InvalidStructure(
+                format!("as_comid: tag is unknown (#6.{}), not CoMID", t),
+            )),
+        }
+    }
+}
+
 impl Serialize for ConciseTagChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
