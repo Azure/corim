@@ -577,14 +577,14 @@ fn cbor_time_non_time_value() {
 fn measured_element_oid_non_bytes() {
     let v = Value::Tag(TAG_OID, Box::new(Value::Text("not-bytes".into())));
     let err = decode_err::<MeasuredElement>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
 fn measured_element_uuid_non_bytes() {
     let v = Value::Tag(TAG_UUID, Box::new(Value::Text("not-bytes".into())));
     let err = decode_err::<MeasuredElement>(&v);
-    assert!(err.contains("bytes"), "got: {err}");
+    assert!(err.contains("bstr"), "got: {err}");
 }
 
 #[test]
