@@ -19,7 +19,12 @@ use crate::nostd_prelude::*;
 /// RFC 9864 deprecates polymorphic algorithm identifiers (ES256, ES384,
 /// ES512, EdDSA) and defines fully-specified replacements (ESP256, ESP384,
 /// ESP512, Ed25519, Ed448). The deprecated variants are retained for
-/// decode interop but marked with `#[deprecated]` doc attributes.
+/// decode interop with existing signed CoRIM documents in the wild and
+/// are documented as deprecated in their per-variant doc-comments below.
+/// They are intentionally **not** annotated with `#[deprecated]` so that
+/// downstream code parsing real-world ES256/EdDSA-signed CoRIMs does not
+/// emit spurious warnings. Use [`is_deprecated`](Self::is_deprecated) to
+/// check at runtime.
 ///
 /// Used in the `alg` (key 1) field of the COSE_Sign1 protected header.
 /// The `Unknown` variant provides forward compatibility with algorithm

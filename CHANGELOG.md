@@ -1,12 +1,81 @@
-# Release Notes — v0.1.0
+# Changelog
 
-**Published:** April 17, 2026  
-**Crates:** [`corim`](https://crates.io/crates/corim) v0.1.0, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.0  
-**Spec:** [draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html)
+All notable changes to the `corim` and `corim-macros` crates are documented
+in this file. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html)
+with the caveat that pre-1.0 releases may include breaking changes in minor
+versions.
+
+## [0.1.1] — 2026-05-04
+
+**Crates:** [`corim`](https://crates.io/crates/corim) v0.1.1, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.1
+**MSRV:** Rust 1.85
+
+### Added
+
+- **TCG / NVIDIA decode interop** ([`corim::compat`](corim/src/compat.rs)) — decode-only relaxations
+  that allow parsing real-world signed CoRIMs produced against the pre-PR-#337
+  IETF draft and the TCG Endorsement spec, notably NVIDIA NIC firmware
+  CoRIMs:
+  - `peel_tcg_wrappers` strips legacy outer `#6.500` / `#6.502` tags.
+  - `wrap_bare_corim_map` synthesizes a `#6.501` header for bare
+    `corim-map` payloads.
+  - `decode_comid_from_tcg_bstr` accepts both the spec-correct
+    `#6.506(bstr .cbor map)` shape and the TCG-style
+    `#6.506(map)` / bare-map shapes.
+  - New `ConciseTagChoice::BareBstr` variant carries unwrapped `bstr`
+    `tags[]` entries seen in the wild. Encoders always emit `#6.506(bstr)`.
+- **Diagnose pass** (`corim::diagnose`, CLI `--diagnose`) — non-aborting
+  structural inspector that reports issues without rejecting the document.
+  Surfaces TCG wrapper warnings inline at the relevant CBOR paths.
+- **`as_comid()`** on `ConciseTagChoice` — convenience accessor for
+  extracting the inner CoMID tag.
+- **`CborTagChoice` derive** in `corim-macros` — declarative codegen for
+  type-choice enums (`int / text / #6.N(...)`), replacing five blocks of
+  hand-written serde. Supports `#[cbor(tag = N)]`, `#[cbor(tag = N, text)]`
+  for tagged-text variants, and `#[cbor(catch_bare_bytes)]` for the
+  TCG bare-bstr fallback. Migrated: `ClassIdChoice`, `TagIdChoice`,
+  `GroupIdChoice`, `MeasuredElement`, `CryptoKey`, `InstanceIdChoice`.
+- **Better fixed-size byte error messages** — derive macro now reports the
+  expected size on length mismatch.
+- **`deny.toml`** — workspace policy enforcing the zero-CBOR-deps invariant
+  and a tight allowlist of licenses.
+- **MSRV** — `rust-version = "1.85"` is now declared on `corim` and
+  `corim-macros`.
+
+### Changed
+
+- **Internal refactor:** `types::signed.rs` (~1.6k lines) split into
+  `types::signed/{algorithm, x509, cwt, header, envelope, builder, mod}.rs`.
+  No public API surface change — all re-exports under `types::signed::*`
+  are preserved.
+- **CLI signed-CoRIM display** structured by COSE_Sign1 sections;
+  `--show-raw` flag fixed.
+- **`CoseAlgorithm`** doc-text corrected: deprecated variants are
+  intentionally **not** annotated with `#[deprecated]` so that downstream
+  code parsing real-world ES256/EdDSA-signed CoRIMs does not emit
+  warnings. Use `is_deprecated()` to check at runtime.
+
+### Fixed
+
+- Coverage-test bug where `signed_corim_coverage_tests` did not exercise
+  the path it claimed to cover.
+
+### Notes
+
+- `corim-cli` is bumped to 0.1.1 in lockstep but is **not published** to
+  crates.io (`publish = false`). It remains a local development tool.
+- No breaking API changes. The `signed` module split and the
+  `CborTagChoice` migration preserve all previously-exported symbols.
 
 ---
 
-## Overview
+## [0.1.0] — 2026-04-17
+
+**Crates:** [`corim`](https://crates.io/crates/corim) v0.1.0, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.0
+**Spec:** [draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html)
+
+### Overview
 
 Initial release of the CoRIM (Concise Reference Integrity Manifest) Rust crate — a CBOR-native implementation of draft-ietf-rats-corim-10 for Remote Attestation (RATS) Endorsements and Reference Values.
 

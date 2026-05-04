@@ -3,8 +3,9 @@
 
 [package]
 name = "corim-macros"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+rust-version = "1.85"
 description = "Internal proc-macro derive crate for the corim crate. Provides CborSerialize/CborDeserialize derives for CBOR integer-keyed map encoding."
 license = "MIT"
 authors = ["Microsoft"]
