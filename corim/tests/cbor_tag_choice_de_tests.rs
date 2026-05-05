@@ -358,3 +358,550 @@ fn macro_round_trip_matches_handwritten_pattern() {
     let decoded: ClassIdShape = cbor::decode(&macro_bytes).unwrap();
     assert_eq!(decoded, v);
 }
+
+// ===========================================================================
+// Negative-decode tests for the type-choice enums in `types/common.rs`,
+// `types/measurement.rs`, `types/corim.rs`. Each test crafts a `Value`
+// shape that is structurally valid CBOR but violates the CDDL of the
+// target type-choice enum, and asserts the decoder rejects it with a
+// helpful error message.
+//
+// They directly exercise the codegen produced by
+// `#[derive(CborTagChoiceDeserialize)]`.
+// ===========================================================================
+
+use corim::cbor::value::Value;
+use corim::types::common::{
+    ClassIdChoice, CryptoKey, GroupIdChoice, InstanceIdChoice, MeasuredElement, TagIdChoice,
+};
+use corim::types::corim::{ConciseTagChoice, CorimId, CorimLocator, ProfileChoice};
+use corim::types::measurement::{
+    DigestAlg, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr, RawValueChoice, SvnChoice,
+};
+use corim::types::tags::{
+    TAG_BYTES, TAG_CERT_PATH_THUMBPRINT, TAG_CERT_THUMBPRINT, TAG_COMID, TAG_COSE_KEY, TAG_COSWID,
+    TAG_COTL, TAG_INT_RANGE, TAG_KEY_THUMBPRINT, TAG_MASKED_RAW_VALUE, TAG_OID,
+    TAG_PKIX_ASN1DER_CERT, TAG_PKIX_BASE64_CERT, TAG_PKIX_BASE64_CERT_PATH, TAG_PKIX_BASE64_KEY,
+    TAG_UEID, TAG_UUID,
+};
+
+/// Encode `val` as CBOR, then try to decode as `T`. Return the rendered error.
+fn decode_err<T: serde::de::DeserializeOwned + std::fmt::Debug>(val: &Value) -> String {
+    let bytes = corim::cbor::encode(val).unwrap();
+    corim::cbor::decode::<T>(&bytes).unwrap_err().to_string()
+}
+
+// ---- TagIdChoice ----
+
+#[test]
+fn tag_id_uuid_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_UUID, Box::new(Value::Text("not-bytes".into())));
+    let err = decode_err::<TagIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn tag_id_rejects_unrelated_value_kinds() {
+    let v = Value::Integer(42);
+    let err = decode_err::<TagIdChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- ClassIdChoice ----
+
+#[test]
+fn class_id_oid_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_OID, Box::new(Value::Text("not-bytes".into())));
+    let err = decode_err::<ClassIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn class_id_uuid_inner_must_be_16_bytes() {
+    let v = Value::Tag(TAG_UUID, Box::new(Value::Bytes(vec![0; 8])));
+    let err = decode_err::<ClassIdChoice>(&v);
+    assert!(err.contains("got 8 bytes"), "got: {err}");
+}
+
+#[test]
+fn class_id_uuid_inner_must_be_bytes_kind() {
+    let v = Value::Tag(TAG_UUID, Box::new(Value::Text("x".into())));
+    let err = decode_err::<ClassIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn class_id_bytes_tag_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
+    let err = decode_err::<ClassIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn class_id_unknown_tag_rejected() {
+    let v = Value::Tag(999, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<ClassIdChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- InstanceIdChoice ----
+
+#[test]
+fn instance_id_ueid_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_UEID, Box::new(Value::Text("x".into())));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_ueid_size_must_be_7_to_33() {
+    let v = Value::Tag(TAG_UEID, Box::new(Value::Bytes(vec![0; 3])));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("7-33"), "got: {err}");
+}
+
+#[test]
+fn instance_id_pkix_key_must_be_text() {
+    let v = Value::Tag(TAG_PKIX_BASE64_KEY, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("tstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_pkix_cert_must_be_text() {
+    let v = Value::Tag(TAG_PKIX_BASE64_CERT, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("tstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_cose_key_must_be_bytes() {
+    let v = Value::Tag(TAG_COSE_KEY, Box::new(Value::Text("x".into())));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_key_thumbprint_must_be_array() {
+    let v = Value::Tag(TAG_KEY_THUMBPRINT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("[alg, val]"), "got: {err}");
+}
+
+#[test]
+fn instance_id_cert_thumbprint_must_be_array() {
+    let v = Value::Tag(TAG_CERT_THUMBPRINT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("[alg, val]"), "got: {err}");
+}
+
+#[test]
+fn instance_id_asn1_cert_must_be_bytes() {
+    let v = Value::Tag(TAG_PKIX_ASN1DER_CERT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_bytes_tag_must_be_bytes() {
+    let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn instance_id_unknown_value_rejected() {
+    let v = Value::Integer(42);
+    let err = decode_err::<InstanceIdChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- GroupIdChoice ----
+
+#[test]
+fn group_id_uuid_must_be_bytes_kind() {
+    let v = Value::Tag(TAG_UUID, Box::new(Value::Text("x".into())));
+    let err = decode_err::<GroupIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn group_id_uuid_must_be_16_bytes() {
+    let v = Value::Tag(TAG_UUID, Box::new(Value::Bytes(vec![0; 8])));
+    let err = decode_err::<GroupIdChoice>(&v);
+    assert!(err.contains("got 8 bytes"), "got: {err}");
+}
+
+#[test]
+fn group_id_bytes_tag_must_be_bytes() {
+    let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
+    let err = decode_err::<GroupIdChoice>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn group_id_text_value_rejected() {
+    let v = Value::Text("nope".into());
+    let err = decode_err::<GroupIdChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- MeasuredElement ----
+
+#[test]
+fn measured_element_negative_int_rejected() {
+    let v = Value::Integer(-1);
+    let err = decode_err::<MeasuredElement>(&v);
+    assert!(err.contains("unsigned"), "got: {err}");
+}
+
+#[test]
+fn measured_element_bool_rejected() {
+    let v = Value::Bool(true);
+    let err = decode_err::<MeasuredElement>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- CryptoKey ----
+
+#[test]
+fn crypto_key_pkix_key_must_be_text() {
+    let v = Value::Tag(TAG_PKIX_BASE64_KEY, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("tstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_pkix_cert_must_be_text() {
+    let v = Value::Tag(TAG_PKIX_BASE64_CERT, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("tstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_pkix_cert_path_must_be_text() {
+    let v = Value::Tag(TAG_PKIX_BASE64_CERT_PATH, Box::new(Value::Bytes(vec![1])));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("tstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_cose_key_must_be_bytes() {
+    let v = Value::Tag(TAG_COSE_KEY, Box::new(Value::Text("x".into())));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_asn1_cert_must_be_bytes() {
+    let v = Value::Tag(TAG_PKIX_ASN1DER_CERT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_bytes_tag_must_be_bytes() {
+    let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("bstr"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_bare_int_rejected() {
+    let v = Value::Integer(42);
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_key_thumbprint_must_be_array() {
+    let v = Value::Tag(TAG_KEY_THUMBPRINT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("[alg, val]"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_cert_thumbprint_must_be_array() {
+    let v = Value::Tag(TAG_CERT_THUMBPRINT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("[alg, val]"), "got: {err}");
+}
+
+#[test]
+fn crypto_key_cert_path_thumbprint_must_be_array() {
+    let v = Value::Tag(TAG_CERT_PATH_THUMBPRINT, Box::new(Value::Text("x".into())));
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("[alg, val]"), "got: {err}");
+}
+
+// ---- Digest array shape (used inside CryptoKey thumbprints) ----
+
+#[test]
+fn digest_array_extra_element_rejected() {
+    let v = Value::Tag(
+        TAG_KEY_THUMBPRINT,
+        Box::new(Value::Array(vec![
+            Value::Integer(7),
+            Value::Bytes(vec![0xAA; 32]),
+            Value::Integer(0),
+        ])),
+    );
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(
+        err.contains("digest") || err.contains("[alg, val]"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn digest_text_alg_accepted() {
+    // Per the README "Decode interop relaxations" — text alg IDs are accepted.
+    let v = Value::Tag(
+        TAG_KEY_THUMBPRINT,
+        Box::new(Value::Array(vec![
+            Value::Text("sha-256".into()),
+            Value::Bytes(vec![0]),
+        ])),
+    );
+    let bytes = corim::cbor::encode(&v).unwrap();
+    let key: CryptoKey = corim::cbor::decode(&bytes).unwrap();
+    match key {
+        CryptoKey::KeyThumbprint(d) => assert!(matches!(d.alg(), DigestAlg::Text(_))),
+        other => panic!("expected KeyThumbprint, got {:?}", other),
+    }
+}
+
+#[test]
+fn digest_non_bytes_val_rejected() {
+    let v = Value::Tag(
+        TAG_KEY_THUMBPRINT,
+        Box::new(Value::Array(vec![
+            Value::Integer(7),
+            Value::Text("not-bytes".into()),
+        ])),
+    );
+    let err = decode_err::<CryptoKey>(&v);
+    assert!(err.contains("val"), "got: {err}");
+}
+
+// ---- SvnChoice / MacAddr / IpAddr / IntRangeChoice / RawValueChoice ----
+
+#[test]
+fn svn_choice_text_rejected() {
+    let v = Value::Text("not-a-svn".into());
+    let err = decode_err::<SvnChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+#[test]
+fn mac_addr_wrong_length_rejected() {
+    let v = Value::Bytes(vec![0; 4]);
+    let err = decode_err::<MacAddr>(&v);
+    assert!(err.contains("6 or 8"), "got: {err}");
+}
+
+#[test]
+fn mac_addr_non_bytes_rejected() {
+    let v = Value::Text("not-bytes".into());
+    let err = decode_err::<MacAddr>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn ip_addr_wrong_length_rejected() {
+    let v = Value::Bytes(vec![0; 8]);
+    let err = decode_err::<IpAddr>(&v);
+    assert!(err.contains("4 or 16"), "got: {err}");
+}
+
+#[test]
+fn ip_addr_non_bytes_rejected() {
+    let v = Value::Text("not-bytes".into());
+    let err = decode_err::<IpAddr>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn int_range_tag_inner_must_be_array() {
+    let v = Value::Tag(TAG_INT_RANGE, Box::new(Value::Text("x".into())));
+    let err = decode_err::<IntRangeChoice>(&v);
+    assert!(err.contains("[min, max]"), "got: {err}");
+}
+
+#[test]
+fn int_range_text_value_rejected() {
+    let v = Value::Text("nope".into());
+    let err = decode_err::<IntRangeChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+#[test]
+fn raw_value_bytes_tag_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_BYTES, Box::new(Value::Integer(1)));
+    let err = decode_err::<RawValueChoice>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn raw_value_masked_tag_inner_must_be_pair() {
+    let v = Value::Tag(TAG_MASKED_RAW_VALUE, Box::new(Value::Text("x".into())));
+    let err = decode_err::<RawValueChoice>(&v);
+    assert!(err.contains("[value, mask]"), "got: {err}");
+}
+
+#[test]
+fn raw_value_unrelated_tag_rejected() {
+    let v = Value::Integer(42);
+    let err = decode_err::<RawValueChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+// ---- IntegrityRegisters ----
+
+#[test]
+fn integrity_register_id_bool_key_rejected() {
+    let v = Value::Map(vec![(
+        Value::Bool(true),
+        Value::Array(vec![Value::Array(vec![
+            Value::Integer(7),
+            Value::Bytes(vec![0xAA; 32]),
+        ])]),
+    )]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("uint or text"), "got: {err}");
+}
+
+#[test]
+fn integrity_registers_non_map_rejected() {
+    let v = Value::Array(vec![]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("map"), "got: {err}");
+}
+
+#[test]
+fn integrity_registers_non_array_digests_rejected() {
+    let v = Value::Map(vec![(Value::Integer(0), Value::Text("not-array".into()))]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("array"), "got: {err}");
+}
+
+#[test]
+fn integrity_registers_bad_digest_format_rejected() {
+    let v = Value::Map(vec![(
+        Value::Integer(0),
+        Value::Array(vec![Value::Text("not-a-pair".into())]),
+    )]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("digest"), "got: {err}");
+}
+
+#[test]
+fn integrity_registers_bad_digest_alg_rejected() {
+    let v = Value::Map(vec![(
+        Value::Integer(0),
+        Value::Array(vec![Value::Array(vec![
+            Value::Text("not-int".into()),
+            Value::Bytes(vec![0]),
+        ])]),
+    )]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("alg"), "got: {err}");
+}
+
+#[test]
+fn integrity_registers_bad_digest_val_rejected() {
+    let v = Value::Map(vec![(
+        Value::Integer(0),
+        Value::Array(vec![Value::Array(vec![
+            Value::Integer(7),
+            Value::Text("not-bytes".into()),
+        ])]),
+    )]);
+    let err = decode_err::<IntegrityRegisters>(&v);
+    assert!(err.contains("val"), "got: {err}");
+}
+
+// ---- CorimLocator / ConciseTagChoice / ProfileChoice / CorimId ----
+
+#[test]
+fn corim_locator_href_array_items_must_be_text_or_uri_tag() {
+    let v = Value::Map(vec![(
+        Value::Integer(0),
+        Value::Array(vec![Value::Integer(42)]),
+    )]);
+    let err = decode_err::<CorimLocator>(&v);
+    // The deserializer accepts both bare text and #6.32(text); the rejection
+    // message wording differs accordingly.
+    assert!(
+        err.contains("text") || err.contains("URI") || err.contains("string"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn corim_locator_href_wrong_kind_rejected() {
+    let v = Value::Map(vec![(Value::Integer(0), Value::Integer(42))]);
+    let err = decode_err::<CorimLocator>(&v);
+    assert!(
+        err.contains("expected") || err.contains("href"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn corim_locator_thumbprint_empty_array_rejected() {
+    let v = Value::Map(vec![
+        (Value::Integer(0), Value::Text("https://x.com".into())),
+        (Value::Integer(1), Value::Array(vec![])),
+    ]);
+    let err = decode_err::<CorimLocator>(&v);
+    assert!(
+        err.contains("array") || err.contains("thumbprint"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn concise_tag_choice_bare_text_rejected() {
+    let v = Value::Text("not-tagged".into());
+    let err = decode_err::<ConciseTagChoice>(&v);
+    assert!(
+        err.contains("tagged") || err.contains("expected"),
+        "got: {err}"
+    );
+}
+
+#[test]
+fn concise_tag_choice_comid_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_COMID, Box::new(Value::Text("x".into())));
+    let err = decode_err::<ConciseTagChoice>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn concise_tag_choice_coswid_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_COSWID, Box::new(Value::Text("x".into())));
+    let err = decode_err::<ConciseTagChoice>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn concise_tag_choice_cotl_inner_must_be_bytes() {
+    let v = Value::Tag(TAG_COTL, Box::new(Value::Text("x".into())));
+    let err = decode_err::<ConciseTagChoice>(&v);
+    assert!(err.contains("bytes"), "got: {err}");
+}
+
+#[test]
+fn profile_choice_int_rejected() {
+    let v = Value::Integer(42);
+    let err = decode_err::<ProfileChoice>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
+
+#[test]
+fn corim_id_bool_rejected() {
+    let v = Value::Bool(true);
+    let err = decode_err::<CorimId>(&v);
+    assert!(err.contains("expected"), "got: {err}");
+}
