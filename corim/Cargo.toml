@@ -16,8 +16,6 @@ readme = "README.md"
 # Exclude development-only test files from the published crate.
 # These are useful locally but not needed by downstream users.
 exclude = [
-    "tests/coverage_boost_tests.rs",
-    "tests/coverage_ceiling_tests.rs",
     "tests/negative_error_path_tests.rs",
 ]
 
