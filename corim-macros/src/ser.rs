@@ -43,8 +43,15 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         if checks.is_empty() {
             quote! {}
         } else {
+            // When an extras field is present, the map is non-empty if any
+            // extras entry is set even when all known optional fields are None.
+            let extras_check = if let Some(ref extras_ident) = struct_attrs.extras {
+                quote! { && self.#extras_ident.is_empty() }
+            } else {
+                quote! {}
+            };
             quote! {
-                if #(#checks)&&* {
+                if #(#checks)&&* #extras_check {
                     return Err(serde::ser::Error::custom(
                         concat!("non-empty constraint violated: all optional fields are None in ", stringify!(#name))
                     ));
@@ -68,6 +75,25 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
             }
         })
         .collect();
+
+    // When an extras field is present, add its length to the count and
+    // emit each entry after the known fields. The byte-level encoder
+    // re-sorts map keys per RFC 8949 §4.2.1, so insertion order does not
+    // affect canonical output.
+    let extras_count = if let Some(ref extras_ident) = struct_attrs.extras {
+        quote! { + self.#extras_ident.len() }
+    } else {
+        quote! {}
+    };
+    let extras_entries = if let Some(ref extras_ident) = struct_attrs.extras {
+        quote! {
+            for (__k, __v) in self.#extras_ident.iter() {
+                map.serialize_entry(__k, __v)?;
+            }
+        }
+    } else {
+        quote! {}
+    };
 
     // Emit map entries in key-ascending order (caller must declare fields in order)
     let entry_stmts: Vec<_> = fields
@@ -110,9 +136,10 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
 
             #non_empty_check
 
-            let count: usize = #(#count_exprs)+*;
+            let count: usize = #(#count_exprs)+* #extras_count;
             let mut map = serializer.serialize_map(Some(count))?;
             #(#entry_stmts)*
+            #extras_entries
             serde::ser::SerializeMap::end(map)
         }
     };

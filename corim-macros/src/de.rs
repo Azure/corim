@@ -141,6 +141,34 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     };
 
+    // Extras-field plumbing: when `#[cbor(extras = "field")]` is set, unknown
+    // integer keys are collected into a `BTreeMap<i64, Value>` field instead
+    // of being silently dropped. Otherwise unknown keys are read-and-skipped
+    // for forward compatibility (existing behavior).
+    let (extras_decl, unknown_key_branch, extras_construct) =
+        if let Some(ref extras_ident) = struct_attrs.extras {
+            (
+                quote! {
+                    let mut __extras: alloc::collections::BTreeMap<i64, crate::cbor::value::Value>
+                        = alloc::collections::BTreeMap::new();
+                },
+                quote! {
+                    let val: crate::cbor::value::Value = map.next_value()?;
+                    __extras.insert(key, val);
+                },
+                quote! { #extras_ident: __extras, },
+            )
+        } else {
+            (
+                quote! {},
+                quote! {
+                    // Skip unknown keys for forward compatibility
+                    let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                },
+                quote! {},
+            )
+        };
+
     let deserialize_body = quote! {
         fn deserialize<__D>(deserializer: __D) -> Result<Self, __D::Error>
         where
@@ -160,6 +188,7 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                     __A: serde::de::MapAccess<'de>,
                 {
                     #(#temp_decls)*
+                    #extras_decl
                     let mut __had_any_entry = false;
 
                     while let Some(key) = map.next_key::<i64>()? {
@@ -167,14 +196,14 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                         match key {
                             #(#match_arms)*
                             _ => {
-                                // Skip unknown keys for forward compatibility
-                                let _ = map.next_value::<serde::de::IgnoredAny>()?;
+                                #unknown_key_branch
                             }
                         }
                     }
 
                     let result = #name {
                         #(#field_constructs,)*
+                        #extras_construct
                     };
 
                     #non_empty_check

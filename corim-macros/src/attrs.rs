@@ -12,6 +12,13 @@ pub struct StructAttrs {
     pub tag: Option<u64>,
     /// If true, at least one field must be present (CDDL `non-empty<M>`).
     pub non_empty: bool,
+    /// If set, names a `BTreeMap<i64, cbor::value::Value>` field that
+    /// receives unknown integer map keys on deserialize and emits them
+    /// on serialize. Used to model CDDL extension sockets such as
+    /// `$$measurement-values-map-extension` (e.g. profile-defined keys
+    /// in the negative integer range). The extras field MUST NOT carry
+    /// `#[cbor(key = ...)]` and MUST exist on the struct.
+    pub extras: Option<syn::Ident>,
 }
 
 /// Field-level attributes.
@@ -43,6 +50,12 @@ impl StructAttrs {
                     Ok(())
                 } else if meta.path.is_ident("non_empty") {
                     result.non_empty = true;
+                    Ok(())
+                } else if meta.path.is_ident("extras") {
+                    let _eq: syn::Token![=] = meta.input.parse()?;
+                    let lit: syn::LitStr = meta.input.parse()?;
+                    let ident = syn::Ident::new(&lit.value(), lit.span());
+                    result.extras = Some(ident);
                     Ok(())
                 } else {
                     Err(meta.error("unknown cbor struct attribute"))
