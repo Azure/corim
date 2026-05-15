@@ -161,6 +161,9 @@ pub mod compat;
 /// types in this module may change between minor versions without a
 /// deprecation cycle. Production code should use [`validate::decode_and_validate`].
 pub mod diagnose;
+/// Profile-extension registry and trait. See module docs for how
+/// profile-aware crates plug into validation and diagnosis.
+pub mod profile;
 pub mod validate;
 
 #[cfg(feature = "json")]
