@@ -13,6 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cbor;
 use crate::error::ValidationError;
+use crate::profile::Profile;
 use crate::types::comid::ComidTag;
 use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
@@ -299,6 +300,77 @@ pub struct EvidenceClaim {
     pub measurements: Vec<MeasurementMap>,
 }
 
+/// Like [`match_reference_values`] but consults a profile's
+/// [`Profile::match_measurement`] hook for each candidate
+/// (reference, evidence) measurement pair before falling back to the
+/// crate's default exact-match logic.
+///
+/// Per-pair semantics:
+/// - `Some(true)` from the profile — the pair is treated as matching
+///   even if core fields would disagree.
+/// - `Some(false)` from the profile — the pair is treated as not
+///   matching even if core fields would agree.
+/// - `None` from the profile — defer to the default per-pair logic
+///   (the same comparison performed by [`match_reference_values`]).
+///
+/// The profile is consulted independently for each (reference, evidence)
+/// pair within a triple. Pass `None` for `profile` to get behavior
+/// identical to [`match_reference_values`].
+///
+/// Profile lookup is the caller's responsibility:
+///
+/// ```ignore
+/// let profile = registry.get(corim.profile.as_ref()?);
+/// let claims = match_reference_values_with_profile(&triples, &evidence, profile);
+/// ```
+pub fn match_reference_values_with_profile(
+    ref_triples: &[ReferenceTriple],
+    evidence: &[EvidenceClaim],
+    profile: Option<&dyn Profile>,
+) -> Vec<CorroboratedClaim> {
+    let mut corroborated = Vec::new();
+
+    for triple in ref_triples {
+        for ev in evidence {
+            if !environment_matches(triple.environment(), &ev.environment) {
+                continue;
+            }
+
+            let mut matched_measurements = Vec::new();
+            for ref_meas in triple.measurements() {
+                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile) {
+                    matched_measurements.push(ref_meas.clone());
+                }
+            }
+
+            if !matched_measurements.is_empty() {
+                corroborated.push(CorroboratedClaim {
+                    environment: triple.environment().clone(),
+                    measurements: matched_measurements,
+                });
+            }
+        }
+    }
+
+    corroborated
+}
+
+/// Profile-aware analogue of [`measurement_matches`]: for each evidence
+/// entry, asks the profile first; on `None`, falls back to
+/// [`single_measurement_matches`].
+fn measurement_matches_with_profile(
+    reference: &MeasurementMap,
+    evidence: &[MeasurementMap],
+    profile: Option<&dyn Profile>,
+) -> bool {
+    evidence.iter().any(
+        |ev| match profile.and_then(|p| p.match_measurement(reference, ev)) {
+            Some(verdict) => verdict,
+            None => single_measurement_matches(reference, ev),
+        },
+    )
+}
+
 // ---------------------------------------------------------------------------
 // Phase 4: Conditional endorsement series (§9.3.4.3)
 // ---------------------------------------------------------------------------
@@ -322,6 +394,21 @@ pub fn apply_endorsement_series(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
     evidence: &[EvidenceClaim],
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
+    apply_endorsement_series_with_profile(ces_triples, evidence, None)
+}
+
+/// Like [`apply_endorsement_series`] but consults a profile's
+/// [`Profile::match_measurement`] hook when comparing each series
+/// `selection` entry against evidence. Per-pair semantics are identical
+/// to those of [`match_reference_values_with_profile`].
+///
+/// Pass `None` for `profile` to get behavior identical to
+/// [`apply_endorsement_series`].
+pub fn apply_endorsement_series_with_profile(
+    ces_triples: &[ConditionalEndorsementSeriesTriple],
+    evidence: &[EvidenceClaim],
+    profile: Option<&dyn Profile>,
+) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
 
     for triple in ces_triples {
@@ -339,7 +426,8 @@ pub fn apply_endorsement_series(
         validate_series_mkeys(triple.series())?;
 
         for ev in &matching_evidence {
-            if let Some(addition) = find_matching_series(triple.series(), &ev.measurements) {
+            if let Some(addition) = find_matching_series(triple.series(), &ev.measurements, profile)
+            {
                 endorsed.push(EndorsedClaim {
                     environment: condition.environment.clone(),
                     endorsements: addition,
@@ -382,15 +470,20 @@ fn validate_series_mkeys(series: &[ConditionalSeriesRecord]) -> Result<(), Valid
 }
 
 /// Find the first matching series entry and return its addition.
+///
+/// When `profile` is `Some`, each `selection` entry is compared via
+/// [`measurement_matches_with_profile`]; otherwise the default
+/// [`measurement_matches`] is used.
 fn find_matching_series(
     series: &[ConditionalSeriesRecord],
     evidence_measurements: &[MeasurementMap],
+    profile: Option<&dyn Profile>,
 ) -> Option<Vec<MeasurementMap>> {
     for record in series {
-        let all_match = record
-            .selection()
-            .iter()
-            .all(|sel| measurement_matches(sel, evidence_measurements));
+        let all_match = record.selection().iter().all(|sel| match profile {
+            Some(_) => measurement_matches_with_profile(sel, evidence_measurements, profile),
+            None => measurement_matches(sel, evidence_measurements),
+        });
 
         if all_match {
             return Some(record.addition().to_vec());
@@ -489,106 +582,115 @@ fn class_matches(
 /// - `int-range` (key 15) — exact match
 ///
 /// Note: `cryptokeys` (key 13) is not compared — it carries authorized
-/// keys, not a measurement value to match against evidence.
+/// keys, not a measurement value to match against evidence. Profile-defined
+/// extension entries in [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
+/// are not compared by this function; profile-aware matching is provided
+/// by [`match_reference_values_with_profile`].
 fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) -> bool {
-    for ev_meas in evidence {
-        // Match mkey if specified in reference
-        if let Some(ref ref_mkey) = reference.mkey {
-            match &ev_meas.mkey {
-                Some(ev_mkey) if ev_mkey == ref_mkey => {}
-                _ => continue,
-            }
-        }
+    evidence
+        .iter()
+        .any(|ev| single_measurement_matches(reference, ev))
+}
 
-        // Match digests if present in reference (§9.4.6.1.3)
-        if let Some(ref ref_digests) = reference.mval.digests {
-            if let Some(ref ev_digests) = ev_meas.mval.digests {
-                if !digests_match(ref_digests, ev_digests) {
-                    continue;
-                }
-            } else {
-                continue;
-            }
+/// Per-pair core matching primitive: tests whether a single reference
+/// measurement matches a single evidence measurement under the crate's
+/// default exact-match semantics. Used by both the loop in
+/// [`measurement_matches`] and by the profile-aware fallback path in
+/// [`measurement_matches_with_profile`].
+fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementMap) -> bool {
+    // Match mkey if specified in reference
+    if let Some(ref ref_mkey) = reference.mkey {
+        match &ev_meas.mkey {
+            Some(ev_mkey) if ev_mkey == ref_mkey => {}
+            _ => return false,
         }
-
-        // Match SVN if present in reference (§9.4.6.1.2)
-        if let Some(ref ref_svn) = reference.mval.svn {
-            if let Some(ref ev_svn) = ev_meas.mval.svn {
-                let ev_val = match ev_svn {
-                    SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
-                };
-                if !svn_matches(ref_svn, ev_val) {
-                    continue;
-                }
-            } else {
-                continue;
-            }
-        }
-
-        // Match version if present in reference
-        if reference.mval.version.is_some() && reference.mval.version != ev_meas.mval.version {
-            continue;
-        }
-
-        // Match flags if present in reference
-        if reference.mval.flags.is_some() && reference.mval.flags != ev_meas.mval.flags {
-            continue;
-        }
-
-        // Match raw-value if present in reference
-        if reference.mval.raw_value.is_some() && reference.mval.raw_value != ev_meas.mval.raw_value
-        {
-            continue;
-        }
-
-        // Match mac-addr if present in reference
-        if reference.mval.mac_addr.is_some() && reference.mval.mac_addr != ev_meas.mval.mac_addr {
-            continue;
-        }
-
-        // Match ip-addr if present in reference
-        if reference.mval.ip_addr.is_some() && reference.mval.ip_addr != ev_meas.mval.ip_addr {
-            continue;
-        }
-
-        // Match serial-number if present in reference
-        if reference.mval.serial_number.is_some()
-            && reference.mval.serial_number != ev_meas.mval.serial_number
-        {
-            continue;
-        }
-
-        // Match ueid if present in reference
-        if reference.mval.ueid.is_some() && reference.mval.ueid != ev_meas.mval.ueid {
-            continue;
-        }
-
-        // Match uuid if present in reference
-        if reference.mval.uuid.is_some() && reference.mval.uuid != ev_meas.mval.uuid {
-            continue;
-        }
-
-        // Match name if present in reference
-        if reference.mval.name.is_some() && reference.mval.name != ev_meas.mval.name {
-            continue;
-        }
-
-        // Match integrity-registers if present in reference
-        if reference.mval.integrity_registers.is_some()
-            && reference.mval.integrity_registers != ev_meas.mval.integrity_registers
-        {
-            continue;
-        }
-
-        // Match int-range if present in reference
-        if reference.mval.int_range.is_some() && reference.mval.int_range != ev_meas.mval.int_range
-        {
-            continue;
-        }
-
-        return true;
     }
-    false
+
+    // Match digests if present in reference (§9.4.6.1.3)
+    if let Some(ref ref_digests) = reference.mval.digests {
+        if let Some(ref ev_digests) = ev_meas.mval.digests {
+            if !digests_match(ref_digests, ev_digests) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // Match SVN if present in reference (§9.4.6.1.2)
+    if let Some(ref ref_svn) = reference.mval.svn {
+        if let Some(ref ev_svn) = ev_meas.mval.svn {
+            let ev_val = match ev_svn {
+                SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
+            };
+            if !svn_matches(ref_svn, ev_val) {
+                return false;
+            }
+        } else {
+            return false;
+        }
+    }
+
+    // Match version if present in reference
+    if reference.mval.version.is_some() && reference.mval.version != ev_meas.mval.version {
+        return false;
+    }
+
+    // Match flags if present in reference
+    if reference.mval.flags.is_some() && reference.mval.flags != ev_meas.mval.flags {
+        return false;
+    }
+
+    // Match raw-value if present in reference
+    if reference.mval.raw_value.is_some() && reference.mval.raw_value != ev_meas.mval.raw_value {
+        return false;
+    }
+
+    // Match mac-addr if present in reference
+    if reference.mval.mac_addr.is_some() && reference.mval.mac_addr != ev_meas.mval.mac_addr {
+        return false;
+    }
+
+    // Match ip-addr if present in reference
+    if reference.mval.ip_addr.is_some() && reference.mval.ip_addr != ev_meas.mval.ip_addr {
+        return false;
+    }
+
+    // Match serial-number if present in reference
+    if reference.mval.serial_number.is_some()
+        && reference.mval.serial_number != ev_meas.mval.serial_number
+    {
+        return false;
+    }
+
+    // Match ueid if present in reference
+    if reference.mval.ueid.is_some() && reference.mval.ueid != ev_meas.mval.ueid {
+        return false;
+    }
+
+    // Match uuid if present in reference
+    if reference.mval.uuid.is_some() && reference.mval.uuid != ev_meas.mval.uuid {
+        return false;
+    }
+
+    // Match name if present in reference
+    if reference.mval.name.is_some() && reference.mval.name != ev_meas.mval.name {
+        return false;
+    }
+
+    // Match integrity-registers if present in reference
+    if reference.mval.integrity_registers.is_some()
+        && reference.mval.integrity_registers != ev_meas.mval.integrity_registers
+    {
+        return false;
+    }
+
+    // Match int-range if present in reference
+    if reference.mval.int_range.is_some() && reference.mval.int_range != ev_meas.mval.int_range {
+        return false;
+    }
+
+    true
 }
 
 /// Compare digest lists per §9.4.6.1.3.
