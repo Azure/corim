@@ -46,6 +46,12 @@ use corim::cbor::value::Value;
 use corim::profile::Profile;
 use corim::types::corim::ProfileChoice;
 
+pub mod expression;
+pub use expression::{
+    display_expression, Expression, ExpressionDecodeError, Numeric, NumericOp, SetOfSetOp, SetOp,
+    TAG_INTEL_EXPRESSION,
+};
+
 // ---------------------------------------------------------------------------
 // Profile identifier — §4.1 of draft-cds-rats-intel-corim-profile-03
 // ---------------------------------------------------------------------------
@@ -189,6 +195,11 @@ pub fn intel_mval_name(key: i64) -> Option<&'static str> {
 
 /// Render a CBOR value as a short, human-readable shape description
 /// suitable for one-line diagnostic output.
+///
+/// `#6.60010(...)` expressions are decoded via [`Expression::from_tag`]
+/// and rendered as e.g. `"ge 5"` or `"member (3 items)"`. Tags that
+/// either are not `60010` or fail expression decode are rendered as
+/// `"#6.<tag>(…)"`.
 fn value_summary(v: &Value) -> String {
     match v {
         Value::Integer(n) => format!("{}", n),
@@ -202,6 +213,10 @@ fn value_summary(v: &Value) -> String {
         Value::Bytes(b) => format!("<{}-byte bstr>", b.len()),
         Value::Array(a) => format!("array[{}]", a.len()),
         Value::Map(m) => format!("map({} entries)", m.len()),
+        Value::Tag(tag, _) if *tag == TAG_INTEL_EXPRESSION => match Expression::from_tag(v) {
+            Ok(expr) => display_expression(&expr),
+            Err(_) => format!("#6.{}(…)", tag),
+        },
         Value::Tag(tag, _) => format!("#6.{}(…)", tag),
         Value::Bool(b) => {
             if *b {
