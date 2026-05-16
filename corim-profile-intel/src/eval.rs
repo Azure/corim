@@ -20,8 +20,9 @@
 //! | numeric (`gt`/`ge`/`lt`/`le`)         | promote both sides to `f64`, compare        |
 //! | mask-eq (3-element)                   | `(evidence & mask) == (value & mask)`       |
 //! | set member / not-member               | CBOR equality membership test               |
+//! | tdate (`gt`/`ge`/`lt`/`le`)           | parse both sides as RFC 3339, compare epoch |
 //! | set-of-set (subset/superset/disjoint) | [`Verdict::Skip`] — no Intel §8.2 key uses it |
-//! | tdate / epoch                         | [`Verdict::Skip`] — time-semantics TBD      |
+//! | epoch                                 | [`Verdict::Skip`] — needs verifier-current-time, see follow-up commit |
 //!
 //! ## Failure policy
 //!
@@ -29,8 +30,8 @@
 //!
 //! - **Skip** ([`Verdict::Skip`]) — the reference uses an
 //!   expression class that is structurally valid but for which this
-//!   crate intentionally has no semantics yet (tdate, epoch,
-//!   set-of-set). The caller treats Skip as "no information from this
+//!   crate intentionally has no semantics yet (epoch, set-of-set).
+//!   The caller treats Skip as "no information from this
 //!   key" and combines it with the verdicts of other keys.
 //! - **Fail** ([`Verdict::Fail`]) — the reference expression decodes
 //!   but the evidence doesn't satisfy it, OR the expression doesn't
@@ -99,12 +100,158 @@ fn evaluate_expression(e: &Expression, ev: &Value) -> Verdict {
         // No Intel §8.2 measurement-values-map key uses set-of-set
         // operators, so we don't bother implementing them yet.
         Expression::SetOfSet { .. } => Verdict::Skip,
-        // TODO: time-semantics design — these need an injected clock
-        // or per-call "now" parameter that the Profile trait doesn't
-        // currently provide. Treated as Skip so the surrounding
-        // structural check still happens via core_fields_match.
-        Expression::Tdate { .. } | Expression::Epoch { .. } => Verdict::Skip,
+        // Tdate: compare two RFC 3339 strings as epoch-seconds. The
+        // evidence side must be a text string (`tstr` or `#6.0(text)`);
+        // anything else fails closed. Sub-second precision is dropped
+        // — see `rfc3339_to_epoch_seconds`.
+        Expression::Tdate { op, date } => match tdate_evidence(ev) {
+            Some(ev_text) => match (
+                rfc3339_to_epoch_seconds(date),
+                rfc3339_to_epoch_seconds(ev_text),
+            ) {
+                (Some(ref_secs), Some(ev_secs)) => {
+                    cmp_numeric(*op, ev_secs as f64, &Numeric::Int(ref_secs as i128))
+                }
+                _ => Verdict::Fail,
+            },
+            None => Verdict::Fail,
+        },
+        // TODO: epoch needs verifier-current-time. Lands in the
+        // follow-up commit that introduces `MatchContext`.
+        Expression::Epoch { .. } => Verdict::Skip,
     }
+}
+
+/// Unwrap `tdate` evidence to an RFC 3339 `&str`. Accepts bare text
+/// (the CDDL allows `tdate / text` in some operand positions) and
+/// `#6.0(text)` per RFC 8949 §3.4.1.
+fn tdate_evidence(v: &Value) -> Option<&str> {
+    match v {
+        Value::Text(t) => Some(t.as_str()),
+        Value::Tag(0, inner) => match inner.as_ref() {
+            Value::Text(t) => Some(t.as_str()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Parse an RFC 3339 `date-time` string to integer seconds since the
+/// Unix epoch.
+///
+/// Accepts the grammar `YYYY-MM-DDTHH:MM:SS[.frac](Z|[+-]HH:MM)` with
+/// `T` permitted in either case (per RFC 3339 §5.6 "NOTE"). Fractional
+/// seconds are syntactically accepted but truncated — the spec
+/// (§8.1.4.1) does not specify a precision floor for `tdate`
+/// operators, and Intel TCB dates are always emitted at second
+/// resolution. Returns `None` on any parse failure (out-of-range
+/// fields, malformed punctuation, missing offset, etc.).
+///
+/// Uses the Howard-Hinnant `days_from_civil` algorithm. Valid for
+/// the full proleptic Gregorian range; calendar arithmetic is exact.
+fn rfc3339_to_epoch_seconds(s: &str) -> Option<i64> {
+    let b = s.as_bytes();
+    // Minimum is "YYYY-MM-DDTHH:MM:SSZ" = 20 bytes.
+    if b.len() < 20 {
+        return None;
+    }
+    let year = parse_n_digits(&b[0..4])?;
+    if b[4] != b'-' {
+        return None;
+    }
+    let month = parse_n_digits(&b[5..7])?;
+    if b[7] != b'-' {
+        return None;
+    }
+    let day = parse_n_digits(&b[8..10])?;
+    if b[10] != b'T' && b[10] != b't' {
+        return None;
+    }
+    let hour = parse_n_digits(&b[11..13])?;
+    if b[13] != b':' {
+        return None;
+    }
+    let minute = parse_n_digits(&b[14..16])?;
+    if b[16] != b':' {
+        return None;
+    }
+    let second = parse_n_digits(&b[17..19])?;
+
+    // Validate field ranges. Leap seconds (second == 60) are accepted
+    // per RFC 3339 §5.6 but coerced down to 59 for epoch arithmetic.
+    if !(1..=12).contains(&month)
+        || !(1..=31).contains(&day)
+        || hour > 23
+        || minute > 59
+        || second > 60
+    {
+        return None;
+    }
+    let second = if second == 60 { 59 } else { second };
+
+    // Skip the optional fractional-seconds run.
+    let mut i = 19usize;
+    if i < b.len() && b[i] == b'.' {
+        i += 1;
+        let start = i;
+        while i < b.len() && b[i].is_ascii_digit() {
+            i += 1;
+        }
+        if i == start {
+            return None; // "." with no digits
+        }
+    }
+
+    // Time offset: 'Z'/'z' or [+-]HH:MM.
+    let offset_secs: i64 = if i < b.len() && (b[i] == b'Z' || b[i] == b'z') {
+        if i + 1 != b.len() {
+            return None;
+        }
+        0
+    } else if i + 6 == b.len() && (b[i] == b'+' || b[i] == b'-') {
+        let sign: i64 = if b[i] == b'+' { 1 } else { -1 };
+        let oh = parse_n_digits(&b[i + 1..i + 3])?;
+        if b[i + 3] != b':' {
+            return None;
+        }
+        let om = parse_n_digits(&b[i + 4..i + 6])?;
+        if oh > 23 || om > 59 {
+            return None;
+        }
+        sign * (oh * 3600 + om * 60)
+    } else {
+        return None;
+    };
+
+    // Howard-Hinnant civil-to-days (proleptic Gregorian, day 0 = 1970-01-01).
+    // Treat Jan/Feb as months 13/14 of the previous year so leap day
+    // falls at end-of-year.
+    let (y, m) = if month <= 2 {
+        (year - 1, month + 12)
+    } else {
+        (year, month)
+    };
+    let era = if y >= 0 { y / 400 } else { (y - 399) / 400 };
+    let yoe = y - era * 400; // [0, 399]
+    let doy = (153 * (m - 3) + 2) / 5 + day - 1; // [0, 365]
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy; // [0, 146096]
+    let days_since_epoch = era * 146097 + doe - 719468;
+
+    let total = days_since_epoch * 86400 + hour * 3600 + minute * 60 + second - offset_secs;
+    Some(total)
+}
+
+/// Parse a fixed-width ASCII decimal slice into an `i64`. Returns
+/// `None` if any byte is non-digit.
+fn parse_n_digits(b: &[u8]) -> Option<i64> {
+    let mut n: i64 = 0;
+    for &byte in b {
+        if !byte.is_ascii_digit() {
+            return None;
+        }
+        n = n * 10 + i64::from(byte - b'0');
+    }
+    Some(n)
 }
 
 /// Promote a CBOR evidence value to `f64` for numeric comparison.
@@ -373,20 +520,6 @@ mod tests {
     // -- deferred shapes ----------------------------------------------------
 
     #[test]
-    fn tdate_is_skip() {
-        let r = make_expr_tag(Value::Array(vec![
-            Value::Integer(2), // ge
-            Value::Text("2025-01-01T00:00:00Z".into()),
-        ]));
-        // Per module-level policy: any tdate reference is skipped so
-        // the surrounding structural comparison still happens.
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2026-01-01T00:00:00Z".into())),
-            Verdict::Skip
-        );
-    }
-
-    #[test]
     fn epoch_is_skip() {
         // [op, grace_period, epoch_id] — 3-element epoch form.
         let r = make_expr_tag(Value::Array(vec![
@@ -395,6 +528,214 @@ mod tests {
             Value::Null,
         ]));
         assert_eq!(evaluate_one_key(&r, &Value::Integer(0)), Verdict::Skip);
+    }
+
+    // -- tdate --------------------------------------------------------------
+
+    fn tdate_expr(op_code: i64, date: &str) -> Value {
+        make_expr_tag(Value::Array(vec![
+            Value::Integer(op_code as i128),
+            Value::Text(date.into()),
+        ]))
+    }
+
+    #[test]
+    fn tdate_ge_passes_on_equal_and_later() {
+        let r = tdate_expr(2, "2025-01-01T00:00:00Z"); // ge
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            Verdict::Pass
+        );
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2026-01-01T00:00:00Z".into())),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn tdate_ge_fails_on_earlier() {
+        let r = tdate_expr(2, "2025-01-01T00:00:00Z");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2024-12-31T23:59:59Z".into())),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn tdate_gt_strict() {
+        let r = tdate_expr(1, "2025-01-01T00:00:00Z"); // gt
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            Verdict::Fail
+        );
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:01Z".into())),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn tdate_lt_le() {
+        let lt = tdate_expr(3, "2030-01-01T00:00:00Z");
+        let le = tdate_expr(4, "2030-01-01T00:00:00Z");
+        assert_eq!(
+            evaluate_one_key(&lt, &Value::Text("2029-12-31T23:59:59Z".into())),
+            Verdict::Pass
+        );
+        assert_eq!(
+            evaluate_one_key(&lt, &Value::Text("2030-01-01T00:00:00Z".into())),
+            Verdict::Fail
+        );
+        assert_eq!(
+            evaluate_one_key(&le, &Value::Text("2030-01-01T00:00:00Z".into())),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn tdate_evidence_accepts_tag_0_wrap() {
+        // Evidence wrapped as #6.0(text) per RFC 8949 §3.4.1.
+        let r = tdate_expr(2, "2025-01-01T00:00:00Z");
+        let ev = Value::Tag(
+            0,
+            alloc::boxed::Box::new(Value::Text("2026-01-01T00:00:00Z".into())),
+        );
+        assert_eq!(evaluate_one_key(&r, &ev), Verdict::Pass);
+    }
+
+    #[test]
+    fn tdate_handles_positive_offset() {
+        // "2025-01-01T05:00:00+05:00" == "2025-01-01T00:00:00Z"
+        let r = tdate_expr(2, "2025-01-01T05:00:00+05:00");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn tdate_handles_negative_offset() {
+        // "2025-01-01T00:00:00-05:00" == "2025-01-01T05:00:00Z"
+        let r = tdate_expr(2, "2025-01-01T00:00:00-05:00");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T05:00:00Z".into())),
+            Verdict::Pass
+        );
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T04:59:59Z".into())),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn tdate_truncates_fractional_seconds() {
+        let r = tdate_expr(2, "2025-01-01T00:00:00.500Z");
+        // Both ref and ev are truncated to second resolution; equality holds.
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00.999Z".into())),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn tdate_non_text_evidence_fails() {
+        let r = tdate_expr(2, "2025-01-01T00:00:00Z");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Integer(1735689600)),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn tdate_malformed_evidence_fails() {
+        let r = tdate_expr(2, "2025-01-01T00:00:00Z");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("not a date".into())),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn tdate_malformed_reference_fails() {
+        let r = tdate_expr(2, "garbage");
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            Verdict::Fail
+        );
+    }
+
+    // -- rfc3339 parser -----------------------------------------------------
+
+    #[test]
+    fn parses_unix_epoch_origin() {
+        assert_eq!(rfc3339_to_epoch_seconds("1970-01-01T00:00:00Z"), Some(0));
+    }
+
+    #[test]
+    fn parses_year_2000() {
+        // 2000-01-01T00:00:00Z = 946684800
+        assert_eq!(
+            rfc3339_to_epoch_seconds("2000-01-01T00:00:00Z"),
+            Some(946684800)
+        );
+    }
+
+    #[test]
+    fn parses_leap_day() {
+        // 2024-02-29 is valid; 2024-03-01 is one day later.
+        let leap = rfc3339_to_epoch_seconds("2024-02-29T00:00:00Z").unwrap();
+        let next = rfc3339_to_epoch_seconds("2024-03-01T00:00:00Z").unwrap();
+        assert_eq!(next - leap, 86400);
+    }
+
+    #[test]
+    fn parses_lowercase_t() {
+        // RFC 3339 §5.6 NOTE permits lowercase t.
+        assert_eq!(
+            rfc3339_to_epoch_seconds("2025-01-01t00:00:00Z"),
+            rfc3339_to_epoch_seconds("2025-01-01T00:00:00Z"),
+        );
+    }
+
+    #[test]
+    fn parses_lowercase_z() {
+        assert_eq!(
+            rfc3339_to_epoch_seconds("2025-01-01T00:00:00z"),
+            rfc3339_to_epoch_seconds("2025-01-01T00:00:00Z"),
+        );
+    }
+
+    #[test]
+    fn rejects_short_string() {
+        assert_eq!(rfc3339_to_epoch_seconds("2025"), None);
+    }
+
+    #[test]
+    fn rejects_missing_offset() {
+        assert_eq!(rfc3339_to_epoch_seconds("2025-01-01T00:00:00"), None);
+    }
+
+    #[test]
+    fn rejects_bad_punctuation() {
+        assert_eq!(rfc3339_to_epoch_seconds("2025/01/01T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn rejects_out_of_range_month() {
+        assert_eq!(rfc3339_to_epoch_seconds("2025-13-01T00:00:00Z"), None);
+    }
+
+    #[test]
+    fn rejects_dot_with_no_fraction() {
+        assert_eq!(rfc3339_to_epoch_seconds("2025-01-01T00:00:00.Z"), None);
+    }
+
+    #[test]
+    fn accepts_leap_second_60() {
+        // Leap second is parsed; coerced to :59 for epoch arithmetic.
+        let s60 = rfc3339_to_epoch_seconds("2016-12-31T23:59:60Z").unwrap();
+        let s59 = rfc3339_to_epoch_seconds("2016-12-31T23:59:59Z").unwrap();
+        assert_eq!(s60, s59);
     }
 
     // -- malformed expression fails-closed ----------------------------------
