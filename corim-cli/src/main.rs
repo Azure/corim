@@ -67,7 +67,12 @@ fn main() {
     // Note: --diagnose runs on the *original* bytes so the report can
     // explicitly call out legacy `#6.500` / `#6.502` outer wrappers.
     if cli.diagnose {
-        let report = corim::diagnose::inspect(&bytes);
+        // CLI has no profile registry of its own; pass an empty registry
+        // so the walker treats every mval extension key with the generic
+        // "extension key {N}" label. Applications embedding the diagnose
+        // module can build a registry and pass it directly.
+        let registry = corim::profile::ProfileRegistry::new();
+        let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
     }

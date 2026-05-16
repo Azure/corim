@@ -23,6 +23,7 @@
 
 use corim::compat::{peel_tcg_wrappers, wrap_bare_corim_map};
 use corim::diagnose::{inspect, EnvelopeKind, Severity};
+use corim::profile::ProfileRegistry;
 use corim::types::signed::decode_signed_corim;
 
 /// Real-world fixture: NVIDIA ConnectX-7 NIC firmware CoRIM, observed 2026-04.
@@ -54,7 +55,7 @@ fn nvidia_cx7_decode_signed_corim_succeeds() {
 
 #[test]
 fn nvidia_cx7_diagnose_warns_about_legacy_tag() {
-    let report = inspect(NVIDIA_CX7_BYTES);
+    let report = inspect(NVIDIA_CX7_BYTES, &ProfileRegistry::new());
     assert_eq!(report.envelope(), EnvelopeKind::Signed);
     let warned = report
         .issues()

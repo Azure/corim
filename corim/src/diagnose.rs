@@ -39,13 +39,15 @@
 //!
 //! ```no_run
 //! let bytes = std::fs::read("some.corim").unwrap();
-//! let report = corim::diagnose::inspect(&bytes);
+//! let report = corim::diagnose::inspect(&bytes, &corim::profile::ProfileRegistry::new());
 //! print!("{}", report);
 //! ```
 
 use crate::cbor;
 use crate::cbor::value::{Tagged, Value};
 use crate::nostd_prelude::*;
+use crate::profile::{Profile, ProfileRegistry};
+use crate::types::corim::ProfileChoice;
 use crate::types::signed::{
     CORIM_CONTENT_TYPE, COSE_HEADER_ALG, COSE_HEADER_CONTENT_TYPE, COSE_HEADER_CORIM_META,
     COSE_HEADER_CWT_CLAIMS, COSE_HEADER_KID, COSE_HEADER_PAYLOAD_HASH_ALG,
@@ -53,9 +55,19 @@ use crate::types::signed::{
     COSE_HEADER_X5CHAIN, COSE_HEADER_X5T, COSE_HEADER_X5U,
 };
 use crate::types::tags::{
-    CORIM_KEY_DEPENDENT_RIMS, CORIM_KEY_ENTITIES, CORIM_KEY_ID, CORIM_KEY_PROFILE,
-    CORIM_KEY_RIM_VALIDITY, CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL,
-    TAG_LEGACY_SIGNED, TAG_LEGACY_TOP, TAG_OID, TAG_SIGNED_CORIM, TAG_UUID,
+    CLASS_KEY_CLASS_ID, CLASS_KEY_INDEX, CLASS_KEY_LAYER, CLASS_KEY_MODEL, CLASS_KEY_VENDOR,
+    COMID_KEY_ENTITIES, COMID_KEY_LANGUAGE, COMID_KEY_LINKED_TAGS, COMID_KEY_TAG_IDENTITY,
+    COMID_KEY_TRIPLES, CORIM_KEY_DEPENDENT_RIMS, CORIM_KEY_ENTITIES, CORIM_KEY_ID,
+    CORIM_KEY_PROFILE, CORIM_KEY_RIM_VALIDITY, CORIM_KEY_TAGS, ENV_KEY_CLASS, ENV_KEY_GROUP,
+    ENV_KEY_INSTANCE, MEAS_KEY_AUTHORIZED_BY, MEAS_KEY_MKEY, MEAS_KEY_MVAL, MVAL_KEY_CRYPTOKEYS,
+    MVAL_KEY_DIGESTS, MVAL_KEY_FLAGS, MVAL_KEY_INTEGRITY_REGISTERS, MVAL_KEY_INT_RANGE,
+    MVAL_KEY_IP_ADDR, MVAL_KEY_MAC_ADDR, MVAL_KEY_NAME, MVAL_KEY_RAW_VALUE,
+    MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, MVAL_KEY_SERIAL_NUMBER, MVAL_KEY_SVN, MVAL_KEY_UEID,
+    MVAL_KEY_UUID, MVAL_KEY_VERSION, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED,
+    TAG_LEGACY_TOP, TAG_OID, TAG_SIGNED_CORIM, TAG_UUID, TRIPLES_KEY_ATTEST_KEY,
+    TRIPLES_KEY_COND_ENDORSEMENT, TRIPLES_KEY_COND_ENDORSEMENT_SERIES, TRIPLES_KEY_COSWID,
+    TRIPLES_KEY_DEPENDENCY, TRIPLES_KEY_ENDORSED, TRIPLES_KEY_IDENTITY, TRIPLES_KEY_MEMBERSHIP,
+    TRIPLES_KEY_REFERENCE,
 };
 
 use core::fmt;
@@ -195,14 +207,23 @@ impl fmt::Display for DecodeReport {
 // Inspector — accumulator with helpers
 // ===========================================================================
 
-struct Inspector {
+struct Inspector<'a> {
     report: DecodeReport,
+    /// Registry of all profile implementations available for lookup.
+    profiles: &'a ProfileRegistry,
+    /// Profile resolved from the manifest's `corim-map.profile` field —
+    /// `Some` if the field was present AND the registry knows that
+    /// identifier. Used by the mval walker to label profile-defined
+    /// extension keys via [`Profile::diagnose_mval_entry`].
+    current_profile: Option<&'a dyn Profile>,
 }
 
-impl Inspector {
-    fn new() -> Self {
+impl<'a> Inspector<'a> {
+    fn new(profiles: &'a ProfileRegistry) -> Self {
         Self {
             report: DecodeReport::default(),
+            profiles,
+            current_profile: None,
         }
     }
 
@@ -267,8 +288,16 @@ fn value_kind(v: &Value) -> &'static str {
 /// This walks the document as a generic [`Value`] tree (see [module-level
 /// docs][self] for coverage) and never aborts on the first error — every
 /// recognizable structural problem is appended to the [`DecodeReport`].
-pub fn inspect(bytes: &[u8]) -> DecodeReport {
-    let mut ins = Inspector::new();
+///
+/// The `profiles` argument is consulted when the walker reaches profile-
+/// defined extension keys inside a `measurement-values-map` (any integer
+/// key not in the standard 0..=15 range). If the manifest's
+/// `corim-map.profile` field names a [`Profile`] that the registry knows,
+/// that profile's [`Profile::diagnose_mval_entry`] method is invoked to
+/// label each extension key. Pass `&ProfileRegistry::new()` for the
+/// no-profile case.
+pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
+    let mut ins = Inspector::new(profiles);
 
     if bytes.is_empty() {
         ins.err("$", "input is empty");
@@ -312,7 +341,7 @@ The library accepts these on decode; encode always uses draft-10 tags.",
 }
 
 /// Dispatch on the top-level (post-peel) [`Value`] of a CoRIM document.
-fn inspect_top_value(ins: &mut Inspector, top: Value) {
+fn inspect_top_value(ins: &mut Inspector<'_>, top: Value) {
     match top {
         Value::Tag(TAG_SIGNED_CORIM, inner) => {
             ins.report.envelope = EnvelopeKind::Signed;
@@ -365,7 +394,7 @@ fn inspect_top_value(ins: &mut Inspector, top: Value) {
 // COSE_Sign1-corim envelope (RFC 9052 §4.2)
 // ===========================================================================
 
-fn inspect_cose_sign1(ins: &mut Inspector, v: Value) {
+fn inspect_cose_sign1(ins: &mut Inspector<'_>, v: Value) {
     let arr = match v {
         Value::Array(a) => a,
         other => {
@@ -405,7 +434,7 @@ fn inspect_cose_sign1(ins: &mut Inspector, v: Value) {
     }
 }
 
-fn inspect_cose_protected(ins: &mut Inspector, v: Value) {
+fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
     let bytes = match v {
         Value::Bytes(b) => b,
         other => {
@@ -443,7 +472,7 @@ fn inspect_cose_protected(ins: &mut Inspector, v: Value) {
     inspect_protected_header_map(ins, inner);
 }
 
-fn inspect_cose_unprotected(ins: &mut Inspector, v: Value) {
+fn inspect_cose_unprotected(ins: &mut Inspector<'_>, v: Value) {
     match v {
         Value::Map(_) => {
             // Unprotected header is `* cose-label => cose-value`. We don't
@@ -463,7 +492,7 @@ fn inspect_cose_unprotected(ins: &mut Inspector, v: Value) {
     }
 }
 
-fn inspect_cose_payload(ins: &mut Inspector, v: Value) {
+fn inspect_cose_payload(ins: &mut Inspector<'_>, v: Value) {
     match v {
         Value::Null => {
             ins.info(
@@ -547,7 +576,7 @@ The library accepts this on decode; encoders always emit the tag.",
     }
 }
 
-fn inspect_cose_signature(ins: &mut Inspector, v: Value) {
+fn inspect_cose_signature(ins: &mut Inspector<'_>, v: Value) {
     match v {
         Value::Bytes(b) => {
             if b.is_empty() {
@@ -570,7 +599,7 @@ fn inspect_cose_signature(ins: &mut Inspector, v: Value) {
 // protected-corim-header-map  (§4.2.1)
 // ===========================================================================
 
-fn inspect_protected_header_map(ins: &mut Inspector, v: Value) {
+fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -840,7 +869,7 @@ fn inspect_protected_header_map(ins: &mut Inspector, v: Value) {
 // unsigned-corim-map  (§4.1)
 // ===========================================================================
 
-fn inspect_corim_map(ins: &mut Inspector, base_path: &str, v: Value) {
+fn inspect_corim_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -927,8 +956,39 @@ fn inspect_corim_map(ins: &mut Inspector, base_path: &str, v: Value) {
                 }
             }
             CORIM_KEY_PROFILE => match val {
-                Value::Text(_) => {}
-                Value::Tag(TAG_OID, _) => {}
+                Value::Text(ref s) => {
+                    let id = ProfileChoice::Uri(s.clone());
+                    if let Some(p) = ins.profiles.get(&id) {
+                        ins.current_profile = Some(p);
+                        ins.info(
+                            path.clone(),
+                            format!("profile (key 3) URI matched registered profile: {}", s),
+                        );
+                    }
+                }
+                Value::Tag(TAG_OID, ref inner) => {
+                    if let Value::Bytes(ref b) = **inner {
+                        let id = ProfileChoice::Oid(b.clone());
+                        if let Some(p) = ins.profiles.get(&id) {
+                            ins.current_profile = Some(p);
+                            ins.info(
+                                path.clone(),
+                                format!(
+                                    "profile (key 3) OID matched registered profile ({} bytes)",
+                                    b.len()
+                                ),
+                            );
+                        }
+                    } else {
+                        ins.err(
+                            path.clone(),
+                            format!(
+                                "profile (key 3) tagged-oid inner must be bstr, found {}",
+                                value_kind(inner)
+                            ),
+                        );
+                    }
+                }
                 _ => ins.err(
                     path,
                     format!(
@@ -984,7 +1044,7 @@ fn inspect_corim_map(ins: &mut Inspector, base_path: &str, v: Value) {
 // tags[] — top-level tag dispatch only (no recursion into inner CBOR)
 // ===========================================================================
 
-fn inspect_tags_array(ins: &mut Inspector, base_path: &str, v: Value) {
+fn inspect_tags_array(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
     let arr = match v {
         Value::Array(a) => a,
         other => {
@@ -1011,14 +1071,17 @@ fn inspect_tags_array(ins: &mut Inspector, base_path: &str, v: Value) {
         let path = format!("{}[{}]", base_path, i);
         match tag {
             Value::Tag(TAG_COMID, inner) => match *inner {
-                Value::Bytes(b) => ins.info(
-                    path,
-                    format!(
-                        "tagged-concise-mid-tag (#6.{}), {} bytes inner CBOR",
-                        TAG_COMID,
-                        b.len()
-                    ),
-                ),
+                Value::Bytes(b) => {
+                    ins.info(
+                        path.clone(),
+                        format!(
+                            "tagged-concise-mid-tag (#6.{}), {} bytes inner CBOR",
+                            TAG_COMID,
+                            b.len()
+                        ),
+                    );
+                    inspect_comid_bytes(ins, &path, &b);
+                }
                 other => ins.err(
                     path,
                     format!(
@@ -1071,18 +1134,21 @@ fn inspect_tags_array(ins: &mut Inspector, base_path: &str, v: Value) {
                     t, TAG_COSWID, TAG_COMID, TAG_COTL
                 ),
             ),
-            Value::Bytes(b) => ins.warn(
-                path,
-                format!(
-                    "tags[] entry is a bare bstr ({} bytes), not the spec-required \
+            Value::Bytes(b) => {
+                ins.warn(
+                    path.clone(),
+                    format!(
+                        "tags[] entry is a bare bstr ({} bytes), not the spec-required \
 #6.{}/{}/{}-tagged form. The library accepts this as a TCG-style interop \
 relaxation and routes it through `compat::decode_comid_from_tcg_bstr`.",
-                    b.len(),
-                    TAG_COSWID,
-                    TAG_COMID,
-                    TAG_COTL
-                ),
-            ),
+                        b.len(),
+                        TAG_COSWID,
+                        TAG_COMID,
+                        TAG_COTL
+                    ),
+                );
+                inspect_comid_bytes(ins, &path, &b);
+            }
             other => ins.err(
                 path,
                 format!(
@@ -1093,6 +1159,747 @@ relaxation and routes it through `compat::decode_comid_from_tcg_bstr`.",
         }
     }
 }
+
+// ===========================================================================
+// CoMID descent — walks the inner CBOR of a #6.506 / bare-bstr tags[] entry
+// ===========================================================================
+
+/// Decode the inner bytes of a CoMID tag and walk its `concise-mid-tag` map.
+///
+/// Accepts both the spec form (bytes contain a CBOR map) and the TCG-style
+/// interop relaxation where the bytes contain a `#6.506`-tagged map (see
+/// `compat::decode_comid_from_tcg_bstr`).
+fn inspect_comid_bytes(ins: &mut Inspector<'_>, base_path: &str, bytes: &[u8]) {
+    let val: Value = match cbor::decode::<Value>(bytes) {
+        Ok(v) => v,
+        Err(e) => {
+            ins.err(base_path, format!("CoMID inner CBOR is not valid: {}", e));
+            return;
+        }
+    };
+
+    // Peel the legacy outer #6.506 tag if a TCG-style producer wrapped twice.
+    let map_val = match val {
+        Value::Tag(TAG_COMID, inner) => {
+            ins.warn(
+                base_path,
+                format!(
+                    "CoMID inner is double-wrapped: #6.{} around the map (TCG-style)",
+                    TAG_COMID
+                ),
+            );
+            *inner
+        }
+        other => other,
+    };
+
+    let map = match map_val {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "concise-mid-tag must be a map, found {}",
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+
+    let mut have_tag_identity = false;
+    let mut have_triples = false;
+    let mut triples_value: Option<Value> = None;
+
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => {
+                    ins.warn(
+                        base_path,
+                        format!("concise-mid-tag key {} out of i64 range; skipped", n),
+                    );
+                    continue;
+                }
+            },
+            other => {
+                ins.warn(
+                    base_path,
+                    format!(
+                        "concise-mid-tag has non-integer key ({}); ignored",
+                        value_kind(other)
+                    ),
+                );
+                continue;
+            }
+        };
+
+        let path = format!("{}.{}", base_path, key);
+        match key {
+            COMID_KEY_LANGUAGE => {
+                if !matches!(v, Value::Text(_)) {
+                    ins.err(
+                        path,
+                        format!("language (key 0) must be tstr, found {}", value_kind(&v)),
+                    );
+                }
+            }
+            COMID_KEY_TAG_IDENTITY => {
+                have_tag_identity = true;
+                if !matches!(v, Value::Map(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "tag-identity (key 1) must be a tag-identity-map, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            COMID_KEY_ENTITIES => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "entities (key 2) must be array of comid-entity-map, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            COMID_KEY_LINKED_TAGS => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "linked-tags (key 3) must be array of linked-tag-map, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            COMID_KEY_TRIPLES => {
+                have_triples = true;
+                triples_value = Some(v);
+            }
+            _ => {
+                ins.info(
+                    path,
+                    format!("unrecognized concise-mid-tag key {} (extension)", key),
+                );
+            }
+        }
+    }
+
+    if !have_tag_identity {
+        ins.err(base_path, "missing required key 1 (tag-identity)");
+    }
+    if !have_triples {
+        ins.err(base_path, "missing required key 4 (triples)");
+    }
+
+    if let Some(v) = triples_value {
+        inspect_triples_map(ins, &format!("{}.4", base_path), v);
+    }
+}
+
+// ===========================================================================
+// triples-map (CoMID key 4)
+// ===========================================================================
+
+/// Brief human label for each triple type key, used in info messages.
+fn triple_kind_label(key: i64) -> &'static str {
+    match key {
+        TRIPLES_KEY_REFERENCE => "reference-triples",
+        TRIPLES_KEY_ENDORSED => "endorsed-triples",
+        TRIPLES_KEY_IDENTITY => "identity-triples",
+        TRIPLES_KEY_ATTEST_KEY => "attest-key-triples",
+        TRIPLES_KEY_DEPENDENCY => "dependency-triples",
+        TRIPLES_KEY_MEMBERSHIP => "membership-triples",
+        TRIPLES_KEY_COSWID => "coswid-triples",
+        TRIPLES_KEY_COND_ENDORSEMENT_SERIES => "conditional-endorsement-series-triples",
+        TRIPLES_KEY_COND_ENDORSEMENT => "conditional-endorsement-triples",
+        _ => "unknown-triples",
+    }
+}
+
+fn inspect_triples_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    let map = match v {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "triples (key 4) must be a triples-map, found {}",
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+
+    let mut had_any = false;
+
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => {
+                    ins.warn(
+                        base_path,
+                        format!("triples-map key {} out of i64 range; skipped", n),
+                    );
+                    continue;
+                }
+            },
+            other => {
+                ins.warn(
+                    base_path,
+                    format!(
+                        "triples-map has non-integer key ({}); ignored",
+                        value_kind(other)
+                    ),
+                );
+                continue;
+            }
+        };
+
+        had_any = true;
+        let path = format!("{}.{}", base_path, key);
+
+        match key {
+            TRIPLES_KEY_REFERENCE
+            | TRIPLES_KEY_ENDORSED
+            | TRIPLES_KEY_IDENTITY
+            | TRIPLES_KEY_ATTEST_KEY => {
+                // [+ (environment-map, [+ measurement-map])]
+                inspect_env_measurements_triples(ins, &path, v, triple_kind_label(key));
+            }
+            TRIPLES_KEY_DEPENDENCY | TRIPLES_KEY_MEMBERSHIP => {
+                // [+ (environment-map, [+ environment-map])] — no measurements
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "{} (key {}) must be array, found {}",
+                            triple_kind_label(key),
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            TRIPLES_KEY_COSWID => {
+                // [+ (environment-map, [+ tag-id-type-choice])] — no measurements
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "coswid-triples (key 6) must be array, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            TRIPLES_KEY_COND_ENDORSEMENT_SERIES | TRIPLES_KEY_COND_ENDORSEMENT => {
+                // Series shape is exotic; just type-check the outer array.
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "{} (key {}) must be array, found {}",
+                            triple_kind_label(key),
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            _ => {
+                ins.info(
+                    path,
+                    format!("unrecognized triples-map key {} (extension)", key),
+                );
+            }
+        }
+    }
+
+    if !had_any {
+        ins.err(base_path, "triples-map must contain at least one entry");
+    }
+}
+
+/// Walk a triple type whose CDDL shape is `[+ (environment-map, [+ measurement-map])]`
+/// (reference, endorsed, identity, attest-key).
+fn inspect_env_measurements_triples(
+    ins: &mut Inspector<'_>,
+    base_path: &str,
+    v: Value,
+    kind: &str,
+) {
+    let arr = match v {
+        Value::Array(a) => a,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "{} must be a non-empty array of triple-records, found {}",
+                    kind,
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+    if arr.is_empty() {
+        ins.err(base_path, format!("{} array is empty", kind));
+        return;
+    }
+
+    for (i, triple) in arr.into_iter().enumerate() {
+        let tpath = format!("{}[{}]", base_path, i);
+        let pair = match triple {
+            Value::Array(a) => a,
+            other => {
+                ins.err(
+                    tpath,
+                    format!(
+                        "{} record must be a 2-element array [env, [+ meas]], found {}",
+                        kind,
+                        value_kind(&other)
+                    ),
+                );
+                continue;
+            }
+        };
+        if pair.len() != 2 {
+            ins.err(
+                tpath.clone(),
+                format!(
+                    "{} record must be a 2-element array [env, [+ meas]], found {} elements",
+                    kind,
+                    pair.len()
+                ),
+            );
+            continue;
+        }
+        let mut it = pair.into_iter();
+        let env = it.next().expect("len checked == 2");
+        let meas = it.next().expect("len checked == 2");
+
+        inspect_environment_map(ins, &format!("{}.env", tpath), env);
+
+        let meas_path = format!("{}.measurements", tpath);
+        match meas {
+            Value::Array(ms) => {
+                if ms.is_empty() {
+                    ins.err(meas_path, "measurements list is empty");
+                } else {
+                    for (j, m) in ms.into_iter().enumerate() {
+                        inspect_measurement_map(ins, &format!("{}[{}]", meas_path, j), m);
+                    }
+                }
+            }
+            other => ins.err(
+                meas_path,
+                format!(
+                    "measurements must be array of measurement-map, found {}",
+                    value_kind(&other)
+                ),
+            ),
+        }
+    }
+}
+
+// ===========================================================================
+// environment-map / class-map
+// ===========================================================================
+
+fn inspect_environment_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    let map = match v {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "environment-map must be a map, found {}",
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+
+    let mut had_any = false;
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+        had_any = true;
+        let path = format!("{}.{}", base_path, key);
+        match key {
+            ENV_KEY_CLASS => inspect_class_map(ins, &path, v),
+            ENV_KEY_INSTANCE | ENV_KEY_GROUP => {
+                // Type-choice values; just confirm they are present.
+            }
+            _ => ins.info(
+                path,
+                format!("unrecognized environment-map key {} (extension)", key),
+            ),
+        }
+    }
+
+    if !had_any {
+        ins.err(
+            base_path,
+            "environment-map must have at least one of class/instance/group",
+        );
+    }
+}
+
+fn inspect_class_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    let map = match v {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!("class-map must be a map, found {}", value_kind(&other)),
+            );
+            return;
+        }
+    };
+
+    let mut had_any = false;
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+        had_any = true;
+        let path = format!("{}.{}", base_path, key);
+        match key {
+            CLASS_KEY_CLASS_ID => {}
+            CLASS_KEY_VENDOR | CLASS_KEY_MODEL => {
+                if !matches!(v, Value::Text(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "class-map key {} (vendor/model) must be tstr, found {}",
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            CLASS_KEY_LAYER | CLASS_KEY_INDEX => {
+                if !matches!(v, Value::Integer(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "class-map key {} (layer/index) must be uint, found {}",
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            _ => ins.info(
+                path,
+                format!("unrecognized class-map key {} (extension)", key),
+            ),
+        }
+    }
+
+    if !had_any {
+        ins.err(base_path, "class-map must not be empty");
+    }
+}
+
+// ===========================================================================
+// measurement-map
+// ===========================================================================
+
+fn inspect_measurement_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    let map = match v {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "measurement-map must be a map, found {}",
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+
+    let mut have_mval = false;
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => continue,
+            },
+            _ => continue,
+        };
+        let path = format!("{}.{}", base_path, key);
+        match key {
+            MEAS_KEY_MKEY => {
+                // mkey is $measured-element-type-choice (int / tstr / oid / uuid)
+            }
+            MEAS_KEY_MVAL => {
+                have_mval = true;
+                inspect_measurement_values_map(ins, &path, v);
+            }
+            MEAS_KEY_AUTHORIZED_BY => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "authorized-by (key 2) must be array of $crypto-key-type-choice, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            _ => ins.info(
+                path,
+                format!("unrecognized measurement-map key {} (extension)", key),
+            ),
+        }
+    }
+
+    if !have_mval {
+        ins.err(base_path, "missing required key 1 (mval)");
+    }
+}
+
+// ===========================================================================
+// measurement-values-map — calls Profile::diagnose_mval_entry for extras
+// ===========================================================================
+
+fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    let map = match v {
+        Value::Map(m) => m,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "measurement-values-map must be a map, found {}",
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+
+    let mut had_any = false;
+    for (k, v) in map {
+        let key = match &k {
+            Value::Integer(n) => match i64::try_from(*n) {
+                Ok(v) => v,
+                Err(_) => {
+                    ins.warn(
+                        base_path,
+                        format!("mval key {} out of i64 range; skipped", n),
+                    );
+                    continue;
+                }
+            },
+            other => {
+                ins.warn(
+                    base_path,
+                    format!("mval has non-integer key ({}); ignored", value_kind(other)),
+                );
+                continue;
+            }
+        };
+        had_any = true;
+        let path = format!("{}{{{}}}", base_path, key);
+        match key {
+            MVAL_KEY_VERSION => {
+                if !matches!(v, Value::Map(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "version (key 0) must be a version-map, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_SVN => {
+                if !matches!(v, Value::Integer(_) | Value::Tag(_, _)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "svn (key 1) must be uint or tagged-svn/min-svn, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_DIGESTS => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "digests (key 2) must be array of digest, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_FLAGS => {
+                if !matches!(v, Value::Map(_)) {
+                    ins.err(
+                        path,
+                        format!("flags (key 3) must be flags-map, found {}", value_kind(&v)),
+                    );
+                }
+            }
+            MVAL_KEY_RAW_VALUE => {
+                if !matches!(v, Value::Bytes(_) | Value::Tag(_, _)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "raw-value (key 4) must be bstr or tagged-raw-value, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_RAW_VALUE_MASK_DEPRECATED => {
+                ins.warn(
+                    path,
+                    "raw-value-mask (key 5) is deprecated — use tagged-masked-raw-value instead",
+                );
+            }
+            MVAL_KEY_MAC_ADDR | MVAL_KEY_IP_ADDR => {
+                if !matches!(v, Value::Bytes(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "{} (key {}) must be bstr, found {}",
+                            if key == MVAL_KEY_MAC_ADDR {
+                                "mac-addr"
+                            } else {
+                                "ip-addr"
+                            },
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_SERIAL_NUMBER | MVAL_KEY_NAME => {
+                if !matches!(v, Value::Text(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "{} (key {}) must be tstr, found {}",
+                            if key == MVAL_KEY_SERIAL_NUMBER {
+                                "serial-number"
+                            } else {
+                                "name"
+                            },
+                            key,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_UEID => {
+                if !matches!(v, Value::Bytes(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "ueid (key 9) must be bstr (7-33 bytes), found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_UUID => {
+                let ok = match &v {
+                    Value::Bytes(b) => b.len() == 16,
+                    Value::Tag(TAG_UUID, inner) => {
+                        matches!(inner.as_ref(), Value::Bytes(b) if b.len() == 16)
+                    }
+                    _ => false,
+                };
+                if !ok {
+                    ins.err(
+                        path,
+                        format!(
+                            "uuid (key 10) must be 16-byte bstr or #6.{}(16-byte bstr), found {}",
+                            TAG_UUID,
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_CRYPTOKEYS => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!("cryptokeys (key 13) must be array of $crypto-key-type-choice, found {}", value_kind(&v)),
+                    );
+                }
+            }
+            MVAL_KEY_INTEGRITY_REGISTERS => {
+                if !matches!(v, Value::Map(_)) {
+                    ins.err(
+                        path,
+                        format!(
+                            "integrity-registers (key 14) must be a map, found {}",
+                            value_kind(&v)
+                        ),
+                    );
+                }
+            }
+            MVAL_KEY_INT_RANGE => {
+                if !matches!(v, Value::Array(_)) {
+                    ins.err(
+                        path,
+                        format!("int-range (key 15) must be array, found {}", value_kind(&v)),
+                    );
+                }
+            }
+            _ => {
+                // Profile-defined extension key. Ask the resolved profile
+                // (if any) for a human-readable label.
+                let label = ins
+                    .current_profile
+                    .and_then(|p| p.diagnose_mval_entry(key, &v));
+                match label {
+                    Some(s) => ins.info(path, s),
+                    None => ins.info(path, format!("extension key {}", key)),
+                }
+            }
+        }
+    }
+
+    if !had_any {
+        ins.err(
+            base_path,
+            "measurement-values-map must have at least one entry",
+        );
+    }
+}
+
+// ===========================================================================
+// (no-op marker)
+// ===========================================================================
 
 // Suppress unused-import warning of Tagged in no-std builds.
 #[allow(dead_code)]
@@ -1106,6 +1913,44 @@ fn _unused_tagged_marker(_t: Tagged<()>) {}
 mod tests {
     use super::*;
     use crate::cbor::encode;
+
+    /// Test-only convenience: call [`inspect`] with an empty registry.
+    fn inspect(bytes: &[u8]) -> DecodeReport {
+        super::inspect(bytes, &ProfileRegistry::new())
+    }
+
+    /// Build a structurally-valid minimal `concise-mid-tag` map for the
+    /// expanded diagnose walker:
+    /// - key 1 (tag-identity): `{ 0: "test-tag" }`
+    /// - key 4 (triples): one reference-triples entry with one env + one
+    ///   measurement carrying a name field
+    fn minimal_valid_comid_map() -> Value {
+        let env = Value::Map(vec![(
+            Value::Integer(0), // env.class
+            Value::Map(vec![(
+                Value::Integer(1), // class.vendor
+                Value::Text("ACME".into()),
+            )]),
+        )]);
+        let meas = Value::Map(vec![(
+            Value::Integer(1), // measurement.mval
+            Value::Map(vec![(
+                Value::Integer(11), // mval.name
+                Value::Text("widget".into()),
+            )]),
+        )]);
+        let ref_triples = Value::Array(vec![Value::Array(vec![env, Value::Array(vec![meas])])]);
+        Value::Map(vec![
+            (
+                Value::Integer(1), // tag-identity
+                Value::Map(vec![(Value::Integer(0), Value::Text("test-tag".into()))]),
+            ),
+            (
+                Value::Integer(4), // triples
+                Value::Map(vec![(Value::Integer(0), ref_triples)]),
+            ),
+        ])
+    }
 
     fn empty_report_has_envelope(bytes: &[u8], kind: EnvelopeKind) {
         let r = inspect(bytes);
@@ -1194,8 +2039,7 @@ mod tests {
     #[test]
     fn unsigned_corim_with_one_comid_tag_reports_no_errors() {
         // Build a minimal valid #6.501(corim-map) with one CoMID tag.
-        let inner_comid = Value::Map(vec![(Value::Integer(1), Value::Text("t".into()))]);
-        let comid_bytes = encode(&inner_comid).unwrap();
+        let comid_bytes = encode(&minimal_valid_comid_map()).unwrap();
         let corim_inner = Value::Map(vec![
             (Value::Integer(0), Value::Text("my-id".into())),
             (
@@ -1228,8 +2072,7 @@ mod tests {
     #[test]
     fn legacy_500_wrapper_warns_and_recurses() {
         // #6.500(#6.501({...minimal corim...}))
-        let inner_comid = Value::Map(vec![(Value::Integer(1), Value::Text("t".into()))]);
-        let comid_bytes = encode(&inner_comid).unwrap();
+        let comid_bytes = encode(&minimal_valid_comid_map()).unwrap();
         let corim_inner = Value::Map(vec![
             (Value::Integer(0), Value::Text("my-id".into())),
             (
