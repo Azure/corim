@@ -71,7 +71,13 @@ fn main() {
         // so the walker treats every mval extension key with the generic
         // "extension key {N}" label. Applications embedding the diagnose
         // module can build a registry and pass it directly.
-        let registry = corim::profile::ProfileRegistry::new();
+        //
+        // When built with `--features intel`, register the Intel profile
+        // so Intel tee.* mval keys are labelled by their spec names.
+        #[allow(unused_mut)]
+        let mut registry = corim::profile::ProfileRegistry::new();
+        #[cfg(feature = "intel")]
+        registry.register(Box::new(corim_profile_intel::IntelProfile::new()));
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
