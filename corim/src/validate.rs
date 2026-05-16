@@ -597,6 +597,9 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 /// default exact-match semantics. Used by both the loop in
 /// [`measurement_matches`] and by the profile-aware fallback path in
 /// [`measurement_matches_with_profile`].
+///
+/// Public companion: [`core_fields_match`] (same logic, stable name for
+/// out-of-crate [`Profile`][crate::profile::Profile] implementations).
 fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementMap) -> bool {
     // Match mkey if specified in reference
     if let Some(ref ref_mkey) = reference.mkey {
@@ -691,6 +694,31 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
     }
 
     true
+}
+
+/// Tests whether a reference measurement's core (non-extension) fields
+/// agree with an evidence measurement under the crate's default
+/// exact-match semantics.
+///
+/// This is the stable public entry point for the per-pair comparison
+/// performed internally by [`match_reference_values`]. It is intended for
+/// out-of-crate [`Profile`][crate::profile::Profile] implementations that
+/// own the extension keys (the negative-integer range in
+/// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries])
+/// but want to delegate the structural fields (`mkey`, `digests`, `svn`,
+/// `version`, `name`, `flags`, `raw-value`, `mac-addr`, `ip-addr`,
+/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`)
+/// to the crate's default matcher.
+///
+/// Note: this function does NOT inspect
+/// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].
+/// Profile-aware comparison of extension keys is the caller's
+/// responsibility — typically inside a
+/// [`Profile::match_measurement`][crate::profile::Profile::match_measurement]
+/// impl that AND-combines its extension verdict with the result of this
+/// function.
+pub fn core_fields_match(reference: &MeasurementMap, evidence: &MeasurementMap) -> bool {
+    single_measurement_matches(reference, evidence)
 }
 
 /// Compare digest lists per §9.4.6.1.3.
