@@ -45,7 +45,9 @@ use alloc::string::{String, ToString};
 use corim::cbor::value::Value;
 use corim::profile::Profile;
 use corim::types::corim::ProfileChoice;
+use corim::types::measurement::MeasurementMap;
 
+mod eval;
 pub mod expression;
 pub use expression::{
     display_expression, Expression, ExpressionDecodeError, Numeric, NumericOp, SetOfSetOp, SetOp,
@@ -156,6 +158,60 @@ impl Default for IntelProfile {
 impl Profile for IntelProfile {
     fn identifier(&self) -> &ProfileChoice {
         &self.id
+    }
+
+    /// Profile-aware matching for the Intel CoRIM extension keys.
+    ///
+    /// Iterates the Intel-defined entries in
+    /// [`reference.mval.extra_entries`][corim::types::measurement::MeasurementValuesMap::extra_entries]
+    /// (any integer key recognised by [`intel_mval_name`]) and evaluates
+    /// each one against the corresponding entry in `evidence` under the
+    /// operator semantics of `#6.60010(...)` expressions per
+    /// `draft-cds-rats-intel-corim-profile-03` §8.1. See
+    /// [`crate::eval`][mod@eval] for the per-key verdict policy.
+    ///
+    /// Composition with the core structural fields (`mkey`, `digests`,
+    /// `svn`, `name`, ...) uses
+    /// [`corim::validate::core_fields_match`]: a `Some(true)` return
+    /// therefore certifies that BOTH the Intel extension constraints AND
+    /// the core fields agree between the pair.
+    ///
+    /// Per-key verdicts roll up as follows:
+    /// - any Intel-keyed `Fail` → `Some(false)` (early exit; structural
+    ///   check skipped)
+    /// - all evaluatable Intel keys `Pass` and at least one was
+    ///   evaluated → `Some(core_fields_match(...))`
+    /// - the reference contains only `Skip`-class Intel keys (tdate,
+    ///   epoch, set-of-set) → `None` (defer entirely to core's
+    ///   non-extension comparison; the time constraint is silently
+    ///   skipped pending the future time-semantics design)
+    /// - the reference has no Intel keys → `None` (defer)
+    ///
+    /// If the reference references an Intel key whose entry is missing
+    /// from evidence, the verdict is `Some(false)` — a verifier MUST
+    /// reject when a required Reference Value has no Evidence to
+    /// compare against.
+    fn match_measurement(
+        &self,
+        reference: &MeasurementMap,
+        evidence: &MeasurementMap,
+    ) -> Option<bool> {
+        let mut verdicts: alloc::vec::Vec<eval::Verdict> = alloc::vec::Vec::new();
+        for (key, ref_val) in reference.mval.extra_entries.iter() {
+            if intel_mval_name(*key).is_none() {
+                // Not an Intel-defined key; ignore (other profiles, or
+                // unknown extras, are not this profile's business).
+                continue;
+            }
+            match evidence.mval.extra_entries.get(key) {
+                Some(ev_val) => verdicts.push(eval::evaluate_one_key(ref_val, ev_val)),
+                None => return Some(false),
+            }
+        }
+        match eval::combine(&verdicts) {
+            Some(true) => Some(corim::validate::core_fields_match(reference, evidence)),
+            other => other, // Some(false) or None
+        }
     }
 
     fn diagnose_mval_entry(&self, key: i64, value: &Value) -> Option<String> {
