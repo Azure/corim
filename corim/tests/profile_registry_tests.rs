@@ -74,7 +74,10 @@ fn default_match_measurement_returns_none() {
         authorized_by: None,
     };
     // Default impl defers to crate-level matching by returning None.
-    assert_eq!(profile.match_measurement(&meas, &meas), None);
+    assert_eq!(
+        profile.match_measurement(&meas, &meas, &corim::profile::MatchContext::new()),
+        None
+    );
 }
 
 #[test]
@@ -113,7 +116,12 @@ fn custom_profile_can_override_match() {
         fn identifier(&self) -> &ProfileChoice {
             &self.id
         }
-        fn match_measurement(&self, _r: &MeasurementMap, _e: &MeasurementMap) -> Option<bool> {
+        fn match_measurement(
+            &self,
+            _r: &MeasurementMap,
+            _e: &MeasurementMap,
+            _ctx: &corim::profile::MatchContext,
+        ) -> Option<bool> {
             Some(true)
         }
     }
@@ -137,7 +145,10 @@ fn custom_profile_can_override_match() {
         },
         authorized_by: None,
     };
-    assert_eq!(profile.match_measurement(&meas, &other), Some(true));
+    assert_eq!(
+        profile.match_measurement(&meas, &other, &corim::profile::MatchContext::new()),
+        Some(true)
+    );
 }
 
 /// The registry must be `Send + Sync` so callers can wrap it in an

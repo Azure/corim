@@ -48,8 +48,73 @@
 use crate::nostd_prelude::*;
 
 use crate::cbor::value::Value;
+use crate::types::common::CborTime;
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
+
+// ---------------------------------------------------------------------------
+// MatchContext
+// ---------------------------------------------------------------------------
+
+/// Per-call context threaded through profile-aware matching.
+///
+/// Built once per appraisal call by the verifier and passed by reference
+/// into [`Profile::match_measurement`] (and from there into the
+/// profile-aware variants of the [`crate::validate`] entry points). The
+/// caller is the source of truth for verifier-side state that the
+/// profile may need but should not own — currently just
+/// verifier-current-time for epoch-based reference values.
+///
+/// Construct with [`MatchContext::new`] (empty) or, with the `std`
+/// feature, [`MatchContext::system_now`] (clock from
+/// `std::time::SystemTime`). Chain [`MatchContext::with_now`] to set
+/// the clock explicitly.
+///
+/// Designed to grow: future fields (nonce, evidence-source-class, etc.)
+/// can be added without breaking the trait signature again — hence
+/// `#[non_exhaustive]`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct MatchContext {
+    /// Verifier-current-time, as CBOR epoch seconds. `None` means "no
+    /// clock available"; profiles that need a clock should fall back to
+    /// `Skip`-equivalent behaviour (return `None` from
+    /// [`Profile::match_measurement`] for that key) when this is `None`.
+    pub now: Option<CborTime>,
+}
+
+impl MatchContext {
+    /// Empty context. `now` is `None`; epoch-based reference values
+    /// will Skip.
+    pub fn new() -> Self {
+        Self { now: None }
+    }
+
+    /// Set the verifier-current-time. Chainable.
+    #[must_use]
+    pub fn with_now(mut self, now: CborTime) -> Self {
+        self.now = Some(now);
+        self
+    }
+
+    /// Build a context whose `now` is `SystemTime::now()` expressed as
+    /// Unix epoch seconds. Saturates to `i64::MAX` past the year 2262.
+    /// Returns an empty context (no clock) on the (impossible) case
+    /// where `SystemTime::now()` is before the Unix epoch.
+    #[cfg(feature = "std")]
+    pub fn system_now() -> Self {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        match SystemTime::now().duration_since(UNIX_EPOCH) {
+            Ok(d) => {
+                let secs = i64::try_from(d.as_secs()).unwrap_or(i64::MAX);
+                Self {
+                    now: Some(CborTime::new(secs)),
+                }
+            }
+            Err(_) => Self::new(),
+        }
+    }
+}
 
 /// Trait implemented by profile crates to teach `corim` about a CoRIM
 /// profile's extension semantics.
@@ -77,10 +142,15 @@ pub trait Profile {
     /// semantics (e.g. operator-based comparison via tag `#6.60010`),
     /// `Some(false)` if it explicitly does not match, or `None` to defer
     /// to the crate's default exact-match logic.
+    ///
+    /// `ctx` carries per-call verifier state (currently just
+    /// `now: Option<CborTime>` for epoch-based reference values).
+    /// Profiles that don't need any context can ignore the parameter.
     fn match_measurement(
         &self,
         _reference: &MeasurementMap,
         _evidence: &MeasurementMap,
+        _ctx: &MatchContext,
     ) -> Option<bool> {
         None
     }

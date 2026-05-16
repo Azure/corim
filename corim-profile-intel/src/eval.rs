@@ -22,7 +22,8 @@
 //! | set member / not-member               | CBOR equality membership test               |
 //! | tdate (`gt`/`ge`/`lt`/`le`)           | parse both sides as RFC 3339, compare epoch |
 //! | set-of-set (subset/superset/disjoint) | [`Verdict::Skip`] — no Intel §8.2 key uses it |
-//! | epoch                                 | [`Verdict::Skip`] — needs verifier-current-time, see follow-up commit |
+//! | epoch (default verifier-current-time) | uses `ctx.now`; Skip when ctx has no clock   |
+//! | epoch with alternate `epoch-id`       | [`Verdict::Skip`] — no Intel §8.2 key uses it |
 //!
 //! ## Failure policy
 //!
@@ -45,6 +46,7 @@
 extern crate alloc;
 
 use corim::cbor::value::Value;
+use corim::profile::MatchContext;
 
 use crate::expression::{Expression, Numeric, NumericOp, SetOp, TAG_INTEL_EXPRESSION};
 
@@ -64,11 +66,11 @@ pub(crate) enum Verdict {
 }
 
 /// Evaluate one Intel-keyed `(reference, evidence)` pair.
-pub(crate) fn evaluate_one_key(reference: &Value, evidence: &Value) -> Verdict {
+pub(crate) fn evaluate_one_key(reference: &Value, evidence: &Value, ctx: &MatchContext) -> Verdict {
     // Tagged expression form.
     if matches!(reference, Value::Tag(t, _) if *t == TAG_INTEL_EXPRESSION) {
         return match Expression::from_tag(reference) {
-            Ok(expr) => evaluate_expression(&expr, evidence),
+            Ok(expr) => evaluate_expression(&expr, evidence, ctx),
             Err(_) => Verdict::Fail,
         };
     }
@@ -80,7 +82,7 @@ pub(crate) fn evaluate_one_key(reference: &Value, evidence: &Value) -> Verdict {
     }
 }
 
-fn evaluate_expression(e: &Expression, ev: &Value) -> Verdict {
+fn evaluate_expression(e: &Expression, ev: &Value, ctx: &MatchContext) -> Verdict {
     match e {
         Expression::Numeric { op, value } => match numeric_evidence(ev) {
             Some(ev_num) => cmp_numeric(*op, ev_num, value),
@@ -116,9 +118,65 @@ fn evaluate_expression(e: &Expression, ev: &Value) -> Verdict {
             },
             None => Verdict::Fail,
         },
-        // TODO: epoch needs verifier-current-time. Lands in the
-        // follow-up commit that introduces `MatchContext`.
-        Expression::Epoch { .. } => Verdict::Skip,
+        // Epoch (§8.1.4.2): with the default epoch (verifier-current-
+        // time), the reference asserts `ev <op> (now - grace_period)`.
+        // The decoder always emits the 3-element form for Epoch and
+        // sets `epoch_id` to `Some(...)`; the convention `Some(Null)`
+        // (or absent) means "default epoch". Any other `epoch_id`
+        // value selects an alternate epoch scheme; no Intel §8.2 key
+        // uses one, so we Skip rather than guess.
+        Expression::Epoch {
+            op,
+            grace_period,
+            epoch_id,
+        } => {
+            let is_default = matches!(epoch_id, None | Some(Value::Null));
+            if !is_default {
+                return Verdict::Skip;
+            }
+            match ctx.now {
+                Some(now) => match epoch_evidence(ev) {
+                    Some(ev_secs) => {
+                        let threshold = now.epoch_secs().saturating_sub(*grace_period);
+                        cmp_numeric(*op, ev_secs as f64, &Numeric::Int(threshold as i128))
+                    }
+                    None => Verdict::Fail,
+                },
+                None => Verdict::Skip,
+            }
+        }
+    }
+}
+
+/// Unwrap epoch evidence to seconds-since-Unix-epoch.
+///
+/// Accepts (per §8.1.4.2): bare integer, `#6.1(int|float)` (epoch
+/// time per RFC 8949 §3.4.2), bare float, or RFC 3339 text (`tstr`
+/// or `#6.0(text)`). Floats are truncated; out-of-range or non-
+/// finite floats return `None` per the no-`as`-narrowing rule.
+fn epoch_evidence(v: &Value) -> Option<i64> {
+    match v {
+        Value::Integer(n) => i64::try_from(*n).ok(),
+        Value::Float(f) => float_to_i64(*f),
+        Value::Tag(1, inner) => match inner.as_ref() {
+            Value::Integer(n) => i64::try_from(*n).ok(),
+            Value::Float(f) => float_to_i64(*f),
+            _ => None,
+        },
+        Value::Text(t) => rfc3339_to_epoch_seconds(t),
+        Value::Tag(0, inner) => match inner.as_ref() {
+            Value::Text(t) => rfc3339_to_epoch_seconds(t),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn float_to_i64(f: f64) -> Option<i64> {
+    if f.is_nan() || f.is_infinite() || f < (i64::MIN as f64) || f > (i64::MAX as f64) {
+        None
+    } else {
+        Some(f as i64)
     }
 }
 
@@ -342,12 +400,19 @@ mod tests {
     use crate::expression::{NumericOp, SetOp};
     use alloc::vec;
 
+    /// Default-context wrapper so existing tests stay 2-arg.
+    /// The `MatchContext::new()` default has `now = None`, which
+    /// makes Epoch expressions Skip without affecting any other op.
+    fn eval_pair(reference: &Value, evidence: &Value) -> Verdict {
+        evaluate_one_key(reference, evidence, &MatchContext::new())
+    }
+
     // -- evaluate_one_key: bare values -------------------------------------
 
     #[test]
     fn bare_text_equal_passes() {
         assert_eq!(
-            evaluate_one_key(&Value::Text("Intel".into()), &Value::Text("Intel".into())),
+            eval_pair(&Value::Text("Intel".into()), &Value::Text("Intel".into())),
             Verdict::Pass
         );
     }
@@ -355,7 +420,7 @@ mod tests {
     #[test]
     fn bare_text_unequal_fails() {
         assert_eq!(
-            evaluate_one_key(&Value::Text("Intel".into()), &Value::Text("AMD".into())),
+            eval_pair(&Value::Text("Intel".into()), &Value::Text("AMD".into())),
             Verdict::Fail
         );
     }
@@ -363,7 +428,7 @@ mod tests {
     #[test]
     fn bare_bytes_equal_passes() {
         let v = Value::Bytes(vec![1, 2, 3]);
-        assert_eq!(evaluate_one_key(&v, &v), Verdict::Pass);
+        assert_eq!(eval_pair(&v, &v), Verdict::Pass);
     }
 
     // -- numeric ------------------------------------------------------------
@@ -375,60 +440,57 @@ mod tests {
     #[test]
     fn numeric_ge_passes_on_equal() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(5)])); // ge 5
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(5)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Integer(5)), Verdict::Pass);
     }
 
     #[test]
     fn numeric_ge_passes_on_greater() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(5)]));
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(9)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Integer(9)), Verdict::Pass);
     }
 
     #[test]
     fn numeric_ge_fails_on_lesser() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(5)]));
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(4)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(4)), Verdict::Fail);
     }
 
     #[test]
     fn numeric_gt_strict() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(1), Value::Integer(5)])); // gt 5
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(5)), Verdict::Fail);
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(6)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Integer(5)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(6)), Verdict::Pass);
     }
 
     #[test]
     fn numeric_lt_le() {
         let lt = make_expr_tag(Value::Array(vec![Value::Integer(3), Value::Integer(10)])); // lt 10
         let le = make_expr_tag(Value::Array(vec![Value::Integer(4), Value::Integer(10)])); // le 10
-        assert_eq!(evaluate_one_key(&lt, &Value::Integer(9)), Verdict::Pass);
-        assert_eq!(evaluate_one_key(&lt, &Value::Integer(10)), Verdict::Fail);
-        assert_eq!(evaluate_one_key(&le, &Value::Integer(10)), Verdict::Pass);
-        assert_eq!(evaluate_one_key(&le, &Value::Integer(11)), Verdict::Fail);
+        assert_eq!(eval_pair(&lt, &Value::Integer(9)), Verdict::Pass);
+        assert_eq!(eval_pair(&lt, &Value::Integer(10)), Verdict::Fail);
+        assert_eq!(eval_pair(&le, &Value::Integer(10)), Verdict::Pass);
+        assert_eq!(eval_pair(&le, &Value::Integer(11)), Verdict::Fail);
     }
 
     #[test]
     fn numeric_float_compare() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Float(1.5)])); // ge 1.5
-        assert_eq!(evaluate_one_key(&r, &Value::Float(2.0)), Verdict::Pass);
-        assert_eq!(evaluate_one_key(&r, &Value::Float(1.0)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Float(2.0)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Float(1.0)), Verdict::Fail);
         // Integer evidence promoted.
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(2)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Integer(2)), Verdict::Pass);
     }
 
     #[test]
     fn numeric_fails_on_non_numeric_evidence() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(0)]));
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Text("oops".into())),
-            Verdict::Fail
-        );
+        assert_eq!(eval_pair(&r, &Value::Text("oops".into())), Verdict::Fail);
     }
 
     #[test]
     fn numeric_nan_fails() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(2), Value::Float(0.0)]));
-        assert_eq!(evaluate_one_key(&r, &Value::Float(f64::NAN)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Float(f64::NAN)), Verdict::Fail);
     }
 
     // -- mask-eq ------------------------------------------------------------
@@ -445,38 +507,26 @@ mod tests {
     fn mask_eq_passes_under_mask() {
         // reference = 0xF0, mask = 0xF0  → upper nibble must match 0xF
         let r = mask_expr(vec![0xF0], vec![0xF0]);
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Bytes(vec![0xFA])),
-            Verdict::Pass
-        );
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Bytes(vec![0xF7])),
-            Verdict::Pass
-        );
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xFA])), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xF7])), Verdict::Pass);
     }
 
     #[test]
     fn mask_eq_fails_outside_mask() {
         let r = mask_expr(vec![0xF0], vec![0xF0]);
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Bytes(vec![0x10])),
-            Verdict::Fail
-        );
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0x10])), Verdict::Fail);
     }
 
     #[test]
     fn mask_eq_length_mismatch_fails() {
         let r = mask_expr(vec![0xFF, 0xFF], vec![0xFF, 0xFF]);
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Bytes(vec![0xFF])),
-            Verdict::Fail
-        );
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xFF])), Verdict::Fail);
     }
 
     #[test]
     fn mask_eq_non_bytes_evidence_fails() {
         let r = mask_expr(vec![0x00], vec![0xFF]);
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(0)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(0)), Verdict::Fail);
     }
 
     // -- set ----------------------------------------------------------------
@@ -499,35 +549,142 @@ mod tests {
                 Value::Text("c".into()),
             ],
         );
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Text("b".into())),
-            Verdict::Pass
-        );
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Text("z".into())),
-            Verdict::Fail
-        );
+        assert_eq!(eval_pair(&r, &Value::Text("b".into())), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Text("z".into())), Verdict::Fail);
     }
 
     #[test]
     fn set_not_member_pass_and_fail() {
         // op=7 (not-member), set = {1, 2}
         let r = set_expr(7, vec![Value::Integer(1), Value::Integer(2)]);
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(3)), Verdict::Pass);
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(1)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(3)), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Integer(1)), Verdict::Fail);
     }
 
-    // -- deferred shapes ----------------------------------------------------
+    // -- epoch --------------------------------------------------------------
+
+    fn epoch_expr_default(op_code: i64, grace: i64) -> Value {
+        // The decoder only emits Epoch from the 3-element form. Use
+        // `Value::Null` for the epoch-id slot to signal "default
+        // epoch" (verifier-current-time).
+        make_expr_tag(Value::Array(vec![
+            Value::Integer(op_code as i128),
+            Value::Integer(grace as i128),
+            Value::Null,
+        ]))
+    }
+
+    fn ctx_at(epoch_secs: i64) -> MatchContext {
+        MatchContext::new().with_now(corim::types::common::CborTime::new(epoch_secs))
+    }
 
     #[test]
-    fn epoch_is_skip() {
-        // [op, grace_period, epoch_id] — 3-element epoch form.
+    fn epoch_with_explicit_alternate_epoch_id_is_skip() {
+        // Non-Null, non-default epoch-id selects an alternate scheme.
+        // No Intel §8.2 measurement key uses this; we Skip rather
+        // than guess at semantics.
         let r = make_expr_tag(Value::Array(vec![
             Value::Integer(2),
             Value::Integer(60),
-            Value::Null,
+            Value::Text("alt".into()),
         ]));
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(0)), Verdict::Skip);
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Integer(0), &ctx_at(1_000_000_000)),
+            Verdict::Skip
+        );
+    }
+
+    #[test]
+    fn epoch_default_without_clock_is_skip() {
+        // Verifier didn't supply a clock → Skip (rather than guess).
+        let r = epoch_expr_default(2, 60);
+        assert_eq!(eval_pair(&r, &Value::Integer(0)), Verdict::Skip);
+    }
+
+    #[test]
+    fn epoch_default_ge_pass_when_evidence_within_grace() {
+        // now=1_000_000_000, grace=60 → threshold=999_999_940;
+        // ev=999_999_950 ≥ threshold → Pass.
+        let r = epoch_expr_default(2, 60); // op=ge
+        let ev = Value::Integer(999_999_950);
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1_000_000_000)),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn epoch_default_ge_fail_when_evidence_too_old() {
+        // ev=999_999_900 < threshold=999_999_940 → Fail.
+        let r = epoch_expr_default(2, 60);
+        let ev = Value::Integer(999_999_900);
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1_000_000_000)),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn epoch_evidence_accepts_tag_1_int() {
+        // RFC 8949 §3.4.2 epoch-time tag wrapping an integer.
+        let r = epoch_expr_default(2, 60);
+        let ev = Value::Tag(1, alloc::boxed::Box::new(Value::Integer(999_999_950)));
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1_000_000_000)),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn epoch_evidence_accepts_rfc3339_text() {
+        // 2025-01-01T00:00:00Z = 1735689600 epoch seconds; with
+        // grace=60 and now=1735689700 the threshold is 1735689640
+        // and evidence (1735689600) is 40s too old → Fail.
+        let r = epoch_expr_default(2, 60);
+        let ev = Value::Text("2025-01-01T00:00:00Z".into());
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1735689700)),
+            Verdict::Fail
+        );
+        // …but with now exactly equal the evidence is in-window.
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1735689600)),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn epoch_evidence_accepts_tag_0_text() {
+        let r = epoch_expr_default(2, 60);
+        let ev = Value::Tag(
+            0,
+            alloc::boxed::Box::new(Value::Text("2025-01-01T00:00:00Z".into())),
+        );
+        assert_eq!(
+            evaluate_one_key(&r, &ev, &ctx_at(1735689600)),
+            Verdict::Pass
+        );
+    }
+
+    #[test]
+    fn epoch_garbage_evidence_fails() {
+        let r = epoch_expr_default(2, 60);
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Bytes(vec![1, 2, 3]), &ctx_at(1_000_000_000)),
+            Verdict::Fail
+        );
+    }
+
+    #[test]
+    fn epoch_grace_saturates_at_min() {
+        // i64::MAX grace_period would underflow `now - grace`; the
+        // saturating_sub keeps the threshold at i64::MIN, which any
+        // realistic evidence beats.
+        let r = epoch_expr_default(2, i64::MAX);
+        assert_eq!(
+            evaluate_one_key(&r, &Value::Integer(0), &ctx_at(1_000)),
+            Verdict::Pass
+        );
     }
 
     // -- tdate --------------------------------------------------------------
@@ -543,11 +700,11 @@ mod tests {
     fn tdate_ge_passes_on_equal_and_later() {
         let r = tdate_expr(2, "2025-01-01T00:00:00Z"); // ge
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
             Verdict::Pass
         );
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2026-01-01T00:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2026-01-01T00:00:00Z".into())),
             Verdict::Pass
         );
     }
@@ -556,7 +713,7 @@ mod tests {
     fn tdate_ge_fails_on_earlier() {
         let r = tdate_expr(2, "2025-01-01T00:00:00Z");
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2024-12-31T23:59:59Z".into())),
+            eval_pair(&r, &Value::Text("2024-12-31T23:59:59Z".into())),
             Verdict::Fail
         );
     }
@@ -565,11 +722,11 @@ mod tests {
     fn tdate_gt_strict() {
         let r = tdate_expr(1, "2025-01-01T00:00:00Z"); // gt
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
             Verdict::Fail
         );
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:01Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:01Z".into())),
             Verdict::Pass
         );
     }
@@ -579,15 +736,15 @@ mod tests {
         let lt = tdate_expr(3, "2030-01-01T00:00:00Z");
         let le = tdate_expr(4, "2030-01-01T00:00:00Z");
         assert_eq!(
-            evaluate_one_key(&lt, &Value::Text("2029-12-31T23:59:59Z".into())),
+            eval_pair(&lt, &Value::Text("2029-12-31T23:59:59Z".into())),
             Verdict::Pass
         );
         assert_eq!(
-            evaluate_one_key(&lt, &Value::Text("2030-01-01T00:00:00Z".into())),
+            eval_pair(&lt, &Value::Text("2030-01-01T00:00:00Z".into())),
             Verdict::Fail
         );
         assert_eq!(
-            evaluate_one_key(&le, &Value::Text("2030-01-01T00:00:00Z".into())),
+            eval_pair(&le, &Value::Text("2030-01-01T00:00:00Z".into())),
             Verdict::Pass
         );
     }
@@ -600,7 +757,7 @@ mod tests {
             0,
             alloc::boxed::Box::new(Value::Text("2026-01-01T00:00:00Z".into())),
         );
-        assert_eq!(evaluate_one_key(&r, &ev), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &ev), Verdict::Pass);
     }
 
     #[test]
@@ -608,7 +765,7 @@ mod tests {
         // "2025-01-01T05:00:00+05:00" == "2025-01-01T00:00:00Z"
         let r = tdate_expr(2, "2025-01-01T05:00:00+05:00");
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
             Verdict::Pass
         );
     }
@@ -618,11 +775,11 @@ mod tests {
         // "2025-01-01T00:00:00-05:00" == "2025-01-01T05:00:00Z"
         let r = tdate_expr(2, "2025-01-01T00:00:00-05:00");
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T05:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T05:00:00Z".into())),
             Verdict::Pass
         );
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T04:59:59Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T04:59:59Z".into())),
             Verdict::Fail
         );
     }
@@ -632,7 +789,7 @@ mod tests {
         let r = tdate_expr(2, "2025-01-01T00:00:00.500Z");
         // Both ref and ev are truncated to second resolution; equality holds.
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00.999Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:00.999Z".into())),
             Verdict::Pass
         );
     }
@@ -640,17 +797,14 @@ mod tests {
     #[test]
     fn tdate_non_text_evidence_fails() {
         let r = tdate_expr(2, "2025-01-01T00:00:00Z");
-        assert_eq!(
-            evaluate_one_key(&r, &Value::Integer(1735689600)),
-            Verdict::Fail
-        );
+        assert_eq!(eval_pair(&r, &Value::Integer(1735689600)), Verdict::Fail);
     }
 
     #[test]
     fn tdate_malformed_evidence_fails() {
         let r = tdate_expr(2, "2025-01-01T00:00:00Z");
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("not a date".into())),
+            eval_pair(&r, &Value::Text("not a date".into())),
             Verdict::Fail
         );
     }
@@ -659,7 +813,7 @@ mod tests {
     fn tdate_malformed_reference_fails() {
         let r = tdate_expr(2, "garbage");
         assert_eq!(
-            evaluate_one_key(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
+            eval_pair(&r, &Value::Text("2025-01-01T00:00:00Z".into())),
             Verdict::Fail
         );
     }
@@ -747,13 +901,13 @@ mod tests {
             TAG_INTEL_EXPRESSION,
             alloc::boxed::Box::new(Value::Integer(5)),
         );
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(5)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(5)), Verdict::Fail);
     }
 
     #[test]
     fn unknown_operator_fails() {
         let r = make_expr_tag(Value::Array(vec![Value::Integer(99), Value::Integer(0)]));
-        assert_eq!(evaluate_one_key(&r, &Value::Integer(0)), Verdict::Fail);
+        assert_eq!(eval_pair(&r, &Value::Integer(0)), Verdict::Fail);
     }
 
     // -- combine ------------------------------------------------------------

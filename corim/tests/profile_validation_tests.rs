@@ -5,7 +5,7 @@
 //! `match_reference_values_with_profile` and
 //! `apply_endorsement_series_with_profile`.
 
-use corim::profile::Profile;
+use corim::profile::{MatchContext, Profile};
 use corim::types::common::MeasuredElement;
 use corim::types::corim::ProfileChoice;
 use corim::types::environment::EnvironmentMap;
@@ -17,6 +17,10 @@ use corim::validate::{
     apply_endorsement_series, apply_endorsement_series_with_profile, match_reference_values,
     match_reference_values_with_profile, EvidenceClaim,
 };
+
+fn ctx() -> MatchContext {
+    MatchContext::new()
+}
 
 // ---------------------------------------------------------------------------
 // Test profiles
@@ -45,6 +49,7 @@ impl Profile for AlwaysMatchProfile {
         &self,
         _reference: &MeasurementMap,
         _evidence: &MeasurementMap,
+        _ctx: &MatchContext,
     ) -> Option<bool> {
         Some(true)
     }
@@ -62,6 +67,7 @@ impl Profile for AlwaysRejectProfile {
         &self,
         _reference: &MeasurementMap,
         _evidence: &MeasurementMap,
+        _ctx: &MatchContext,
     ) -> Option<bool> {
         Some(false)
     }
@@ -113,7 +119,7 @@ fn with_profile_none_matches_default_behavior_on_match() {
     let evidence = vec![evidence_with_digest(0xAA)];
 
     let default = match_reference_values(&triples, &evidence);
-    let with_none = match_reference_values_with_profile(&triples, &evidence, None);
+    let with_none = match_reference_values_with_profile(&triples, &evidence, None, &ctx());
 
     assert_eq!(default.len(), 1);
     assert_eq!(with_none.len(), default.len());
@@ -125,7 +131,7 @@ fn with_profile_none_matches_default_behavior_on_mismatch() {
     let evidence = vec![evidence_with_digest(0xBB)];
 
     let default = match_reference_values(&triples, &evidence);
-    let with_none = match_reference_values_with_profile(&triples, &evidence, None);
+    let with_none = match_reference_values_with_profile(&triples, &evidence, None, &ctx());
 
     assert_eq!(default.len(), 0);
     assert_eq!(with_none.len(), 0);
@@ -140,8 +146,9 @@ fn passthrough_profile_returns_none_so_defers_to_core() {
     let evidence_miss = vec![evidence_with_digest(0xBB)];
 
     let claims_match =
-        match_reference_values_with_profile(&triples, &evidence_match, Some(&profile));
-    let claims_miss = match_reference_values_with_profile(&triples, &evidence_miss, Some(&profile));
+        match_reference_values_with_profile(&triples, &evidence_match, Some(&profile), &ctx());
+    let claims_miss =
+        match_reference_values_with_profile(&triples, &evidence_miss, Some(&profile), &ctx());
 
     assert_eq!(
         claims_match.len(),
@@ -166,7 +173,8 @@ fn always_match_profile_overrides_core_mismatch() {
     assert_eq!(core_claims.len(), 0);
 
     // Profile says yes
-    let profile_claims = match_reference_values_with_profile(&triples, &evidence, Some(&profile));
+    let profile_claims =
+        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
     assert_eq!(profile_claims.len(), 1, "AlwaysMatch should force a match");
 }
 
@@ -181,7 +189,8 @@ fn always_reject_profile_blocks_core_match() {
     assert_eq!(core_claims.len(), 1);
 
     // Profile says no
-    let profile_claims = match_reference_values_with_profile(&triples, &evidence, Some(&profile));
+    let profile_claims =
+        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
     assert_eq!(
         profile_claims.len(),
         0,
@@ -194,7 +203,7 @@ fn empty_triples_with_profile_yields_empty() {
     let profile = AlwaysMatchProfile { id: test_id() };
     let evidence = vec![evidence_with_digest(0xAA)];
 
-    let claims = match_reference_values_with_profile(&[], &evidence, Some(&profile));
+    let claims = match_reference_values_with_profile(&[], &evidence, Some(&profile), &ctx());
     assert!(claims.is_empty());
 }
 
@@ -226,7 +235,7 @@ fn environment_mismatch_skipped_before_profile_consulted() {
         }],
     }];
 
-    let claims = match_reference_values_with_profile(&triples, &evidence, Some(&profile));
+    let claims = match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
     assert!(
         claims.is_empty(),
         "environment mismatch should still gate the match"
@@ -282,7 +291,8 @@ fn endorsement_series_with_profile_none_matches_default() {
     }];
 
     let default = apply_endorsement_series(&triples, &evidence).unwrap();
-    let with_none = apply_endorsement_series_with_profile(&triples, &evidence, None).unwrap();
+    let with_none =
+        apply_endorsement_series_with_profile(&triples, &evidence, None, &ctx()).unwrap();
 
     assert_eq!(default.len(), 1);
     assert_eq!(with_none.len(), default.len());
@@ -309,7 +319,7 @@ fn endorsement_series_always_match_profile_forces_endorsement() {
     assert_eq!(core.len(), 0, "core should not endorse");
 
     let with_profile =
-        apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile)).unwrap();
+        apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(with_profile.len(), 1, "profile should force endorsement");
 }
 
@@ -334,6 +344,6 @@ fn endorsement_series_always_reject_profile_blocks_endorsement() {
     assert_eq!(core.len(), 1, "core should endorse");
 
     let with_profile =
-        apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile)).unwrap();
+        apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(with_profile.len(), 0, "profile should block endorsement");
 }

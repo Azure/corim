@@ -8,7 +8,7 @@
 use std::collections::BTreeMap;
 
 use corim::cbor::value::Value;
-use corim::profile::Profile;
+use corim::profile::{MatchContext, Profile};
 use corim::types::common::MeasuredElement;
 use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap};
@@ -77,7 +77,7 @@ fn match_measurement_returns_none_when_reference_has_no_intel_keys() {
         authorized_by: None,
     };
     let e = r.clone();
-    assert_eq!(p.match_measurement(&r, &e), None);
+    assert_eq!(p.match_measurement(&r, &e, &MatchContext::new()), None);
 }
 
 #[test]
@@ -94,7 +94,10 @@ fn match_measurement_returns_some_false_when_evidence_missing_intel_key() {
         mval: MeasurementValuesMap::default(),
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
@@ -113,7 +116,10 @@ fn match_measurement_some_true_when_bare_intel_equal_and_core_matches() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(true));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
 }
 
 #[test]
@@ -134,7 +140,10 @@ fn match_measurement_some_false_when_bare_intel_unequal() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
@@ -160,7 +169,10 @@ fn match_measurement_some_true_when_numeric_ge_satisfied() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(true));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
 }
 
 #[test]
@@ -184,7 +196,10 @@ fn match_measurement_some_false_when_numeric_ge_violated() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
@@ -213,7 +228,10 @@ fn match_measurement_some_true_when_mask_eq_passes() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(true));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
 }
 
 #[test]
@@ -241,7 +259,10 @@ fn match_measurement_some_false_when_mask_eq_fails() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
@@ -272,7 +293,10 @@ fn match_measurement_some_true_when_set_member_matches() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(true));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
 }
 
 #[test]
@@ -301,7 +325,10 @@ fn match_measurement_some_false_when_set_not_member_violated() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
@@ -333,7 +360,7 @@ fn match_measurement_returns_none_when_only_intel_key_is_epoch() {
         authorized_by: None,
     };
     // All-Skip → defer to core.
-    assert_eq!(p.match_measurement(&r, &e), None);
+    assert_eq!(p.match_measurement(&r, &e, &MatchContext::new()), None);
 }
 
 #[test]
@@ -369,7 +396,10 @@ fn match_measurement_some_true_intel_pass_skip_mix() {
         },
         authorized_by: None,
     };
-    assert_eq!(p.match_measurement(&r, &e), Some(true));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
 }
 
 #[test]
@@ -397,7 +427,10 @@ fn match_measurement_returns_some_false_when_core_fields_disagree() {
         authorized_by: None,
     };
     // Intel verdict combines true with core_fields_match()==false.
-    assert_eq!(p.match_measurement(&r, &e), Some(false));
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 // --- through match_reference_values_with_profile ---------------------------
@@ -419,8 +452,12 @@ fn dispatch_through_validate_passes_with_intel_profile() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(7));
     let evidence = evidence_with_extras(e_extras);
 
-    let with_profile =
-        match_reference_values_with_profile(std::slice::from_ref(&triple), &evidence, Some(&p));
+    let with_profile = match_reference_values_with_profile(
+        std::slice::from_ref(&triple),
+        &evidence,
+        Some(&p),
+        &MatchContext::new(),
+    );
     assert_eq!(with_profile.len(), 1, "profile-aware match should succeed");
     assert_eq!(with_profile[0].measurements.len(), 1);
 
@@ -457,7 +494,8 @@ fn dispatch_through_validate_rejects_with_intel_profile() {
     );
 
     // With profile: Intel evaluator catches the violation.
-    let with_profile = match_reference_values_with_profile(&[triple], &evidence, Some(&p));
+    let with_profile =
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
     assert!(
         with_profile.is_empty(),
         "Intel profile should reject the pair"
@@ -499,7 +537,8 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
             authorized_by: None,
         }],
     }];
-    let claims = match_reference_values_with_profile(&[triple], &evidence, Some(&p));
+    let claims =
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
     assert_eq!(claims.len(), 1);
 }
 
@@ -534,7 +573,8 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
             authorized_by: None,
         }],
     }];
-    let claims = match_reference_values_with_profile(&[triple], &evidence, Some(&p));
+    let claims =
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
     assert!(claims.is_empty(), "core digest mismatch should reject");
 }
 

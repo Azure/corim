@@ -13,7 +13,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cbor;
 use crate::error::ValidationError;
-use crate::profile::Profile;
+use crate::profile::{MatchContext, Profile};
 use crate::types::comid::ComidTag;
 use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
@@ -321,12 +321,14 @@ pub struct EvidenceClaim {
 ///
 /// ```ignore
 /// let profile = registry.get(corim.profile.as_ref()?);
-/// let claims = match_reference_values_with_profile(&triples, &evidence, profile);
+/// let ctx = MatchContext::system_now();
+/// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx);
 /// ```
 pub fn match_reference_values_with_profile(
     ref_triples: &[ReferenceTriple],
     evidence: &[EvidenceClaim],
     profile: Option<&dyn Profile>,
+    ctx: &MatchContext,
 ) -> Vec<CorroboratedClaim> {
     let mut corroborated = Vec::new();
 
@@ -338,7 +340,7 @@ pub fn match_reference_values_with_profile(
 
             let mut matched_measurements = Vec::new();
             for ref_meas in triple.measurements() {
-                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile) {
+                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile, ctx) {
                     matched_measurements.push(ref_meas.clone());
                 }
             }
@@ -362,9 +364,10 @@ fn measurement_matches_with_profile(
     reference: &MeasurementMap,
     evidence: &[MeasurementMap],
     profile: Option<&dyn Profile>,
+    ctx: &MatchContext,
 ) -> bool {
     evidence.iter().any(
-        |ev| match profile.and_then(|p| p.match_measurement(reference, ev)) {
+        |ev| match profile.and_then(|p| p.match_measurement(reference, ev, ctx)) {
             Some(verdict) => verdict,
             None => single_measurement_matches(reference, ev),
         },
@@ -394,7 +397,7 @@ pub fn apply_endorsement_series(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
     evidence: &[EvidenceClaim],
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
-    apply_endorsement_series_with_profile(ces_triples, evidence, None)
+    apply_endorsement_series_with_profile(ces_triples, evidence, None, &MatchContext::new())
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
@@ -408,6 +411,7 @@ pub fn apply_endorsement_series_with_profile(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
     evidence: &[EvidenceClaim],
     profile: Option<&dyn Profile>,
+    ctx: &MatchContext,
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
 
@@ -426,7 +430,8 @@ pub fn apply_endorsement_series_with_profile(
         validate_series_mkeys(triple.series())?;
 
         for ev in &matching_evidence {
-            if let Some(addition) = find_matching_series(triple.series(), &ev.measurements, profile)
+            if let Some(addition) =
+                find_matching_series(triple.series(), &ev.measurements, profile, ctx)
             {
                 endorsed.push(EndorsedClaim {
                     environment: condition.environment.clone(),
@@ -478,10 +483,11 @@ fn find_matching_series(
     series: &[ConditionalSeriesRecord],
     evidence_measurements: &[MeasurementMap],
     profile: Option<&dyn Profile>,
+    ctx: &MatchContext,
 ) -> Option<Vec<MeasurementMap>> {
     for record in series {
         let all_match = record.selection().iter().all(|sel| match profile {
-            Some(_) => measurement_matches_with_profile(sel, evidence_measurements, profile),
+            Some(_) => measurement_matches_with_profile(sel, evidence_measurements, profile, ctx),
             None => measurement_matches(sel, evidence_measurements),
         });
 

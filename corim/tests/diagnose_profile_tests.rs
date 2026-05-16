@@ -9,7 +9,7 @@
 use corim::cbor::encode;
 use corim::cbor::value::{Tagged, Value};
 use corim::diagnose::{inspect, Severity};
-use corim::profile::{Profile, ProfileRegistry};
+use corim::profile::{MatchContext, Profile, ProfileRegistry};
 use corim::types::corim::ProfileChoice;
 use corim::types::measurement::MeasurementMap;
 use corim::types::tags::{TAG_COMID, TAG_CORIM};
@@ -31,7 +31,12 @@ impl Profile for DemoProfile {
             None
         }
     }
-    fn match_measurement(&self, _r: &MeasurementMap, _e: &MeasurementMap) -> Option<bool> {
+    fn match_measurement(
+        &self,
+        _r: &MeasurementMap,
+        _e: &MeasurementMap,
+        _ctx: &MatchContext,
+    ) -> Option<bool> {
         None
     }
 }

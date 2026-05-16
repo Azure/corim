@@ -43,7 +43,7 @@ use alloc::format;
 use alloc::string::{String, ToString};
 
 use corim::cbor::value::Value;
-use corim::profile::Profile;
+use corim::profile::{MatchContext, Profile};
 use corim::types::corim::ProfileChoice;
 use corim::types::measurement::MeasurementMap;
 
@@ -195,6 +195,7 @@ impl Profile for IntelProfile {
         &self,
         reference: &MeasurementMap,
         evidence: &MeasurementMap,
+        ctx: &MatchContext,
     ) -> Option<bool> {
         let mut verdicts: alloc::vec::Vec<eval::Verdict> = alloc::vec::Vec::new();
         for (key, ref_val) in reference.mval.extra_entries.iter() {
@@ -204,7 +205,7 @@ impl Profile for IntelProfile {
                 continue;
             }
             match evidence.mval.extra_entries.get(key) {
-                Some(ev_val) => verdicts.push(eval::evaluate_one_key(ref_val, ev_val)),
+                Some(ev_val) => verdicts.push(eval::evaluate_one_key(ref_val, ev_val, ctx)),
                 None => return Some(false),
             }
         }
