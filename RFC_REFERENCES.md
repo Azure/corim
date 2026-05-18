@@ -29,7 +29,8 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §4 | `corim-map` (unsigned CoRIM) | ✅ Full | `types/corim.rs` → `CorimMap` |
 | §4.1.1 | `corim-id` | ✅ Full | `types/corim.rs` → `CorimId` |
 | §4.1.3 | `corim-locator-map` | ✅ Full | `types/corim.rs` → `CorimLocator` |
-| §4.1.4 | `profile` | ✅ Full | `types/corim.rs` → `ProfileChoice` |
+| §4.1.4 | `profile` (wire format) | ✅ Full | `types/corim.rs` → `ProfileChoice` |
+| §4.1.4 | Profile extension framework | ✅ Full | `profile.rs` → `Profile`, `ProfileRegistry`, `MatchContext` |
 | §4.1.5 | `entity-map` (CoRIM) | ✅ Full | `types/common.rs` → `EntityMap` |
 | §4.2 | Signed CoRIM (`#6.18`) | ✅ Full (no crypto) | `types/signed.rs` → `CoseSign1Corim`, `SignedCorimBuilder` |
 | §5 | `concise-mid-tag` (CoMID) | ✅ Full | `types/comid.rs` → `ComidTag` |
@@ -58,7 +59,9 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §9 | Appraisal / Validation | ✅ Partial | `validate.rs` |
 | §9.2 | Input validation | ✅ Full | `validate.rs` → `decode_and_validate` |
 | §9.3.3 | Reference value matching | ✅ Full | `validate.rs` → `match_reference_values` |
+| §9.3.3 | Profile-aware reference value matching | ✅ Full | `validate.rs` → `match_reference_values_with_profile` |
 | §9.3.4.3 | CES application | ✅ Full | `validate.rs` → `apply_endorsement_series` |
+| §9.3.4.3 | Profile-aware CES application | ✅ Full | `validate.rs` → `apply_endorsement_series_with_profile` |
 | §9.4.2 | Environment matching | ✅ Full | `validate.rs` → `environment_matches` |
 | §9.4.6 | Measurement matching | ✅ Full | `validate.rs` → `measurement_matches` |
 | §9.4.6.1.2 | SVN comparison | ✅ Full | `validate.rs` → `svn_matches` |
@@ -69,7 +72,7 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 
 | Section | Topic | Reason |
 |---------|-------|--------|
-| CDDL `$$*-extension` sockets | Extension points | Deferred; unknown keys silently skipped for forward-compat |
+| CDDL `$$*-extension` sockets | Extension points | Profile-agnostic core skips unknown keys for forward-compat; profile-aware appraisal interprets them via the registered profile's `match_measurement` (see `profile.rs`). |
 
 #### ⚠️ Draft Tracking Notes
 
