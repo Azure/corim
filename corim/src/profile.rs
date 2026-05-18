@@ -15,15 +15,28 @@
 //! profile-defined keys verbatim via the
 //! [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
 //! field but does **not** interpret or appraise them. Profile-aware
-//! semantics live in separate crates that implement the [`Profile`]
+//! semantics live in dedicated modules that implement the [`Profile`]
 //! trait and register an instance with a [`ProfileRegistry`]. The
 //! registry is then passed to the validate/diagnose entry points that
 //! accept it.
 //!
-//! # Example
+//! # First-party profiles
 //!
-//! A minimal no-op profile that recognizes its identifier but defers
-//! all behavior to defaults:
+//! First-party profile implementations ship inside this crate behind
+//! opt-in Cargo features:
+//!
+//! | Feature           | Module                                        | Spec                                    |
+//! |-------------------|-----------------------------------------------|-----------------------------------------|
+//! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-03` |
+//!
+//! Third-party profiles are first-class — the [`Profile`](crate::profile::Profile) trait is
+//! public and stable, and out-of-tree crates may publish their own
+//! profile implementations without coordinating with this crate.
+//!
+//! # Minimal example
+//!
+//! A no-op profile that recognises its identifier but defers all
+//! behaviour to the crate's defaults:
 //!
 //! ```rust
 //! use corim::profile::{Profile, ProfileRegistry};
@@ -43,6 +56,97 @@
 //! registry.register(Box::new(profile));
 //! assert_eq!(registry.len(), 1);
 //! ```
+//!
+//! # Writing your own profile
+//!
+//! Three trait methods govern profile behaviour. Only
+//! [`Profile::identifier`](crate::profile::Profile::identifier) is required;
+//! the others carry no-op defaults and can be left out if not needed.
+//!
+//! ## 1. `identifier` (required)
+//!
+//! Return a stable [`ProfileChoice`][crate::types::corim::ProfileChoice] (URI
+//! or OID). The registry uses this as a map key, so calls must always return
+//! the same value for a given instance. Typically this is built once in the
+//! constructor and returned by reference.
+//!
+//! ## 2. `match_measurement` (optional, for appraisal)
+//!
+//! Override when the profile defines a custom matching policy for one
+//! or more keys in
+//! [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].
+//! The contract is a three-valued verdict:
+//!
+//! - `Some(true)` — the pair satisfies the profile's policy AND any
+//!   core structural fields agree. The pair is treated as a match.
+//! - `Some(false)` — the profile rejects the pair (e.g. an operator
+//!   expression failed, or a required extra key is absent from
+//!   evidence). The pair is NOT a match; no fallback runs.
+//! - `None` — the profile has nothing to say about this pair (e.g.
+//!   the reference contains no profile-specific keys). The crate falls
+//!   back to the default exact-match logic used by
+//!   [`crate::validate::match_reference_values`].
+//!
+//! When combining a profile-specific verdict with core structural
+//! checks, call [`crate::validate::core_fields_match`] to evaluate the
+//! non-extension fields (`mkey`, `digests`, `svn`, etc.) — this keeps
+//! profile implementations from accidentally bypassing core
+//! invariants. The [`intel::IntelProfile`](crate::profile::intel::IntelProfile)
+//! implementation is a worked example of this composition pattern.
+//!
+//! ### Per-call context: [`MatchContext`](crate::profile::MatchContext)
+//!
+//! [`MatchContext`](crate::profile::MatchContext) carries verifier-side state
+//! that profiles may need but shouldn't own (currently just
+//! `now: Option<CborTime>` for epoch-based comparisons). The type is
+//! `#[non_exhaustive]` so new fields can be added without breaking existing
+//! implementations. Profiles that don't need any context can ignore the
+//! parameter.
+//!
+//! When `MatchContext::now` is `None` (no clock available), time-based
+//! reference values should return a "skip" verdict — i.e. behave as if
+//! the key were absent — rather than failing closed, so a verifier
+//! running without a clock can still appraise the non-time keys. See
+//! `intel::eval` for one implementation of this policy.
+//!
+//! ## 3. `diagnose_mval_entry` (optional, for `--diagnose`)
+//!
+//! Override to provide human-readable labels for profile-defined
+//! integer keys in the `--diagnose` walker output. The walker calls
+//! this for every entry in `extra_entries`; return `Some(label)` for
+//! keys this profile recognises, `None` for everything else (the
+//! walker falls back to `"extension key {n}"`).
+//!
+//! This method is independent of `match_measurement` — a profile may
+//! provide pretty-printing only (no matching policy) or vice versa.
+//!
+//! ## Registering and dispatching
+//!
+//! Construct a [`ProfileRegistry`](crate::profile::ProfileRegistry) once at
+//! application startup and register every profile the application needs to
+//! understand:
+//!
+//! ```no_run
+//! use corim::profile::ProfileRegistry;
+//! # use corim::profile::Profile;
+//! # use corim::types::corim::ProfileChoice;
+//! # struct MyProfile;
+//! # impl Profile for MyProfile {
+//! #     fn identifier(&self) -> &ProfileChoice { todo!() }
+//! # }
+//!
+//! let mut registry = ProfileRegistry::new();
+//! registry.register(Box::new(MyProfile));
+//! // ... pass `&registry` to diagnose / validate entry points.
+//! ```
+//!
+//! At appraisal time, look the profile up by the manifest's `profile`
+//! field and pass it to the `*_with_profile` validate entry points
+//! (e.g. [`crate::validate::match_reference_values_with_profile`]).
+//! Those functions are generic over `P: ?Sized + Profile`, so the
+//! `&(dyn Profile + Send + Sync)` reference returned by
+//! [`ProfileRegistry::get`](crate::profile::ProfileRegistry::get) flows
+//! through directly without a cast.
 
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;

@@ -84,6 +84,54 @@ This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 
 ---
 
+## Profile Specifications
+
+CoRIM profiles are identified by URI or OID via the `corim-map.profile`
+field (§4.1.4) and define additional measurement-values keys, expression
+tags, and appraisal semantics. Profile-aware behavior is opt-in via
+Cargo features and registered with a `corim::profile::ProfileRegistry`.
+
+### draft-cds-rats-intel-corim-profile-03 — Intel CoRIM Profile
+
+| | |
+|-|-|
+| **Status** | Internet-Draft |
+| **Version implemented** | **-03** |
+| **URL** | https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-03.html |
+| **Profile OID** | `2.16.840.1.113741.1.16.1` |
+| **Feature gate** | `corim/profile-intel` (opt-in) |
+| **Rust module** | `corim::profile::intel` |
+
+#### Sections Implemented
+
+| Section | Topic | Status | Rust Item |
+|---------|-------|--------|-----------|
+| §4.1 | Profile identifier (OID) | ✅ Full | `intel::INTEL_PROFILE_OID_DER`, `IntelProfile::identifier` |
+| §8.1.2 | Numeric operators (`gt`/`ge`/`lt`/`le`) | ✅ Full | `Expression::Numeric` |
+| §8.1.3 | Object-in-set (`member`/`not-member`) | ✅ Full | `Expression::Set` |
+| §8.1.3 | Set-of-set (`subset`/`superset`/`disjoint`) | ⚠️ Decode-only | `Expression::SetOfSet`; evaluator returns `Skip` (no §8.2 key uses them) |
+| §8.1.4.1 | `tdate` comparison | ✅ Full | `Expression::Tdate` |
+| §8.1.4.2 | Epoch comparison (default verifier-time) | ✅ Full | `Expression::Epoch` + `MatchContext::now` |
+| §8.1.5 | `mask-eq` (3-element form) | ✅ Full | `Expression::Mask` |
+| §8.2 | All 17 `measurement-values-map` extension keys | ✅ Labelled + matched | `intel::MVAL_TEE_*` constants, `IntelProfile::match_measurement` |
+| §9.1 | Bare-value equality fallback | ✅ Full | `intel::eval` |
+
+#### Not Implemented
+
+| Item | Reason |
+|------|--------|
+| Alternate `epoch-id` schemes (non-default epoch) | No §8.2 key uses them; evaluator returns `Skip` |
+| Profile-typed accessors on `MeasurementValuesMap` | Out of scope; values stay in `extra_entries` |
+
+#### ⚠️ Draft Tracking Notes
+
+This is an **Internet-Draft**, not a finalized RFC. When a new revision
+is published, diff §8.1 (expression operator codes), §8.2 (key
+assignments), and the profile OID against the constants in
+`corim/src/profile/intel/{mod,expression}.rs`.
+
+---
+
 ## CBOR Encoding
 
 ### RFC 8949 — Concise Binary Object Representation (CBOR)
