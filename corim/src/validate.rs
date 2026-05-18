@@ -324,10 +324,16 @@ pub struct EvidenceClaim {
 /// let ctx = MatchContext::system_now();
 /// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx);
 /// ```
-pub fn match_reference_values_with_profile(
+///
+/// The `P: ?Sized + Profile` bound lets callers pass any of:
+/// `&dyn Profile`, `&(dyn Profile + Send + Sync)` (e.g. from
+/// [`crate::profile::ProfileRegistry::get`]), or `&SomeConcreteProfile`.
+/// When passing `None`, the type must be annotated:
+/// `None::<&dyn Profile>`.
+pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     ref_triples: &[ReferenceTriple],
     evidence: &[EvidenceClaim],
-    profile: Option<&dyn Profile>,
+    profile: Option<&P>,
     ctx: &MatchContext,
 ) -> Vec<CorroboratedClaim> {
     let mut corroborated = Vec::new();
@@ -360,10 +366,10 @@ pub fn match_reference_values_with_profile(
 /// Profile-aware analogue of [`measurement_matches`]: for each evidence
 /// entry, asks the profile first; on `None`, falls back to
 /// [`single_measurement_matches`].
-fn measurement_matches_with_profile(
+fn measurement_matches_with_profile<P: ?Sized + Profile>(
     reference: &MeasurementMap,
     evidence: &[MeasurementMap],
-    profile: Option<&dyn Profile>,
+    profile: Option<&P>,
     ctx: &MatchContext,
 ) -> bool {
     evidence.iter().any(
@@ -397,7 +403,12 @@ pub fn apply_endorsement_series(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
     evidence: &[EvidenceClaim],
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
-    apply_endorsement_series_with_profile(ces_triples, evidence, None, &MatchContext::new())
+    apply_endorsement_series_with_profile::<dyn Profile>(
+        ces_triples,
+        evidence,
+        None,
+        &MatchContext::new(),
+    )
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
@@ -405,12 +416,12 @@ pub fn apply_endorsement_series(
 /// `selection` entry against evidence. Per-pair semantics are identical
 /// to those of [`match_reference_values_with_profile`].
 ///
-/// Pass `None` for `profile` to get behavior identical to
-/// [`apply_endorsement_series`].
-pub fn apply_endorsement_series_with_profile(
+/// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
+/// to [`apply_endorsement_series`].
+pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
     evidence: &[EvidenceClaim],
-    profile: Option<&dyn Profile>,
+    profile: Option<&P>,
     ctx: &MatchContext,
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
@@ -479,10 +490,10 @@ fn validate_series_mkeys(series: &[ConditionalSeriesRecord]) -> Result<(), Valid
 /// When `profile` is `Some`, each `selection` entry is compared via
 /// [`measurement_matches_with_profile`]; otherwise the default
 /// [`measurement_matches`] is used.
-fn find_matching_series(
+fn find_matching_series<P: ?Sized + Profile>(
     series: &[ConditionalSeriesRecord],
     evidence_measurements: &[MeasurementMap],
-    profile: Option<&dyn Profile>,
+    profile: Option<&P>,
     ctx: &MatchContext,
 ) -> Option<Vec<MeasurementMap>> {
     for record in series {

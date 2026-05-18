@@ -119,7 +119,12 @@ fn with_profile_none_matches_default_behavior_on_match() {
     let evidence = vec![evidence_with_digest(0xAA)];
 
     let default = match_reference_values(&triples, &evidence);
-    let with_none = match_reference_values_with_profile(&triples, &evidence, None, &ctx());
+    let with_none = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        None::<&dyn corim::profile::Profile>,
+        &ctx(),
+    );
 
     assert_eq!(default.len(), 1);
     assert_eq!(with_none.len(), default.len());
@@ -131,7 +136,12 @@ fn with_profile_none_matches_default_behavior_on_mismatch() {
     let evidence = vec![evidence_with_digest(0xBB)];
 
     let default = match_reference_values(&triples, &evidence);
-    let with_none = match_reference_values_with_profile(&triples, &evidence, None, &ctx());
+    let with_none = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        None::<&dyn corim::profile::Profile>,
+        &ctx(),
+    );
 
     assert_eq!(default.len(), 0);
     assert_eq!(with_none.len(), 0);
@@ -291,8 +301,13 @@ fn endorsement_series_with_profile_none_matches_default() {
     }];
 
     let default = apply_endorsement_series(&triples, &evidence).unwrap();
-    let with_none =
-        apply_endorsement_series_with_profile(&triples, &evidence, None, &ctx()).unwrap();
+    let with_none = apply_endorsement_series_with_profile(
+        &triples,
+        &evidence,
+        None::<&dyn corim::profile::Profile>,
+        &ctx(),
+    )
+    .unwrap();
 
     assert_eq!(default.len(), 1);
     assert_eq!(with_none.len(), default.len());
