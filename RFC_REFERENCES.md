@@ -6,7 +6,7 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 - The implementation adds support for a new specification
 - An RFC errata affects our implementation
 
-**Last reviewed**: April 17, 2026
+**Last reviewed**: May 18, 2026
 
 ---
 
