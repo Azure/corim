@@ -33,11 +33,8 @@
 //! `#6.0(text)`, and numeric times may appear as either bare integer/float
 //! or `#6.1(number)`; both forms are accepted on decode.
 
-use alloc::format;
-use alloc::string::String;
-use alloc::vec::Vec;
-
-use corim::cbor::value::Value;
+use crate::cbor::value::Value;
+use crate::nostd_prelude::*;
 
 /// CBOR tag number used by every Intel comparison expression (§8.1).
 pub const TAG_INTEL_EXPRESSION: u64 = 60010;
@@ -517,8 +514,6 @@ fn s_plural(n: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloc::boxed::Box;
-    use alloc::vec;
 
     fn expr(items: Vec<Value>) -> Value {
         Value::Tag(TAG_INTEL_EXPRESSION, Box::new(Value::Array(items)))

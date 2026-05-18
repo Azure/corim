@@ -43,12 +43,12 @@
 //! follows the RATS verifier guidance that an unrecognised reference
 //! value MUST NOT be silently dropped.
 
-extern crate alloc;
+use crate::cbor::value::Value;
+#[allow(unused_imports)]
+use crate::nostd_prelude::*;
+use crate::profile::MatchContext;
 
-use corim::cbor::value::Value;
-use corim::profile::MatchContext;
-
-use crate::expression::{Expression, Numeric, NumericOp, SetOp, TAG_INTEL_EXPRESSION};
+use super::expression::{Expression, Numeric, NumericOp, SetOp, TAG_INTEL_EXPRESSION};
 
 /// Outcome of evaluating one (reference, evidence) pair for a single
 /// Intel `extra_entries` key.
@@ -396,9 +396,8 @@ pub(crate) fn combine(verdicts: &[Verdict]) -> Option<bool> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::expression::{NumericOp, SetOp};
     use super::*;
-    use crate::expression::{NumericOp, SetOp};
-    use alloc::vec;
 
     /// Default-context wrapper so existing tests stay 2-arg.
     /// The `MatchContext::new()` default has `now = None`, which
@@ -434,7 +433,7 @@ mod tests {
     // -- numeric ------------------------------------------------------------
 
     fn make_expr_tag(body: Value) -> Value {
-        Value::Tag(TAG_INTEL_EXPRESSION, alloc::boxed::Box::new(body))
+        Value::Tag(TAG_INTEL_EXPRESSION, Box::new(body))
     }
 
     #[test]
@@ -575,7 +574,7 @@ mod tests {
     }
 
     fn ctx_at(epoch_secs: i64) -> MatchContext {
-        MatchContext::new().with_now(corim::types::common::CborTime::new(epoch_secs))
+        MatchContext::new().with_now(crate::types::common::CborTime::new(epoch_secs))
     }
 
     #[test]
@@ -628,7 +627,7 @@ mod tests {
     fn epoch_evidence_accepts_tag_1_int() {
         // RFC 8949 §3.4.2 epoch-time tag wrapping an integer.
         let r = epoch_expr_default(2, 60);
-        let ev = Value::Tag(1, alloc::boxed::Box::new(Value::Integer(999_999_950)));
+        let ev = Value::Tag(1, Box::new(Value::Integer(999_999_950)));
         assert_eq!(
             evaluate_one_key(&r, &ev, &ctx_at(1_000_000_000)),
             Verdict::Pass
@@ -656,10 +655,7 @@ mod tests {
     #[test]
     fn epoch_evidence_accepts_tag_0_text() {
         let r = epoch_expr_default(2, 60);
-        let ev = Value::Tag(
-            0,
-            alloc::boxed::Box::new(Value::Text("2025-01-01T00:00:00Z".into())),
-        );
+        let ev = Value::Tag(0, Box::new(Value::Text("2025-01-01T00:00:00Z".into())));
         assert_eq!(
             evaluate_one_key(&r, &ev, &ctx_at(1735689600)),
             Verdict::Pass
@@ -753,10 +749,7 @@ mod tests {
     fn tdate_evidence_accepts_tag_0_wrap() {
         // Evidence wrapped as #6.0(text) per RFC 8949 §3.4.1.
         let r = tdate_expr(2, "2025-01-01T00:00:00Z");
-        let ev = Value::Tag(
-            0,
-            alloc::boxed::Box::new(Value::Text("2026-01-01T00:00:00Z".into())),
-        );
+        let ev = Value::Tag(0, Box::new(Value::Text("2026-01-01T00:00:00Z".into())));
         assert_eq!(eval_pair(&r, &ev), Verdict::Pass);
     }
 
@@ -897,10 +890,7 @@ mod tests {
     #[test]
     fn malformed_expression_body_fails() {
         // Tag 60010 wrapping a non-array body → decode error → Fail.
-        let r = Value::Tag(
-            TAG_INTEL_EXPRESSION,
-            alloc::boxed::Box::new(Value::Integer(5)),
-        );
+        let r = Value::Tag(TAG_INTEL_EXPRESSION, Box::new(Value::Integer(5)));
         assert_eq!(eval_pair(&r, &Value::Integer(5)), Verdict::Fail);
     }
 

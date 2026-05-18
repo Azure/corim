@@ -1,25 +1,24 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#![cfg_attr(not(feature = "std"), no_std)]
-#![deny(missing_docs)]
-
-//! Intel CoRIM profile plug-in for the [`corim`] crate.
+//! Intel CoRIM profile (`draft-cds-rats-intel-corim-profile-03`,
+//! profile OID `2.16.840.1.113741.1.16.1`).
 //!
-//! Implements the [Intel Profile for Remote Attestation][spec]
-//! (`draft-cds-rats-intel-corim-profile-03`, profile OID
-//! `2.16.840.1.113741.1.16.1`).
+//! Gated on the `profile-intel` Cargo feature. Provides:
 //!
-//! This crate is a thin profile registration: it teaches `corim` to
-//! recognize the Intel profile identifier and to render Intel-defined
-//! `measurement-values-map` extension keys in `--diagnose` output. The
-//! core `corim` crate continues to preserve every Intel-defined key
+//! - [`IntelProfile`] — the [`Profile`] implementation, registerable
+//!   with [`ProfileRegistry`](super::ProfileRegistry).
+//! - [`expression`] — the `#6.60010` operator-expression decoder used
+//!   by Intel-defined `measurement-values-map` extension keys.
+//! - Internal per-key evaluator (see `eval` module, private).
+//!
+//! The core `corim` crate already preserves every Intel-defined key
 //! verbatim in
-//! [`MeasurementValuesMap::extra_entries`][corim::types::measurement::MeasurementValuesMap::extra_entries];
-//! this crate only provides the human-readable labels.
+//! [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries];
+//! this module adds spec-aware labelling for diagnose output and
+//! profile-aware matching semantics.
 //!
-//! Typed accessors, the `#6.60010` expression tag, and profile-aware
-//! matching live in follow-up crates and are not implemented here.
+//! [Intel Profile for Remote Attestation][spec]
 //!
 //! [spec]: https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-03.html
 //!
@@ -28,7 +27,7 @@
 //! ```no_run
 //! use corim::diagnose;
 //! use corim::profile::ProfileRegistry;
-//! use corim_profile_intel::IntelProfile;
+//! use corim::profile::intel::IntelProfile;
 //!
 //! # let bytes: Vec<u8> = Vec::new();
 //! let mut registry = ProfileRegistry::new();
@@ -38,14 +37,11 @@
 //! print!("{}", report);
 //! ```
 
-extern crate alloc;
-use alloc::format;
-use alloc::string::{String, ToString};
-
-use corim::cbor::value::Value;
-use corim::profile::{MatchContext, Profile};
-use corim::types::corim::ProfileChoice;
-use corim::types::measurement::MeasurementMap;
+use crate::cbor::value::Value;
+use crate::nostd_prelude::*;
+use crate::profile::{MatchContext, Profile};
+use crate::types::corim::ProfileChoice;
+use crate::types::measurement::MeasurementMap;
 
 mod eval;
 pub mod expression;
@@ -129,7 +125,7 @@ pub const MVAL_TEE_TCB_COMP_SVN: i64 = -125;
 ///
 /// ```
 /// use corim::profile::ProfileRegistry;
-/// use corim_profile_intel::IntelProfile;
+/// use corim::profile::intel::IntelProfile;
 ///
 /// let mut registry = ProfileRegistry::new();
 /// registry.register(Box::new(IntelProfile::new()));
@@ -163,16 +159,16 @@ impl Profile for IntelProfile {
     /// Profile-aware matching for the Intel CoRIM extension keys.
     ///
     /// Iterates the Intel-defined entries in
-    /// [`reference.mval.extra_entries`][corim::types::measurement::MeasurementValuesMap::extra_entries]
+    /// [`reference.mval.extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
     /// (any integer key recognised by [`intel_mval_name`]) and evaluates
     /// each one against the corresponding entry in `evidence` under the
     /// operator semantics of `#6.60010(...)` expressions per
-    /// `draft-cds-rats-intel-corim-profile-03` §8.1. See
-    /// [`crate::eval`][mod@eval] for the per-key verdict policy.
+    /// `draft-cds-rats-intel-corim-profile-03` §8.1. See the `eval`
+    /// submodule for the per-key verdict policy.
     ///
     /// Composition with the core structural fields (`mkey`, `digests`,
     /// `svn`, `name`, ...) uses
-    /// [`corim::validate::core_fields_match`]: a `Some(true)` return
+    /// [`crate::validate::core_fields_match`]: a `Some(true)` return
     /// therefore certifies that BOTH the Intel extension constraints AND
     /// the core fields agree between the pair.
     ///
@@ -197,7 +193,7 @@ impl Profile for IntelProfile {
         evidence: &MeasurementMap,
         ctx: &MatchContext,
     ) -> Option<bool> {
-        let mut verdicts: alloc::vec::Vec<eval::Verdict> = alloc::vec::Vec::new();
+        let mut verdicts: Vec<eval::Verdict> = Vec::new();
         for (key, ref_val) in reference.mval.extra_entries.iter() {
             if intel_mval_name(*key).is_none() {
                 // Not an Intel-defined key; ignore (other profiles, or
@@ -210,7 +206,7 @@ impl Profile for IntelProfile {
             }
         }
         match eval::combine(&verdicts) {
-            Some(true) => Some(corim::validate::core_fields_match(reference, evidence)),
+            Some(true) => Some(crate::validate::core_fields_match(reference, evidence)),
             other => other, // Some(false) or None
         }
     }
@@ -321,10 +317,7 @@ mod tests {
         let label = p.diagnose_mval_entry(MVAL_TEE_VENDOR, &Value::Text("Intel".to_string()));
         assert_eq!(label.as_deref(), Some("tee.vendor = \"Intel\""));
 
-        let digest_array = Value::Array(alloc::vec![
-            Value::Integer(1),
-            Value::Bytes(alloc::vec![0u8; 32]),
-        ]);
+        let digest_array = Value::Array(vec![Value::Integer(1), Value::Bytes(vec![0u8; 32])]);
         let label = p.diagnose_mval_entry(MVAL_TEE_MRTEE, &digest_array);
         assert_eq!(label.as_deref(), Some("tee.mrtee = array[2]"));
 

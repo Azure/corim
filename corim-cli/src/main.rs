@@ -77,7 +77,7 @@ fn main() {
         #[allow(unused_mut)]
         let mut registry = corim::profile::ProfileRegistry::new();
         #[cfg(feature = "intel")]
-        registry.register(Box::new(corim_profile_intel::IntelProfile::new()));
+        registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });

@@ -52,6 +52,15 @@ use crate::types::common::CborTime;
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
 
+/// First-party Intel CoRIM profile (`draft-cds-rats-intel-corim-profile`).
+///
+/// Gated on the `profile-intel` Cargo feature. Provides
+/// [`intel::IntelProfile`], the `#6.60010` expression decoder, and the
+/// per-key evaluator.
+#[cfg(feature = "profile-intel")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-intel")))]
+pub mod intel;
+
 // ---------------------------------------------------------------------------
 // MatchContext
 // ---------------------------------------------------------------------------

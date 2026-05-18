@@ -114,7 +114,6 @@ version = "0.1.1"
 dependencies = [
  "clap",
  "corim",
- "corim-profile-intel",
  "hex",
 ]
 
@@ -125,13 +124,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "corim-profile-intel"
-version = "0.1.0"
-dependencies = [
- "corim",
 ]
 
 [[package]]

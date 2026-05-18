@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(feature = "profile-intel")]
+
 //! End-to-end tests: build a CoRIM whose `profile` field is the Intel
 //! OID and verify that `IntelProfile`, when registered, labels Intel
 //! `measurement-values-map` extension keys with their spec names.
@@ -8,12 +10,11 @@
 use corim::cbor::encode;
 use corim::cbor::value::{Tagged, Value};
 use corim::diagnose::{inspect, Severity};
-use corim::profile::ProfileRegistry;
-use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
-
-use corim_profile_intel::{
+use corim::profile::intel::{
     IntelProfile, INTEL_PROFILE_OID_DER, MVAL_TEE_MRSIGNER, MVAL_TEE_MRTEE, MVAL_TEE_VENDOR,
 };
+use corim::profile::ProfileRegistry;
+use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
 
 /// Build a minimal valid CoRIM whose `profile` field is `#6.111(oid)`
 /// with the Intel OID DER bytes, and whose only CoMID has one

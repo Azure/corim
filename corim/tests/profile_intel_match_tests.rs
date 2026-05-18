@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(feature = "profile-intel")]
+
 //! Integration tests for `IntelProfile::match_measurement`, exercised
 //! through `corim::validate::match_reference_values_with_profile` so
 //! the dispatch contract is also covered.
@@ -8,17 +10,16 @@
 use std::collections::BTreeMap;
 
 use corim::cbor::value::Value;
+use corim::profile::intel::{
+    IntelProfile, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ATTRIBUTES, MVAL_TEE_EPOCH, MVAL_TEE_ISVSVN,
+    MVAL_TEE_MRTEE, MVAL_TEE_TCBSTATUS, MVAL_TEE_VENDOR, TAG_INTEL_EXPRESSION,
+};
 use corim::profile::{MatchContext, Profile};
 use corim::types::common::MeasuredElement;
 use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap};
 use corim::types::triples::ReferenceTriple;
 use corim::validate::{match_reference_values, match_reference_values_with_profile, EvidenceClaim};
-
-use corim_profile_intel::{
-    IntelProfile, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ATTRIBUTES, MVAL_TEE_EPOCH, MVAL_TEE_ISVSVN,
-    MVAL_TEE_MRTEE, MVAL_TEE_TCBSTATUS, MVAL_TEE_VENDOR, TAG_INTEL_EXPRESSION,
-};
 
 // --- helpers ---------------------------------------------------------------
 

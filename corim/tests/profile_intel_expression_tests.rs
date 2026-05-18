@@ -1,6 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#![cfg(feature = "profile-intel")]
+
 //! End-to-end: a CoRIM whose `tee.isvsvn` (mval -73) and
 //! `tee.advisory-ids` (mval -89) reference values carry tagged
 //! expressions should be rendered by `--diagnose` with the operator
@@ -9,13 +11,12 @@
 use corim::cbor::encode;
 use corim::cbor::value::{Tagged, Value};
 use corim::diagnose::inspect;
-use corim::profile::ProfileRegistry;
-use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
-
-use corim_profile_intel::{
+use corim::profile::intel::{
     IntelProfile, INTEL_PROFILE_OID_DER, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ISVSVN,
     TAG_INTEL_EXPRESSION,
 };
+use corim::profile::ProfileRegistry;
+use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
 
 fn build_corim_with_expressions() -> Vec<u8> {
     // tagged-numeric-ge: #6.60010([ 2 (ge), 5 ])

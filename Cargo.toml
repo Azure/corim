@@ -3,7 +3,6 @@ members = [
     "corim",
     "corim-macros",
     "corim-cli",
-    "corim-profile-intel",
 ]
 resolver = "2"
 

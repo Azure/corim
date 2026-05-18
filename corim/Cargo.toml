@@ -27,6 +27,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 default = ["std"]
 std = ["serde/std", "thiserror/std"]
 json = ["std", "serde_json"]
+# First-party CoRIM profile: Intel (draft-cds-rats-intel-corim-profile).
+# Adds `corim::profile::intel` with the IntelProfile implementation,
+# the `#6.60010` expression decoder, and the per-key evaluator. Opt-in;
+# does not pull any additional dependencies.
+profile-intel = []
 
 [dependencies]
 corim-macros.workspace = true
