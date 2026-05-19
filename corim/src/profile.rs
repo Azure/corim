@@ -15,8 +15,8 @@
 //! profile-defined keys verbatim via the
 //! [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
 //! field but does **not** interpret or appraise them. Profile-aware
-//! semantics live in dedicated modules that implement the [`Profile`]
-//! trait and register an instance with a [`ProfileRegistry`]. The
+//! semantics live in dedicated modules that implement the [`Profile`](crate::profile::Profile)
+//! trait and register an instance with a [`ProfileRegistry`](crate::profile::ProfileRegistry). The
 //! registry is then passed to the validate/diagnose entry points that
 //! accept it.
 //!

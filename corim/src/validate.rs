@@ -719,7 +719,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 ///
 /// This is the stable public entry point for the per-pair comparison
 /// performed internally by [`match_reference_values`]. It is intended for
-/// out-of-crate [`Profile`][crate::profile::Profile] implementations that
+/// out-of-crate [`Profile`] implementations that
 /// own the extension keys (the negative-integer range in
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries])
 /// but want to delegate the structural fields (`mkey`, `digests`, `svn`,
@@ -731,7 +731,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].
 /// Profile-aware comparison of extension keys is the caller's
 /// responsibility — typically inside a
-/// [`Profile::match_measurement`][crate::profile::Profile::match_measurement]
+/// [`Profile::match_measurement`]
 /// impl that AND-combines its extension verdict with the result of this
 /// function.
 pub fn core_fields_match(reference: &MeasurementMap, evidence: &MeasurementMap) -> bool {

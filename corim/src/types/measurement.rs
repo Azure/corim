@@ -622,7 +622,7 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
 ///
 /// Profile-defined extension keys (per CDDL `$$measurement-values-map-extension`,
 /// e.g. the negative integer range used by the Intel CoRIM profile) are
-/// preserved verbatim in [`extra_entries`] so they round-trip through
+/// preserved verbatim in [`extra_entries`](MeasurementValuesMap::extra_entries) so they round-trip through
 /// decode → encode without loss. The crate itself does not assign any
 /// semantics to extra entries; profile-aware consumers interpret them.
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]

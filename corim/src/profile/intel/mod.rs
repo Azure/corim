@@ -6,9 +6,9 @@
 //!
 //! Gated on the `profile-intel` Cargo feature. Provides:
 //!
-//! - [`IntelProfile`] — the [`Profile`] implementation, registerable
-//!   with [`ProfileRegistry`](super::ProfileRegistry).
-//! - [`expression`] — the `#6.60010` operator-expression decoder used
+//! - [`IntelProfile`](crate::profile::intel::IntelProfile) — the [`Profile`](crate::profile::Profile) implementation, registerable
+//!   with [`ProfileRegistry`](crate::profile::ProfileRegistry).
+//! - [`expression`](crate::profile::intel::expression) — the `#6.60010` operator-expression decoder used
 //!   by Intel-defined `measurement-values-map` extension keys.
 //! - Internal per-key evaluator (see `eval` module, private).
 //!
@@ -121,7 +121,7 @@ pub const MVAL_TEE_TCB_COMP_SVN: i64 = -125;
 /// Intel CoRIM profile implementation.
 ///
 /// Construct with [`IntelProfile::new`] and register with a
-/// [`corim::profile::ProfileRegistry`]:
+/// [`ProfileRegistry`](crate::profile::ProfileRegistry):
 ///
 /// ```
 /// use corim::profile::ProfileRegistry;
