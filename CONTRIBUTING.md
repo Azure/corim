@@ -45,7 +45,7 @@ git clone https://github.com/Azure/corim.git
 cd corim
 cargo build
 
-# Install pre-commit hook (runs fmt + clippy before each commit)
+# Install pre-commit hook (runs fmt + clippy + rustdoc before each commit)
 cp scripts/pre-commit.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit
 
 # Run tests
@@ -54,14 +54,19 @@ cargo test --all
 # Run lints (ALWAYS do this before commit/push — CI will reject failures)
 cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
+RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
 ```
 
 > **⚠️ Before every commit and push**, run:
 > ```bash
-> cargo fmt --all && cargo clippy --workspace -- -D warnings && cargo test --workspace
+> cargo fmt --all && \
+>   cargo clippy --workspace -- -D warnings && \
+>   RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps && \
+>   cargo test --workspace
 > ```
-> The CI pipeline rejects any formatting diffs or clippy warnings.
-> The pre-commit hook automates the fmt + clippy checks.
+> The CI pipeline rejects any formatting diffs, clippy warnings, or
+> rustdoc warnings. The pre-commit hook automates the fmt + clippy + doc
+> checks.
 
 ### Coding Guidelines
 
