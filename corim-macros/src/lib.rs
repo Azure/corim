@@ -19,6 +19,12 @@
 //! Struct-level:
 //! - `#[cbor(tag = <u64>)]` — wrap the serialized form in a CBOR semantic tag
 //! - `#[cbor(non_empty)]` — enforce at least one field is present
+//! - `#[cbor(extras = "<field>")]` — designate a `BTreeMap<i64, Value>` field
+//!   to receive unknown integer map keys on deserialize and to emit them
+//!   on serialize. The named field MUST exist on the struct, MUST NOT carry
+//!   `#[cbor(key = ...)]`, and the consumer crate MUST have `extern crate
+//!   alloc;` in scope. Used to model CDDL extension sockets such as
+//!   `$$measurement-values-map-extension`.
 //!
 //! Field-level:
 //! - `#[cbor(key = <int>)]` — CBOR integer key for this field (required)

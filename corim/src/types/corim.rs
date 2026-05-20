@@ -105,7 +105,7 @@ impl From<[u8; 16]> for CorimId {
 // ---------------------------------------------------------------------------
 
 /// `$profile-type-choice` — URI or OID.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum ProfileChoice {
     /// A URI profile identifier.

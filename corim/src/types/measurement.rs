@@ -619,8 +619,14 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
 // ---------------------------------------------------------------------------
 
 /// `measurement-values-map` — all possible measurement value fields.
+///
+/// Profile-defined extension keys (per CDDL `$$measurement-values-map-extension`,
+/// e.g. the negative integer range used by the Intel CoRIM profile) are
+/// preserved verbatim in [`extra_entries`](MeasurementValuesMap::extra_entries) so they round-trip through
+/// decode → encode without loss. The crate itself does not assign any
+/// semantics to extra entries; profile-aware consumers interpret them.
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
-#[cbor(non_empty)]
+#[cbor(non_empty, extras = "extra_entries")]
 pub struct MeasurementValuesMap {
     /// `version` (key 0).
     #[cbor(key = 0, optional)]
@@ -664,6 +670,14 @@ pub struct MeasurementValuesMap {
     /// `int-range` (key 15).
     #[cbor(key = 15, optional)]
     pub int_range: Option<IntRangeChoice>,
+    /// Profile-defined extension entries. Keyed by the raw integer CBOR
+    /// map key; values are preserved as opaque [`Value`] trees. Populated
+    /// by the deserializer for any integer key not matched by the fields
+    /// above (typically the negative integer range reserved for profile
+    /// extensions). On serialize, these entries are emitted alongside the
+    /// known fields; the byte-level encoder re-sorts all keys per RFC 8949
+    /// §4.2.1, so canonical ordering is preserved regardless of insertion.
+    pub extra_entries: BTreeMap<i64, Value>,
 }
 
 impl MeasurementValuesMap {
@@ -686,6 +700,7 @@ impl MeasurementValuesMap {
             cryptokeys: None,
             integrity_registers: None,
             int_range: None,
+            extra_entries: BTreeMap::new(),
         }
     }
 }
@@ -699,6 +714,9 @@ impl Default for MeasurementValuesMap {
 impl Validate for MeasurementValuesMap {
     fn valid(&self) -> Result<(), String> {
         // CDDL: non-empty<{ ... }>
+        // Extension entries (extra_entries) count toward non-empty as well —
+        // a profile-only mval (e.g. one that only sets a negative-keyed
+        // tee.* field) is a valid CoMID measurement-values-map.
         if self.version.is_none()
             && self.svn.is_none()
             && self.digests.is_none()
@@ -713,6 +731,7 @@ impl Validate for MeasurementValuesMap {
             && self.cryptokeys.is_none()
             && self.integrity_registers.is_none()
             && self.int_range.is_none()
+            && self.extra_entries.is_empty()
         {
             return Err("no measurement value set".into());
         }

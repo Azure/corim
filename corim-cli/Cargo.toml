@@ -29,3 +29,13 @@ path = "src/gen_signed_sample.rs"
 corim = { path = "../corim", version = "0.1.1" }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+
+[features]
+# CLI ships with all first-party CoRIM profiles enabled by default so
+# `--diagnose` labels vendor-defined mval keys by their spec names
+# out of the box. Use `--no-default-features` to disable.
+default = ["intel"]
+# Register the Intel CoRIM profile (draft-cds-rats-intel-corim-profile)
+# in the diagnose registry so `--diagnose` labels Intel tee.* mval keys
+# by their spec names instead of "extension key <N>".
+intel = ["corim/profile-intel"]

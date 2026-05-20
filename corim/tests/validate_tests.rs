@@ -1423,3 +1423,72 @@ fn domain_membership_accessor_methods() {
     assert_eq!(*t.domain_id(), EnvironmentMap::for_class("V", "M"));
     assert_eq!(t.members().len(), 1);
 }
+
+// ===========================================================================
+// validate.rs — core_fields_match public wrapper
+// ===========================================================================
+
+#[test]
+fn core_fields_match_matches_on_equal_svn() {
+    let r = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            svn: Some(SvnChoice::ExactValue(5)),
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    let e = r.clone();
+    assert!(corim::validate::core_fields_match(&r, &e));
+}
+
+#[test]
+fn core_fields_match_rejects_on_unequal_name() {
+    let r = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            name: Some("alpha".into()),
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            name: Some("beta".into()),
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert!(!corim::validate::core_fields_match(&r, &e));
+}
+
+#[test]
+fn core_fields_match_ignores_extra_entries() {
+    // Wrapper is documented as not inspecting extras: if structural fields
+    // match, presence of differing extras must not affect the verdict.
+    let mut r_extras = std::collections::BTreeMap::new();
+    r_extras.insert(-83_i64, corim::cbor::value::Value::Bytes(vec![0x01; 32]));
+    let mut e_extras = std::collections::BTreeMap::new();
+    e_extras.insert(-83_i64, corim::cbor::value::Value::Bytes(vec![0x02; 32]));
+
+    let r = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            name: Some("x".into()),
+            extra_entries: r_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            name: Some("x".into()),
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert!(corim::validate::core_fields_match(&r, &e));
+}
