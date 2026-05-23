@@ -60,6 +60,7 @@ use crate::types::corim::{
     ConciseTagChoice, ConciseTlTag, CorimId, CorimLocator, CorimMap, ProfileChoice,
 };
 use crate::types::coswid::ConciseSwidTag;
+use crate::types::environment::EnvironmentMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
@@ -303,6 +304,54 @@ impl ComidBuilder {
             for t in triples {
                 if t.1.is_empty() {
                     return Err(BuilderError::EmptyList { field: "tag-ids" });
+                }
+            }
+        }
+
+        // strict_links: every condition env must structurally match some
+        // reference-triple env. Reference-triple envs are the only anchor set;
+        // identity/attest-key/dependency/membership/coswid envs are not
+        // considered anchors for this lint.
+        if self.strict_links {
+            let anchors: Vec<&EnvironmentMap> = self
+                .reference_triples
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|t| &t.0)
+                .collect();
+            let is_anchored = |env: &EnvironmentMap| anchors.contains(&env);
+
+            if let Some(ref triples) = self.conditional_endorsement_series {
+                for (i, t) in triples.iter().enumerate() {
+                    if !is_anchored(&t.0.environment) {
+                        return Err(BuilderError::UnanchoredConditionEnv {
+                            triple_kind: "conditional-endorsement-series",
+                            index: i,
+                        });
+                    }
+                }
+            }
+            if let Some(ref triples) = self.endorsed_triples {
+                for (i, t) in triples.iter().enumerate() {
+                    if !is_anchored(&t.0) {
+                        return Err(BuilderError::UnanchoredConditionEnv {
+                            triple_kind: "endorsed",
+                            index: i,
+                        });
+                    }
+                }
+            }
+            if let Some(ref triples) = self.conditional_endorsement {
+                for (i, t) in triples.iter().enumerate() {
+                    for stateful in &t.0 {
+                        if !is_anchored(&stateful.0) {
+                            return Err(BuilderError::UnanchoredConditionEnv {
+                                triple_kind: "conditional-endorsement",
+                                index: i,
+                            });
+                        }
+                    }
                 }
             }
         }
