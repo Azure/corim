@@ -256,3 +256,77 @@ fn comid_builder_default_accepts_unanchored_ces_env() {
         .build()
         .expect("default builder must not enforce link checking");
 }
+
+#[test]
+fn comid_builder_strict_links_rejects_unanchored_endorsed_env() {
+    use corim::error::BuilderError;
+
+    let env_a = EnvironmentMap::for_class("VendorA", "ModelA");
+    let env_b = EnvironmentMap::for_class("VendorB", "ModelB");
+
+    let result = ComidBuilder::new(TagIdChoice::Text("t".into()))
+        .add_reference_triple(ReferenceTriple::new(env_a, vec![one_measurement(1)]))
+        .add_endorsed_triple(EndorsedTriple::new(env_b, vec![one_measurement(2)]))
+        .strict_links(true)
+        .build();
+
+    match result {
+        Err(BuilderError::UnanchoredConditionEnv { triple_kind, index }) => {
+            assert_eq!(triple_kind, "endorsed");
+            assert_eq!(index, 0);
+        }
+        other => panic!("expected UnanchoredConditionEnv(endorsed), got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_strict_links_rejects_unanchored_conditional_endorsement_env() {
+    use corim::error::BuilderError;
+
+    let env_a = EnvironmentMap::for_class("VendorA", "ModelA");
+    let env_b = EnvironmentMap::for_class("VendorB", "ModelB");
+
+    // Two stateful records: the first is anchored, the second is not.
+    let cet = ConditionalEndorsementTriple(
+        vec![
+            StatefulEnvironmentRecord(env_a.clone(), vec![one_measurement(1)]),
+            StatefulEnvironmentRecord(env_b, vec![one_measurement(2)]),
+        ],
+        vec![EndorsedTriple::new(env_a.clone(), vec![one_measurement(3)])],
+    );
+
+    let result = ComidBuilder::new(TagIdChoice::Text("t".into()))
+        .add_reference_triple(ReferenceTriple::new(env_a, vec![one_measurement(1)]))
+        .add_conditional_endorsement(cet)
+        .strict_links(true)
+        .build();
+
+    match result {
+        Err(BuilderError::UnanchoredConditionEnv { triple_kind, index }) => {
+            assert_eq!(triple_kind, "conditional-endorsement");
+            assert_eq!(index, 0);
+        }
+        other => panic!("expected UnanchoredConditionEnv(conditional-endorsement), got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_strict_links_accepts_anchored_endorsed_and_cet() {
+    let env = EnvironmentMap::for_class("VendorA", "ModelA");
+
+    let cet = ConditionalEndorsementTriple(
+        vec![StatefulEnvironmentRecord(
+            env.clone(),
+            vec![one_measurement(1)],
+        )],
+        vec![EndorsedTriple::new(env.clone(), vec![one_measurement(3)])],
+    );
+
+    ComidBuilder::new(TagIdChoice::Text("t".into()))
+        .add_reference_triple(ReferenceTriple::new(env.clone(), vec![one_measurement(1)]))
+        .add_endorsed_triple(EndorsedTriple::new(env, vec![one_measurement(2)]))
+        .add_conditional_endorsement(cet)
+        .strict_links(true)
+        .build()
+        .expect("strict_links should accept anchored endorsed + CET envs");
+}
