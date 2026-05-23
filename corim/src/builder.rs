@@ -6,6 +6,28 @@
 //! Provides a fluent interface for constructing CoRIM and CoMID structures
 //! per draft-ietf-rats-corim-10.
 //!
+//! # Cross-triple environment anchoring (opt-in)
+//!
+//! By default, [`ComidBuilder`] performs no cross-triple checks: any
+//! `EnvironmentMap` may appear in any triple, even if no reference-triple
+//! "characterises" it first. The wire format imposes no such constraint
+//! and verifiers handle mismatches at appraisal time.
+//!
+//! Calling [`ComidBuilder::strict_links`] with `true` enables a builder-side
+//! lint: at [`build`](ComidBuilder::build) time, every condition env in a
+//! conditional-endorsement-series, endorsed, or conditional-endorsement
+//! triple must structurally equal some reference-triple env in the same
+//! CoMID. Mismatch produces [`BuilderError::UnanchoredConditionEnv`].
+//!
+//! The lint uses **exact structural equality** — no subsumption or
+//! wildcard matching. It catches authoring mistakes like typos and
+//! forgotten reference triples; it deliberately does not enforce the
+//! richer matching rules used by verifiers (§6 of the draft). Identity,
+//! attest-key, dependency, membership, and coswid triple envs are not
+//! considered anchors and not checked.
+//!
+//! [`BuilderError::UnanchoredConditionEnv`]: crate::error::BuilderError::UnanchoredConditionEnv
+//!
 //! # Example
 //!
 //! ```rust
