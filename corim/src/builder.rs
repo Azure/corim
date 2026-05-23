@@ -93,6 +93,7 @@ pub struct ComidBuilder {
     coswid_triples: Option<Vec<CoswidTriple>>,
     conditional_endorsement_series: Option<Vec<ConditionalEndorsementSeriesTriple>>,
     conditional_endorsement: Option<Vec<ConditionalEndorsementTriple>>,
+    strict_links: bool,
 }
 
 impl ComidBuilder {
@@ -115,7 +116,20 @@ impl ComidBuilder {
             coswid_triples: None,
             conditional_endorsement_series: None,
             conditional_endorsement: None,
+            strict_links: false,
         }
+    }
+
+    /// Enable cross-triple link checking at `build()` time.
+    ///
+    /// When enabled, every condition environment in a conditional-endorsement-series,
+    /// conditional-endorsement, or endorsed triple must structurally equal some
+    /// reference-triple environment in the same CoMID; otherwise `build()` returns
+    /// [`BuilderError::UnanchoredConditionEnv`]. The wire format does not encode
+    /// this constraint — it is a builder-side lint for catching authoring mistakes.
+    pub fn strict_links(mut self, enable: bool) -> Self {
+        self.strict_links = enable;
+        self
     }
 
     /// Set the tag version (§5.1.1.2). Defaults to 0 if not set.
