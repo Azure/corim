@@ -28,6 +28,55 @@
 //!
 //! [`BuilderError::UnanchoredConditionEnv`]: crate::error::BuilderError::UnanchoredConditionEnv
 //!
+//! # Environment catalog (opt-in)
+//!
+//! For CoMIDs where a single environment appears in multiple triples,
+//! [`ComidBuilder::declare_env`] records an env in a per-builder catalog
+//! and returns an [`EnvRef`] handle. Passing the handle to any
+//! `add_*_for` method records the *intent* that two triples target the
+//! same environment, which yields:
+//!
+//! - Better diagnostics under [`strict_links`](ComidBuilder::strict_links)
+//!   — the lint reports the offending env by label, not by structural diff.
+//! - A single point of truth for late edits — mutating an env in the
+//!   catalog is not supported today, but a future API could.
+//! - A documented call-site signal that two triples are linked (e.g.
+//!   `&cpu` reads clearer than two independent `EnvironmentMap` values).
+//!
+//! `EnvRef`s never reach the wire format. At [`build`](ComidBuilder::build)
+//! time each ref is resolved into an inline [`EnvironmentMap`]; the CBOR
+//! output is identical to what the non-`_for` methods would produce.
+//!
+//! ## Scope of `add_*_for`
+//!
+//! The catalog API covers the seven triple kinds with a single env slot
+//! or a flat list of env slots: reference, endorsed, identity, attest-key,
+//! dependency, membership, coswid. The two complex shapes
+//! ([`ConditionalEndorsementSeriesTriple`] and
+//! [`ConditionalEndorsementTriple`]) embed the env inside a nested record;
+//! their `_for` methods are deliberately not provided. Use
+//! [`env_value`](ComidBuilder::env_value) to retrieve the inline env from
+//! the catalog and pass it to those triples' constructors directly.
+//!
+//! ## Builder scoping
+//!
+//! `EnvRef`s carry an opaque per-builder id. Passing a ref produced by
+//! one [`ComidBuilder`] to a different builder's `add_*_for` method
+//! fails at `build()` time with [`BuilderError::RefFromOtherBuilder`].
+//! Sharing a single environment across multiple CoMIDs is not supported
+//! by this API; clone the [`EnvironmentMap`] instead.
+//!
+//! ## Interaction with `strict_links`
+//!
+//! Refs are resolved *before* the [`strict_links`](ComidBuilder::strict_links)
+//! lint runs. The lint operates on the resolved [`EnvironmentMap`] values
+//! and its promise is unchanged: catalog membership alone does not anchor
+//! an env — only a reference triple does. A ref used in an endorsed/CES/CET
+//! triple still fails the lint unless the *same* env is also referenced
+//! (by inline or ref form) from at least one reference triple.
+//!
+//! [`BuilderError::RefFromOtherBuilder`]: crate::error::BuilderError::RefFromOtherBuilder
+//!
 //! # Example
 //!
 //! ```rust

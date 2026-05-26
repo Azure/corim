@@ -10,6 +10,20 @@ versions.
 
 ### Added
 
+- **Environment catalog on `ComidBuilder`** — opt-in build-time mechanism
+  for sharing one `EnvironmentMap` across multiple triples in a CoMID:
+  - `ComidBuilder::declare_env(label, env) -> Result<EnvRef, _>` registers
+    an env under a unique label and returns an opaque, builder-scoped handle.
+  - Seven new `add_*_for(impl Into<EnvSpec>, ...)` methods (reference,
+    endorsed, identity, attest-key, dependency, membership, coswid) accept
+    either an inline `EnvironmentMap` or an `EnvRef`. Refs are resolved
+    to inline envs at `build()` time; wire format is unchanged.
+  - `ComidBuilder::env_value(&EnvRef)` accessor for retrieving an inline
+    env value to use with `ConditionalEndorsementSeries` /
+    `ConditionalEndorsement` triples (whose nested shapes have no `_for`).
+  - New `BuilderError` variants: `DuplicateEnvLabel`, `DanglingEnvRef`,
+    `RefFromOtherBuilder`. Refs from one builder used on another fail
+    deterministically rather than silently aliasing.
 - **`ComidBuilder::strict_links(bool)`** — opt-in builder-side lint that
   rejects conditional-endorsement-series, endorsed, and
   conditional-endorsement triples whose condition `EnvironmentMap` does
