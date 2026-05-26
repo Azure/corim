@@ -76,7 +76,7 @@ use crate::error::BuilderError;
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
 use crate::types::common::{
-    CborTime, EntityMap, LinkedTagMap, TagIdChoice, TagIdentity, ValidityMap,
+    CborTime, CryptoKey, EntityMap, LinkedTagMap, TagIdChoice, TagIdentity, ValidityMap,
 };
 use crate::types::corim::{
     ConciseTagChoice, ConciseTlTag, CorimId, CorimLocator, CorimMap, ProfileChoice,
@@ -88,7 +88,7 @@ use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
     CoswidTriple, DomainDependencyTriple, DomainMembershipTriple, EndorsedTriple, IdentityTriple,
-    ReferenceTriple, TriplesMap,
+    KeyTripleConditions, ReferenceTriple, TriplesMap,
 };
 use crate::Validate;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -186,6 +186,12 @@ pub struct ComidBuilder {
     next_env_uid: u32,
     // Pending triples added via the `_for` family — resolved at build() time.
     pending_reference: Vec<(EnvSpec, Vec<MeasurementMap>)>,
+    pending_endorsed: Vec<(EnvSpec, Vec<MeasurementMap>)>,
+    pending_identity: Vec<(EnvSpec, Vec<CryptoKey>, Option<KeyTripleConditions>)>,
+    pending_attest_key: Vec<(EnvSpec, Vec<CryptoKey>, Option<KeyTripleConditions>)>,
+    pending_dependency: Vec<(EnvSpec, Vec<EnvSpec>)>,
+    pending_membership: Vec<(EnvSpec, Vec<EnvSpec>)>,
+    pending_coswid: Vec<(EnvSpec, Vec<TagIdChoice>)>,
 }
 
 impl ComidBuilder {
@@ -213,6 +219,12 @@ impl ComidBuilder {
             env_catalog: BTreeMap::new(),
             next_env_uid: 0,
             pending_reference: Vec::new(),
+            pending_endorsed: Vec::new(),
+            pending_identity: Vec::new(),
+            pending_attest_key: Vec::new(),
+            pending_dependency: Vec::new(),
+            pending_membership: Vec::new(),
+            pending_coswid: Vec::new(),
         }
     }
 
@@ -273,6 +285,103 @@ impl ComidBuilder {
     ) -> Self {
         self.pending_reference.push((env.into(), measurements));
         self
+    }
+
+    /// Add an endorsed values triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_endorsed_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        endorsement: Vec<MeasurementMap>,
+    ) -> Self {
+        self.pending_endorsed.push((env.into(), endorsement));
+        self
+    }
+
+    /// Add an identity triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_identity_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        keys: Vec<CryptoKey>,
+        conditions: Option<KeyTripleConditions>,
+    ) -> Self {
+        self.pending_identity.push((env.into(), keys, conditions));
+        self
+    }
+
+    /// Add an attest-key triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_attest_key_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        keys: Vec<CryptoKey>,
+        conditions: Option<KeyTripleConditions>,
+    ) -> Self {
+        self.pending_attest_key.push((env.into(), keys, conditions));
+        self
+    }
+
+    /// Add a domain dependency triple by env-spec. Trustees are also env-specs;
+    /// pass `vec![env_a.into(), env_b_ref.into()]` to mix inline envs and refs.
+    pub fn add_dependency_triple_for(
+        mut self,
+        domain: impl Into<EnvSpec>,
+        trustees: Vec<EnvSpec>,
+    ) -> Self {
+        self.pending_dependency.push((domain.into(), trustees));
+        self
+    }
+
+    /// Add a domain membership triple by env-spec. See [`add_dependency_triple_for`](Self::add_dependency_triple_for).
+    pub fn add_membership_triple_for(
+        mut self,
+        domain: impl Into<EnvSpec>,
+        members: Vec<EnvSpec>,
+    ) -> Self {
+        self.pending_membership.push((domain.into(), members));
+        self
+    }
+
+    /// Add a CoMID-CoSWID linking triple by env-spec.
+    pub fn add_coswid_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        tag_ids: Vec<TagIdChoice>,
+    ) -> Self {
+        self.pending_coswid.push((env.into(), tag_ids));
+        self
+    }
+
+    /// Retrieve the [`EnvironmentMap`] previously declared under `r`.
+    ///
+    /// Use this when constructing complex triple types like
+    /// [`ConditionalEndorsementSeriesTriple`] or [`ConditionalEndorsementTriple`]
+    /// where the env lives inside a nested struct and the
+    /// [`add_*_for`](Self::add_reference_triple_for) family does not apply.
+    /// The returned value is a borrow into the catalog; clone it if you need
+    /// to embed it in a triple constructor.
+    ///
+    /// Returns [`BuilderError::RefFromOtherBuilder`] or
+    /// [`BuilderError::DanglingEnvRef`] for invalid refs.
+    pub fn env_value(&self, r: &EnvRef) -> Result<&EnvironmentMap, BuilderError> {
+        if r.builder_id != self.builder_id {
+            return Err(BuilderError::RefFromOtherBuilder {
+                label: r.label.clone(),
+            });
+        }
+        self.env_catalog
+            .get(&r.label)
+            .map(|(_uid, env)| env)
+            .ok_or_else(|| BuilderError::DanglingEnvRef {
+                label: r.label.clone(),
+            })
+    }
+
+    /// Resolve an [`EnvSpec`] to an owned [`EnvironmentMap`], validating
+    /// builder-scoping and catalog presence for `Ref` variants.
+    fn resolve(&self, spec: EnvSpec) -> Result<EnvironmentMap, BuilderError> {
+        match spec {
+            EnvSpec::Inline(env) => Ok(env),
+            EnvSpec::Ref(r) => self.env_value(&r).cloned(),
+        }
     }
 
     /// Set the tag version (§5.1.1.2). Defaults to 0 if not set.
@@ -380,7 +489,62 @@ impl ComidBuilder {
     ///
     /// Returns an error if no triples have been added, or if any triple
     /// contains an empty list where the CDDL requires `[+ T]`.
-    pub fn build(self) -> Result<ComidTag, BuilderError> {
+    pub fn build(mut self) -> Result<ComidTag, BuilderError> {
+        // Resolve any pending triples added via the `_for` family.
+        // Each EnvSpec::Ref is checked against this builder's catalog and
+        // converted into an inline EnvironmentMap before being merged into
+        // the corresponding self.X_triples list.
+        for (env_spec, measurements) in core::mem::take(&mut self.pending_reference) {
+            let env = self.resolve(env_spec)?;
+            self.reference_triples
+                .get_or_insert_with(Vec::new)
+                .push(ReferenceTriple::new(env, measurements));
+        }
+        for (env_spec, endorsement) in core::mem::take(&mut self.pending_endorsed) {
+            let env = self.resolve(env_spec)?;
+            self.endorsed_triples
+                .get_or_insert_with(Vec::new)
+                .push(EndorsedTriple::new(env, endorsement));
+        }
+        for (env_spec, keys, conditions) in core::mem::take(&mut self.pending_identity) {
+            let env = self.resolve(env_spec)?;
+            self.identity_triples
+                .get_or_insert_with(Vec::new)
+                .push(IdentityTriple::new(env, keys, conditions));
+        }
+        for (env_spec, keys, conditions) in core::mem::take(&mut self.pending_attest_key) {
+            let env = self.resolve(env_spec)?;
+            self.attest_key_triples
+                .get_or_insert_with(Vec::new)
+                .push(AttestKeyTriple::new(env, keys, conditions));
+        }
+        for (domain_spec, trustees_spec) in core::mem::take(&mut self.pending_dependency) {
+            let domain = self.resolve(domain_spec)?;
+            let mut trustees = Vec::with_capacity(trustees_spec.len());
+            for t in trustees_spec {
+                trustees.push(self.resolve(t)?);
+            }
+            self.dependency_triples
+                .get_or_insert_with(Vec::new)
+                .push(DomainDependencyTriple::new(domain, trustees));
+        }
+        for (domain_spec, members_spec) in core::mem::take(&mut self.pending_membership) {
+            let domain = self.resolve(domain_spec)?;
+            let mut members = Vec::with_capacity(members_spec.len());
+            for m in members_spec {
+                members.push(self.resolve(m)?);
+            }
+            self.membership_triples
+                .get_or_insert_with(Vec::new)
+                .push(DomainMembershipTriple::new(domain, members));
+        }
+        for (env_spec, tag_ids) in core::mem::take(&mut self.pending_coswid) {
+            let env = self.resolve(env_spec)?;
+            self.coswid_triples
+                .get_or_insert_with(Vec::new)
+                .push(CoswidTriple::new(env, tag_ids));
+        }
+
         let has_triples = self.reference_triples.is_some()
             || self.endorsed_triples.is_some()
             || self.identity_triples.is_some()
