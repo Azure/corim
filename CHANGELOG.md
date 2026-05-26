@@ -6,6 +6,19 @@ and this project adheres to [SemVer](https://semver.org/spec/v2.0.0.html)
 with the caveat that pre-1.0 releases may include breaking changes in minor
 versions.
 
+## [Unreleased]
+
+### Added
+
+- **`ComidBuilder::strict_links(bool)`** — opt-in builder-side lint that
+  rejects conditional-endorsement-series, endorsed, and
+  conditional-endorsement triples whose condition `EnvironmentMap` does
+  not structurally equal any reference-triple env in the same CoMID.
+  Surfaces as the new
+  [`BuilderError::UnanchoredConditionEnv`](corim/src/error.rs) variant.
+  Default is unchanged (no cross-triple checks); wire format is
+  unaffected.
+
 ## [0.1.1] — 2026-05-04
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.1.1, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.1

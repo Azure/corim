@@ -69,6 +69,20 @@ pub enum BuilderError {
     #[error("validation error: {0}")]
     Validation(String),
 
+    /// A triple with "condition" semantics (e.g. conditional-endorsement-series,
+    /// conditional-endorsement, endorsed) references an environment that does
+    /// not match any reference-triple environment in the same CoMID.
+    ///
+    /// Only produced when `ComidBuilder::strict_links(true)` is set; the wire
+    /// format itself imposes no such constraint.
+    #[error("{triple_kind} triple at index {index} references an environment not characterised by any reference-triple")]
+    UnanchoredConditionEnv {
+        /// Which triple list the offending entry came from.
+        triple_kind: &'static str,
+        /// Position of the entry within that list (0-based).
+        index: usize,
+    },
+
     /// An encoding error occurred during building.
     #[error("encoding error: {0}")]
     Encode(#[from] EncodeError),

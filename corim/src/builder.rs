@@ -6,6 +6,28 @@
 //! Provides a fluent interface for constructing CoRIM and CoMID structures
 //! per draft-ietf-rats-corim-10.
 //!
+//! # Cross-triple environment anchoring (opt-in)
+//!
+//! By default, [`ComidBuilder`] performs no cross-triple checks: any
+//! `EnvironmentMap` may appear in any triple, even if no reference-triple
+//! "characterises" it first. The wire format imposes no such constraint
+//! and verifiers handle mismatches at appraisal time.
+//!
+//! Calling [`ComidBuilder::strict_links`] with `true` enables a builder-side
+//! lint: at [`build`](ComidBuilder::build) time, every condition env in a
+//! conditional-endorsement-series, endorsed, or conditional-endorsement
+//! triple must structurally equal some reference-triple env in the same
+//! CoMID. Mismatch produces [`BuilderError::UnanchoredConditionEnv`].
+//!
+//! The lint uses **exact structural equality** — no subsumption or
+//! wildcard matching. It catches authoring mistakes like typos and
+//! forgotten reference triples; it deliberately does not enforce the
+//! richer matching rules used by verifiers (§6 of the draft). Identity,
+//! attest-key, dependency, membership, and coswid triple envs are not
+//! considered anchors and not checked.
+//!
+//! [`BuilderError::UnanchoredConditionEnv`]: crate::error::BuilderError::UnanchoredConditionEnv
+//!
 //! # Example
 //!
 //! ```rust
@@ -60,6 +82,7 @@ use crate::types::corim::{
     ConciseTagChoice, ConciseTlTag, CorimId, CorimLocator, CorimMap, ProfileChoice,
 };
 use crate::types::coswid::ConciseSwidTag;
+use crate::types::environment::EnvironmentMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
@@ -93,6 +116,7 @@ pub struct ComidBuilder {
     coswid_triples: Option<Vec<CoswidTriple>>,
     conditional_endorsement_series: Option<Vec<ConditionalEndorsementSeriesTriple>>,
     conditional_endorsement: Option<Vec<ConditionalEndorsementTriple>>,
+    strict_links: bool,
 }
 
 impl ComidBuilder {
@@ -115,7 +139,20 @@ impl ComidBuilder {
             coswid_triples: None,
             conditional_endorsement_series: None,
             conditional_endorsement: None,
+            strict_links: false,
         }
+    }
+
+    /// Enable cross-triple link checking at `build()` time.
+    ///
+    /// When enabled, every condition environment in a conditional-endorsement-series,
+    /// conditional-endorsement, or endorsed triple must structurally equal some
+    /// reference-triple environment in the same CoMID; otherwise `build()` returns
+    /// [`BuilderError::UnanchoredConditionEnv`]. The wire format does not encode
+    /// this constraint — it is a builder-side lint for catching authoring mistakes.
+    pub fn strict_links(mut self, enable: bool) -> Self {
+        self.strict_links = enable;
+        self
     }
 
     /// Set the tag version (§5.1.1.2). Defaults to 0 if not set.
@@ -289,6 +326,54 @@ impl ComidBuilder {
             for t in triples {
                 if t.1.is_empty() {
                     return Err(BuilderError::EmptyList { field: "tag-ids" });
+                }
+            }
+        }
+
+        // strict_links: every condition env must structurally match some
+        // reference-triple env. Reference-triple envs are the only anchor set;
+        // identity/attest-key/dependency/membership/coswid envs are not
+        // considered anchors for this lint.
+        if self.strict_links {
+            let anchors: Vec<&EnvironmentMap> = self
+                .reference_triples
+                .as_deref()
+                .unwrap_or(&[])
+                .iter()
+                .map(|t| &t.0)
+                .collect();
+            let is_anchored = |env: &EnvironmentMap| anchors.contains(&env);
+
+            if let Some(ref triples) = self.conditional_endorsement_series {
+                for (i, t) in triples.iter().enumerate() {
+                    if !is_anchored(&t.0.environment) {
+                        return Err(BuilderError::UnanchoredConditionEnv {
+                            triple_kind: "conditional-endorsement-series",
+                            index: i,
+                        });
+                    }
+                }
+            }
+            if let Some(ref triples) = self.endorsed_triples {
+                for (i, t) in triples.iter().enumerate() {
+                    if !is_anchored(&t.0) {
+                        return Err(BuilderError::UnanchoredConditionEnv {
+                            triple_kind: "endorsed",
+                            index: i,
+                        });
+                    }
+                }
+            }
+            if let Some(ref triples) = self.conditional_endorsement {
+                for (i, t) in triples.iter().enumerate() {
+                    for stateful in &t.0 {
+                        if !is_anchored(&stateful.0) {
+                            return Err(BuilderError::UnanchoredConditionEnv {
+                                triple_kind: "conditional-endorsement",
+                                index: i,
+                            });
+                        }
+                    }
                 }
             }
         }
