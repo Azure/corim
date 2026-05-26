@@ -83,6 +83,7 @@ use crate::types::corim::{
 };
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
+use crate::types::measurement::MeasurementMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
@@ -90,6 +91,68 @@ use crate::types::triples::{
     ReferenceTriple, TriplesMap,
 };
 use crate::Validate;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+// ---------------------------------------------------------------------------
+// Env catalog (build-time only — never appears on the wire)
+// ---------------------------------------------------------------------------
+
+static NEXT_BUILDER_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Opaque, builder-scoped handle to an environment declared via
+/// [`ComidBuilder::declare_env`].
+///
+/// `EnvRef`s record the *intent* that two triples target the same environment.
+/// They never reach the wire format — `build()` resolves each ref into an
+/// inline [`EnvironmentMap`] before encoding.
+///
+/// Refs are scoped to the builder that produced them; using a ref from
+/// another builder is a build-time error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvRef {
+    builder_id: usize,
+    label: String,
+    uid: u32,
+}
+
+impl EnvRef {
+    /// The label this ref was declared with.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+/// Either an inline environment or a reference to one in the builder's catalog.
+///
+/// Constructed via `From<EnvironmentMap>` or `From<EnvRef>` — the `add_*_for`
+/// family of builder methods take `impl Into<EnvSpec>` so either form works
+/// at the call site.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum EnvSpec {
+    /// An inline environment value.
+    Inline(EnvironmentMap),
+    /// A reference declared via [`ComidBuilder::declare_env`].
+    Ref(EnvRef),
+}
+
+impl From<EnvironmentMap> for EnvSpec {
+    fn from(env: EnvironmentMap) -> Self {
+        Self::Inline(env)
+    }
+}
+
+impl From<EnvRef> for EnvSpec {
+    fn from(r: EnvRef) -> Self {
+        Self::Ref(r)
+    }
+}
+
+impl From<&EnvRef> for EnvSpec {
+    fn from(r: &EnvRef) -> Self {
+        Self::Ref(r.clone())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ComidBuilder
@@ -117,6 +180,12 @@ pub struct ComidBuilder {
     conditional_endorsement_series: Option<Vec<ConditionalEndorsementSeriesTriple>>,
     conditional_endorsement: Option<Vec<ConditionalEndorsementTriple>>,
     strict_links: bool,
+    // Env catalog (build-time only). Maps label -> (uid, env).
+    builder_id: usize,
+    env_catalog: BTreeMap<String, (u32, EnvironmentMap)>,
+    next_env_uid: u32,
+    // Pending triples added via the `_for` family — resolved at build() time.
+    pending_reference: Vec<(EnvSpec, Vec<MeasurementMap>)>,
 }
 
 impl ComidBuilder {
@@ -140,6 +209,10 @@ impl ComidBuilder {
             conditional_endorsement_series: None,
             conditional_endorsement: None,
             strict_links: false,
+            builder_id: NEXT_BUILDER_ID.fetch_add(1, Ordering::Relaxed),
+            env_catalog: BTreeMap::new(),
+            next_env_uid: 0,
+            pending_reference: Vec::new(),
         }
     }
 
@@ -152,6 +225,53 @@ impl ComidBuilder {
     /// this constraint — it is a builder-side lint for catching authoring mistakes.
     pub fn strict_links(mut self, enable: bool) -> Self {
         self.strict_links = enable;
+        self
+    }
+
+    /// Declare a named environment in this builder's catalog.
+    ///
+    /// Returns an [`EnvRef`] that can be passed to any `add_*_for` method on
+    /// this same builder. The label is for diagnostics only; uniqueness is
+    /// enforced — a second `declare_env` with the same label returns
+    /// [`BuilderError::DuplicateEnvLabel`].
+    ///
+    /// `EnvRef`s never reach the wire format; `build()` resolves each ref into
+    /// an inline [`EnvironmentMap`] before encoding.
+    pub fn declare_env(
+        &mut self,
+        label: impl Into<String>,
+        env: EnvironmentMap,
+    ) -> Result<EnvRef, BuilderError> {
+        let label = label.into();
+        if self.env_catalog.contains_key(&label) {
+            return Err(BuilderError::DuplicateEnvLabel { label });
+        }
+        let uid = self.next_env_uid;
+        self.next_env_uid = self
+            .next_env_uid
+            .checked_add(1)
+            .ok_or(BuilderError::Validation(
+                "env-catalog uid counter overflow".into(),
+            ))?;
+        self.env_catalog.insert(label.clone(), (uid, env));
+        Ok(EnvRef {
+            builder_id: self.builder_id,
+            label,
+            uid,
+        })
+    }
+
+    /// Add a reference values triple by env-spec.
+    ///
+    /// `env` may be an [`EnvironmentMap`] (inline) or an [`EnvRef`] obtained
+    /// from [`declare_env`](Self::declare_env) on this same builder. Resolution
+    /// happens at [`build`](Self::build) time.
+    pub fn add_reference_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        measurements: Vec<MeasurementMap>,
+    ) -> Self {
+        self.pending_reference.push((env.into(), measurements));
         self
     }
 

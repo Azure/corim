@@ -330,3 +330,43 @@ fn comid_builder_strict_links_accepts_anchored_endorsed_and_cet() {
         .build()
         .expect("strict_links should accept anchored endorsed + CET envs");
 }
+
+// ---------------------------------------------------------------------------
+// env catalog — declare_env + add_*_for resolution (CURRENTLY FAILING)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn comid_builder_declare_env_resolves_at_build() {
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
+    let cpu = b.declare_env("cpu", env_cpu.clone()).expect("declare ok");
+
+    let comid = b
+        .add_reference_triple_for(&cpu, vec![one_measurement(7)])
+        .build()
+        .expect("build should resolve the EnvRef to the inline env");
+
+    let refs = comid
+        .triples
+        .reference_triples
+        .expect("reference_triples should be populated by add_reference_triple_for");
+    assert_eq!(refs.len(), 1);
+    assert_eq!(&refs[0].0, &env_cpu);
+}
+
+#[test]
+fn comid_builder_declare_env_rejects_duplicate_label() {
+    use corim::error::BuilderError;
+
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_a = EnvironmentMap::for_class("V", "A");
+    let env_b = EnvironmentMap::for_class("V", "B");
+    b.declare_env("cpu", env_a).expect("first declare ok");
+    let err = b
+        .declare_env("cpu", env_b)
+        .expect_err("second declare with same label must error");
+    match err {
+        BuilderError::DuplicateEnvLabel { label } => assert_eq!(label, "cpu"),
+        other => panic!("expected DuplicateEnvLabel, got {other:?}"),
+    }
+}

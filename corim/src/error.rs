@@ -83,6 +83,13 @@ pub enum BuilderError {
         index: usize,
     },
 
+    /// `declare_env` was called twice with the same label on one builder.
+    #[error("environment label {label:?} already declared on this builder")]
+    DuplicateEnvLabel {
+        /// The duplicated label.
+        label: String,
+    },
+
     /// An encoding error occurred during building.
     #[error("encoding error: {0}")]
     Encode(#[from] EncodeError),
