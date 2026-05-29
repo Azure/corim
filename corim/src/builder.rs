@@ -408,8 +408,13 @@ impl ComidBuilder {
     /// The returned value is a borrow into the catalog; clone it if you need
     /// to embed it in a triple constructor.
     ///
-    /// Returns [`BuilderError::RefFromOtherBuilder`] or
-    /// [`BuilderError::DanglingEnvRef`] for invalid refs.
+    /// Returns [`BuilderError::RefFromOtherBuilder`] when `r` came from a
+    /// different builder.
+    ///
+    /// [`BuilderError::DanglingEnvRef`] is also returned if the catalog entry
+    /// is missing, but this is a defensive guard: the catalog only grows and
+    /// [`EnvRef`] cannot be constructed outside this crate, so it is not
+    /// reachable through the public API today.
     pub fn env_value(&self, r: &EnvRef) -> Result<&EnvironmentMap, BuilderError> {
         if r.builder_id != self.builder_id {
             return Err(BuilderError::RefFromOtherBuilder {
