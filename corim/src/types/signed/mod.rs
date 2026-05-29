@@ -24,7 +24,7 @@
 //!
 //! - [`algorithm`] — [`CoseAlgorithm`] (RFC 9864)
 //! - [`x509`] — [`CoseX509`], [`CoseCertHash`], `kid`/`x5*` constants (RFC 9360)
-//! - [`cwt`] — [`CwtClaims`] (RFC 8392 / RFC 9597)
+//! - [`cwt`] — [`CwtClaims`] + `CWT_CLAIM_*` constants (RFC 8392 / RFC 9597)
 //! - [`header`] — [`ProtectedCorimHeaderMap`] + builder + COSE header constants (§4.2.1)
 //! - [`envelope`] — [`CoseSign1Corim`] + encode/decode/TBS helpers (§4.2)
 //! - [`builder`] — [`SignedCorimBuilder`] for assembling signed CoRIMs
@@ -39,7 +39,9 @@ pub use x509::{
 };
 
 pub mod cwt;
-pub use cwt::CwtClaims;
+pub use cwt::{
+    CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_IAT, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+};
 
 pub mod header;
 pub use header::{
