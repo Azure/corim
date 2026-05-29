@@ -330,3 +330,145 @@ fn comid_builder_strict_links_accepts_anchored_endorsed_and_cet() {
         .build()
         .expect("strict_links should accept anchored endorsed + CET envs");
 }
+
+// ---------------------------------------------------------------------------
+// env catalog — declare_env + add_*_for resolution (CURRENTLY FAILING)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn comid_builder_declare_env_resolves_at_build() {
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
+    let cpu = b.declare_env("cpu", env_cpu.clone()).expect("declare ok");
+
+    let comid = b
+        .add_reference_triple_for(&cpu, vec![one_measurement(7)])
+        .build()
+        .expect("build should resolve the EnvRef to the inline env");
+
+    let refs = comid
+        .triples
+        .reference_triples
+        .expect("reference_triples should be populated by add_reference_triple_for");
+    assert_eq!(refs.len(), 1);
+    assert_eq!(&refs[0].0, &env_cpu);
+}
+
+#[test]
+fn comid_builder_declare_env_rejects_duplicate_label() {
+    use corim::error::BuilderError;
+
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_a = EnvironmentMap::for_class("V", "A");
+    let env_b = EnvironmentMap::for_class("V", "B");
+    b.declare_env("cpu", env_a).expect("first declare ok");
+    let err = b
+        .declare_env("cpu", env_b)
+        .expect_err("second declare with same label must error");
+    match err {
+        BuilderError::DuplicateEnvLabel { label } => assert_eq!(label, "cpu"),
+        other => panic!("expected DuplicateEnvLabel, got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_cross_builder_ref_rejected_at_build() {
+    use corim::error::BuilderError;
+
+    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
+    let mut b1 = ComidBuilder::new(TagIdChoice::Text("t1".into()));
+    let cpu_from_b1 = b1.declare_env("cpu", env_cpu.clone()).expect("declare ok");
+
+    let b2 = ComidBuilder::new(TagIdChoice::Text("t2".into()))
+        .add_reference_triple_for(cpu_from_b1, vec![one_measurement(1)]);
+
+    let err = b2.build().expect_err("cross-builder ref must error");
+    match err {
+        BuilderError::RefFromOtherBuilder { label } => assert_eq!(label, "cpu"),
+        other => panic!("expected RefFromOtherBuilder, got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_env_value_returns_declared_env_and_rejects_foreign_ref() {
+    use corim::error::BuilderError;
+
+    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
+    let mut b1 = ComidBuilder::new(TagIdChoice::Text("t1".into()));
+    let cpu = b1.declare_env("cpu", env_cpu.clone()).expect("declare ok");
+
+    let got = b1.env_value(&cpu).expect("env_value ok");
+    assert_eq!(got, &env_cpu);
+
+    let b2 = ComidBuilder::new(TagIdChoice::Text("t2".into()));
+    let err = b2.env_value(&cpu).expect_err("foreign ref must error");
+    assert!(matches!(err, BuilderError::RefFromOtherBuilder { .. }));
+}
+
+#[test]
+fn comid_builder_strict_links_with_catalog_anchored_passes() {
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
+    let cpu = b.declare_env("cpu", env_cpu).expect("declare ok");
+
+    b.add_reference_triple_for(&cpu, vec![one_measurement(1)])
+        .add_endorsed_triple_for(&cpu, vec![one_measurement(2)])
+        .strict_links(true)
+        .build()
+        .expect("strict_links should accept a ref anchored by a reference triple");
+}
+
+#[test]
+fn comid_builder_strict_links_with_catalog_unanchored_fails() {
+    use corim::error::BuilderError;
+
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_a = EnvironmentMap::for_class("VendorA", "ModelA");
+    let env_b = EnvironmentMap::for_class("VendorB", "ModelB");
+    let a = b.declare_env("a", env_a).expect("declare ok");
+    let bref = b.declare_env("b", env_b).expect("declare ok");
+
+    // Only `a` is in a reference triple; endorsed_for(b) must still fail
+    // strict_links because the lint promise is structural anchoring,
+    // not catalog presence.
+    let err = b
+        .add_reference_triple_for(&a, vec![one_measurement(1)])
+        .add_endorsed_triple_for(&bref, vec![one_measurement(2)])
+        .strict_links(true)
+        .build()
+        .expect_err("strict_links should fail for an unanchored ref");
+    match err {
+        BuilderError::UnanchoredConditionEnv { triple_kind, index } => {
+            assert_eq!(triple_kind, "endorsed");
+            assert_eq!(index, 0);
+        }
+        other => panic!("expected UnanchoredConditionEnv, got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_dependency_triple_for_resolves_mixed_env_specs() {
+    use corim::builder::EnvSpec;
+
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_a = EnvironmentMap::for_class("V", "A");
+    let env_b = EnvironmentMap::for_class("V", "B");
+    let env_c = EnvironmentMap::for_class("V", "C");
+    let a = b.declare_env("a", env_a.clone()).expect("declare ok");
+    let c = b.declare_env("c", env_c.clone()).expect("declare ok");
+
+    // Mix one inline env with two refs in the trustees list.
+    let comid = b
+        .add_reference_triple_for(&a, vec![one_measurement(1)])
+        .add_dependency_triple_for(&a, vec![EnvSpec::from(env_b.clone()), EnvSpec::from(&c)])
+        .build()
+        .expect("build ok");
+
+    let deps = comid
+        .triples
+        .dependency_triples
+        .expect("dependency present");
+    assert_eq!(deps.len(), 1);
+    assert_eq!(&deps[0].0, &env_a);
+    assert_eq!(deps[0].1, vec![env_b, env_c]);
+}

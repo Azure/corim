@@ -83,6 +83,30 @@ pub enum BuilderError {
         index: usize,
     },
 
+    /// `declare_env` was called twice with the same label on one builder.
+    #[error("environment label {label:?} already declared on this builder")]
+    DuplicateEnvLabel {
+        /// The duplicated label.
+        label: String,
+    },
+
+    /// An `EnvRef` was used after the env it pointed at was removed from the
+    /// builder's catalog (catalog mutation is not currently supported, so this
+    /// indicates internal inconsistency).
+    #[error("environment label {label:?} is not present in this builder's catalog")]
+    DanglingEnvRef {
+        /// The label carried by the dangling ref.
+        label: String,
+    },
+
+    /// An `EnvRef` produced by one `ComidBuilder` was passed to a different
+    /// `ComidBuilder`'s `add_*_for` method.
+    #[error("environment ref {label:?} was produced by a different builder")]
+    RefFromOtherBuilder {
+        /// The label carried by the foreign ref.
+        label: String,
+    },
+
     /// An encoding error occurred during building.
     #[error("encoding error: {0}")]
     Encode(#[from] EncodeError),

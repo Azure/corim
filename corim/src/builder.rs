@@ -28,6 +28,55 @@
 //!
 //! [`BuilderError::UnanchoredConditionEnv`]: crate::error::BuilderError::UnanchoredConditionEnv
 //!
+//! # Environment catalog (opt-in)
+//!
+//! For CoMIDs where a single environment appears in multiple triples,
+//! [`ComidBuilder::declare_env`] records an env in a per-builder catalog
+//! and returns an [`EnvRef`] handle. Passing the handle to any
+//! `add_*_for` method records the *intent* that two triples target the
+//! same environment, which yields:
+//!
+//! - Better diagnostics under [`strict_links`](ComidBuilder::strict_links)
+//!   — the lint reports the offending env by label, not by structural diff.
+//! - A single point of truth for late edits — mutating an env in the
+//!   catalog is not supported today, but a future API could.
+//! - A documented call-site signal that two triples are linked (e.g.
+//!   `&cpu` reads clearer than two independent `EnvironmentMap` values).
+//!
+//! `EnvRef`s never reach the wire format. At [`build`](ComidBuilder::build)
+//! time each ref is resolved into an inline [`EnvironmentMap`]; the CBOR
+//! output is identical to what the non-`_for` methods would produce.
+//!
+//! ## Scope of `add_*_for`
+//!
+//! The catalog API covers the seven triple kinds with a single env slot
+//! or a flat list of env slots: reference, endorsed, identity, attest-key,
+//! dependency, membership, coswid. The two complex shapes
+//! ([`ConditionalEndorsementSeriesTriple`] and
+//! [`ConditionalEndorsementTriple`]) embed the env inside a nested record;
+//! their `_for` methods are deliberately not provided. Use
+//! [`env_value`](ComidBuilder::env_value) to retrieve the inline env from
+//! the catalog and pass it to those triples' constructors directly.
+//!
+//! ## Builder scoping
+//!
+//! `EnvRef`s carry an opaque per-builder id. Passing a ref produced by
+//! one [`ComidBuilder`] to a different builder's `add_*_for` method
+//! fails at `build()` time with [`BuilderError::RefFromOtherBuilder`].
+//! Sharing a single environment across multiple CoMIDs is not supported
+//! by this API; clone the [`EnvironmentMap`] instead.
+//!
+//! ## Interaction with `strict_links`
+//!
+//! Refs are resolved *before* the [`strict_links`](ComidBuilder::strict_links)
+//! lint runs. The lint operates on the resolved [`EnvironmentMap`] values
+//! and its promise is unchanged: catalog membership alone does not anchor
+//! an env — only a reference triple does. A ref used in an endorsed/CES/CET
+//! triple still fails the lint unless the *same* env is also referenced
+//! (by inline or ref form) from at least one reference triple.
+//!
+//! [`BuilderError::RefFromOtherBuilder`]: crate::error::BuilderError::RefFromOtherBuilder
+//!
 //! # Example
 //!
 //! ```rust
@@ -76,20 +125,83 @@ use crate::error::BuilderError;
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
 use crate::types::common::{
-    CborTime, EntityMap, LinkedTagMap, TagIdChoice, TagIdentity, ValidityMap,
+    CborTime, CryptoKey, EntityMap, LinkedTagMap, TagIdChoice, TagIdentity, ValidityMap,
 };
 use crate::types::corim::{
     ConciseTagChoice, ConciseTlTag, CorimId, CorimLocator, CorimMap, ProfileChoice,
 };
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
+use crate::types::measurement::MeasurementMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
     AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
     CoswidTriple, DomainDependencyTriple, DomainMembershipTriple, EndorsedTriple, IdentityTriple,
-    ReferenceTriple, TriplesMap,
+    KeyTripleConditions, ReferenceTriple, TriplesMap,
 };
 use crate::Validate;
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+// ---------------------------------------------------------------------------
+// Env catalog (build-time only — never appears on the wire)
+// ---------------------------------------------------------------------------
+
+static NEXT_BUILDER_ID: AtomicUsize = AtomicUsize::new(1);
+
+/// Opaque, builder-scoped handle to an environment declared via
+/// [`ComidBuilder::declare_env`].
+///
+/// `EnvRef`s record the *intent* that two triples target the same environment.
+/// They never reach the wire format — `build()` resolves each ref into an
+/// inline [`EnvironmentMap`] before encoding.
+///
+/// Refs are scoped to the builder that produced them; using a ref from
+/// another builder is a build-time error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EnvRef {
+    builder_id: usize,
+    label: String,
+    uid: u32,
+}
+
+impl EnvRef {
+    /// The label this ref was declared with.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+}
+
+/// Either an inline environment or a reference to one in the builder's catalog.
+///
+/// Constructed via `From<EnvironmentMap>` or `From<EnvRef>` — the `add_*_for`
+/// family of builder methods take `impl Into<EnvSpec>` so either form works
+/// at the call site.
+#[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
+pub enum EnvSpec {
+    /// An inline environment value.
+    Inline(EnvironmentMap),
+    /// A reference declared via [`ComidBuilder::declare_env`].
+    Ref(EnvRef),
+}
+
+impl From<EnvironmentMap> for EnvSpec {
+    fn from(env: EnvironmentMap) -> Self {
+        Self::Inline(env)
+    }
+}
+
+impl From<EnvRef> for EnvSpec {
+    fn from(r: EnvRef) -> Self {
+        Self::Ref(r)
+    }
+}
+
+impl From<&EnvRef> for EnvSpec {
+    fn from(r: &EnvRef) -> Self {
+        Self::Ref(r.clone())
+    }
+}
 
 // ---------------------------------------------------------------------------
 // ComidBuilder
@@ -117,6 +229,18 @@ pub struct ComidBuilder {
     conditional_endorsement_series: Option<Vec<ConditionalEndorsementSeriesTriple>>,
     conditional_endorsement: Option<Vec<ConditionalEndorsementTriple>>,
     strict_links: bool,
+    // Env catalog (build-time only). Maps label -> (uid, env).
+    builder_id: usize,
+    env_catalog: BTreeMap<String, (u32, EnvironmentMap)>,
+    next_env_uid: u32,
+    // Pending triples added via the `_for` family — resolved at build() time.
+    pending_reference: Vec<(EnvSpec, Vec<MeasurementMap>)>,
+    pending_endorsed: Vec<(EnvSpec, Vec<MeasurementMap>)>,
+    pending_identity: Vec<(EnvSpec, Vec<CryptoKey>, Option<KeyTripleConditions>)>,
+    pending_attest_key: Vec<(EnvSpec, Vec<CryptoKey>, Option<KeyTripleConditions>)>,
+    pending_dependency: Vec<(EnvSpec, Vec<EnvSpec>)>,
+    pending_membership: Vec<(EnvSpec, Vec<EnvSpec>)>,
+    pending_coswid: Vec<(EnvSpec, Vec<TagIdChoice>)>,
 }
 
 impl ComidBuilder {
@@ -140,6 +264,16 @@ impl ComidBuilder {
             conditional_endorsement_series: None,
             conditional_endorsement: None,
             strict_links: false,
+            builder_id: NEXT_BUILDER_ID.fetch_add(1, Ordering::Relaxed),
+            env_catalog: BTreeMap::new(),
+            next_env_uid: 0,
+            pending_reference: Vec::new(),
+            pending_endorsed: Vec::new(),
+            pending_identity: Vec::new(),
+            pending_attest_key: Vec::new(),
+            pending_dependency: Vec::new(),
+            pending_membership: Vec::new(),
+            pending_coswid: Vec::new(),
         }
     }
 
@@ -153,6 +287,155 @@ impl ComidBuilder {
     pub fn strict_links(mut self, enable: bool) -> Self {
         self.strict_links = enable;
         self
+    }
+
+    /// Declare a named environment in this builder's catalog.
+    ///
+    /// Returns an [`EnvRef`] that can be passed to any `add_*_for` method on
+    /// this same builder. The label is for diagnostics only; uniqueness is
+    /// enforced — a second `declare_env` with the same label returns
+    /// [`BuilderError::DuplicateEnvLabel`].
+    ///
+    /// `EnvRef`s never reach the wire format; `build()` resolves each ref into
+    /// an inline [`EnvironmentMap`] before encoding.
+    pub fn declare_env(
+        &mut self,
+        label: impl Into<String>,
+        env: EnvironmentMap,
+    ) -> Result<EnvRef, BuilderError> {
+        let label = label.into();
+        if self.env_catalog.contains_key(&label) {
+            return Err(BuilderError::DuplicateEnvLabel { label });
+        }
+        let uid = self.next_env_uid;
+        self.next_env_uid = self
+            .next_env_uid
+            .checked_add(1)
+            .ok_or(BuilderError::Validation(
+                "env-catalog uid counter overflow".into(),
+            ))?;
+        self.env_catalog.insert(label.clone(), (uid, env));
+        Ok(EnvRef {
+            builder_id: self.builder_id,
+            label,
+            uid,
+        })
+    }
+
+    /// Add a reference values triple by env-spec.
+    ///
+    /// `env` may be an [`EnvironmentMap`] (inline) or an [`EnvRef`] obtained
+    /// from [`declare_env`](Self::declare_env) on this same builder. Resolution
+    /// happens at [`build`](Self::build) time.
+    pub fn add_reference_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        measurements: Vec<MeasurementMap>,
+    ) -> Self {
+        self.pending_reference.push((env.into(), measurements));
+        self
+    }
+
+    /// Add an endorsed values triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_endorsed_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        endorsement: Vec<MeasurementMap>,
+    ) -> Self {
+        self.pending_endorsed.push((env.into(), endorsement));
+        self
+    }
+
+    /// Add an identity triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_identity_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        keys: Vec<CryptoKey>,
+        conditions: Option<KeyTripleConditions>,
+    ) -> Self {
+        self.pending_identity.push((env.into(), keys, conditions));
+        self
+    }
+
+    /// Add an attest-key triple by env-spec. See [`add_reference_triple_for`](Self::add_reference_triple_for).
+    pub fn add_attest_key_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        keys: Vec<CryptoKey>,
+        conditions: Option<KeyTripleConditions>,
+    ) -> Self {
+        self.pending_attest_key.push((env.into(), keys, conditions));
+        self
+    }
+
+    /// Add a domain dependency triple by env-spec. Trustees are also env-specs;
+    /// pass `vec![env_a.into(), env_b_ref.into()]` to mix inline envs and refs.
+    pub fn add_dependency_triple_for(
+        mut self,
+        domain: impl Into<EnvSpec>,
+        trustees: Vec<EnvSpec>,
+    ) -> Self {
+        self.pending_dependency.push((domain.into(), trustees));
+        self
+    }
+
+    /// Add a domain membership triple by env-spec. See [`add_dependency_triple_for`](Self::add_dependency_triple_for).
+    pub fn add_membership_triple_for(
+        mut self,
+        domain: impl Into<EnvSpec>,
+        members: Vec<EnvSpec>,
+    ) -> Self {
+        self.pending_membership.push((domain.into(), members));
+        self
+    }
+
+    /// Add a CoMID-CoSWID linking triple by env-spec.
+    pub fn add_coswid_triple_for(
+        mut self,
+        env: impl Into<EnvSpec>,
+        tag_ids: Vec<TagIdChoice>,
+    ) -> Self {
+        self.pending_coswid.push((env.into(), tag_ids));
+        self
+    }
+
+    /// Retrieve the [`EnvironmentMap`] previously declared under `r`.
+    ///
+    /// Use this when constructing complex triple types like
+    /// [`ConditionalEndorsementSeriesTriple`] or [`ConditionalEndorsementTriple`]
+    /// where the env lives inside a nested struct and the
+    /// [`add_*_for`](Self::add_reference_triple_for) family does not apply.
+    /// The returned value is a borrow into the catalog; clone it if you need
+    /// to embed it in a triple constructor.
+    ///
+    /// Returns [`BuilderError::RefFromOtherBuilder`] when `r` came from a
+    /// different builder.
+    ///
+    /// [`BuilderError::DanglingEnvRef`] is also returned if the catalog entry
+    /// is missing, but this is a defensive guard: the catalog only grows and
+    /// [`EnvRef`] cannot be constructed outside this crate, so it is not
+    /// reachable through the public API today.
+    pub fn env_value(&self, r: &EnvRef) -> Result<&EnvironmentMap, BuilderError> {
+        if r.builder_id != self.builder_id {
+            return Err(BuilderError::RefFromOtherBuilder {
+                label: r.label.clone(),
+            });
+        }
+        self.env_catalog
+            .get(&r.label)
+            .map(|(_uid, env)| env)
+            .ok_or_else(|| BuilderError::DanglingEnvRef {
+                label: r.label.clone(),
+            })
+    }
+
+    /// Resolve an [`EnvSpec`] to an owned [`EnvironmentMap`], validating
+    /// builder-scoping and catalog presence for `Ref` variants.
+    fn resolve(&self, spec: EnvSpec) -> Result<EnvironmentMap, BuilderError> {
+        match spec {
+            EnvSpec::Inline(env) => Ok(env),
+            EnvSpec::Ref(r) => self.env_value(&r).cloned(),
+        }
     }
 
     /// Set the tag version (§5.1.1.2). Defaults to 0 if not set.
@@ -260,7 +543,62 @@ impl ComidBuilder {
     ///
     /// Returns an error if no triples have been added, or if any triple
     /// contains an empty list where the CDDL requires `[+ T]`.
-    pub fn build(self) -> Result<ComidTag, BuilderError> {
+    pub fn build(mut self) -> Result<ComidTag, BuilderError> {
+        // Resolve any pending triples added via the `_for` family.
+        // Each EnvSpec::Ref is checked against this builder's catalog and
+        // converted into an inline EnvironmentMap before being merged into
+        // the corresponding self.X_triples list.
+        for (env_spec, measurements) in core::mem::take(&mut self.pending_reference) {
+            let env = self.resolve(env_spec)?;
+            self.reference_triples
+                .get_or_insert_with(Vec::new)
+                .push(ReferenceTriple::new(env, measurements));
+        }
+        for (env_spec, endorsement) in core::mem::take(&mut self.pending_endorsed) {
+            let env = self.resolve(env_spec)?;
+            self.endorsed_triples
+                .get_or_insert_with(Vec::new)
+                .push(EndorsedTriple::new(env, endorsement));
+        }
+        for (env_spec, keys, conditions) in core::mem::take(&mut self.pending_identity) {
+            let env = self.resolve(env_spec)?;
+            self.identity_triples
+                .get_or_insert_with(Vec::new)
+                .push(IdentityTriple::new(env, keys, conditions));
+        }
+        for (env_spec, keys, conditions) in core::mem::take(&mut self.pending_attest_key) {
+            let env = self.resolve(env_spec)?;
+            self.attest_key_triples
+                .get_or_insert_with(Vec::new)
+                .push(AttestKeyTriple::new(env, keys, conditions));
+        }
+        for (domain_spec, trustees_spec) in core::mem::take(&mut self.pending_dependency) {
+            let domain = self.resolve(domain_spec)?;
+            let mut trustees = Vec::with_capacity(trustees_spec.len());
+            for t in trustees_spec {
+                trustees.push(self.resolve(t)?);
+            }
+            self.dependency_triples
+                .get_or_insert_with(Vec::new)
+                .push(DomainDependencyTriple::new(domain, trustees));
+        }
+        for (domain_spec, members_spec) in core::mem::take(&mut self.pending_membership) {
+            let domain = self.resolve(domain_spec)?;
+            let mut members = Vec::with_capacity(members_spec.len());
+            for m in members_spec {
+                members.push(self.resolve(m)?);
+            }
+            self.membership_triples
+                .get_or_insert_with(Vec::new)
+                .push(DomainMembershipTriple::new(domain, members));
+        }
+        for (env_spec, tag_ids) in core::mem::take(&mut self.pending_coswid) {
+            let env = self.resolve(env_spec)?;
+            self.coswid_triples
+                .get_or_insert_with(Vec::new)
+                .push(CoswidTriple::new(env, tag_ids));
+        }
+
         let has_triples = self.reference_triples.is_some()
             || self.endorsed_triples.is_some()
             || self.identity_triples.is_some()
