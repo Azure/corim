@@ -16,16 +16,16 @@ use crate::cbor::value::Value;
 // ===================================================================
 
 /// CWT claim: `iss` (key 1) — Issuer.
-pub(super) const CWT_CLAIM_ISS: i64 = 1;
+pub const CWT_CLAIM_ISS: i64 = 1;
 /// CWT claim: `sub` (key 2) — Subject.
-pub(super) const CWT_CLAIM_SUB: i64 = 2;
+pub const CWT_CLAIM_SUB: i64 = 2;
 /// CWT claim: `exp` (key 4) — Expiration Time.
-pub(super) const CWT_CLAIM_EXP: i64 = 4;
+pub const CWT_CLAIM_EXP: i64 = 4;
 /// CWT claim: `nbf` (key 5) — Not Before.
-pub(super) const CWT_CLAIM_NBF: i64 = 5;
-/// CWT claim: `iat` (key 6) — Issued At.
-#[allow(dead_code)] // Defined for documentation; key 6 values stored in `extra`.
-pub(super) const CWT_CLAIM_IAT: i64 = 6;
+pub const CWT_CLAIM_NBF: i64 = 5;
+/// CWT claim: `iat` (key 6) — Issued At. Not parsed into a dedicated field;
+/// when present in the CWT claims map it is preserved in [`CwtClaims::extra`].
+pub const CWT_CLAIM_IAT: i64 = 6;
 
 // ===================================================================
 // CWT Claims (RFC 8392 / RFC 9597)
