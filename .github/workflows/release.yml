@@ -63,12 +63,20 @@ jobs:
             exit 1
           fi
 
-      # Pre-flight: full test + clippy on the exact tagged commit.
-      - name: Test
-        run: cargo test --workspace --features json
+      # Pre-flight: full test + clippy on the exact tagged commit, across
+      # every feature combination we ship (default, +profile-intel, +json),
+      # plus a no-default-features build for the no_std + alloc path.
+      - name: Test (workspace, all features)
+        run: cargo test --workspace --all-features
 
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets --features json -- -D warnings
+      - name: Clippy (workspace, all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (corim, no-default-features)
+        run: cargo clippy -p corim --lib --no-default-features -- -D warnings
+
+      - name: Build (corim, no-default-features, no_std + alloc)
+        run: cargo build -p corim --no-default-features
 
       # Exchange the GitHub OIDC token for a crates.io publish token.
       # Sets CARGO_REGISTRY_TOKEN in the environment for subsequent steps.
