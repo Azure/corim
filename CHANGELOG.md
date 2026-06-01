@@ -8,8 +8,44 @@ versions.
 
 ## [Unreleased]
 
+## [0.1.2] — 2026-06-01
+
+**Crates:** [`corim`](https://crates.io/crates/corim) v0.1.2, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.2
+**MSRV:** Rust 1.85
+
 ### Added
 
+- **Profile framework** ([`corim::profile`](corim/src/profile.rs)) —
+  pluggable extension points for CoRIM profiles that introduce
+  non-core CBOR tags, profile-specific match semantics, or extra
+  measurement-value fields:
+  - New [`Profile`](corim/src/profile.rs) trait with
+    `match_measurement`, `diagnose_extra_mvm_field`, and
+    `match_context` hooks.
+  - [`ProfileRegistry`](corim/src/profile.rs) dispatches by
+    `ProfileChoice` (URI or OID).
+  - [`MatchContext`](corim/src/profile.rs) carries appraisal-time
+    facts such as the current epoch for time-based expressions.
+  - [`validate::match_reference_values_with_profile`](corim/src/validate.rs)
+    and the other `_with_profile` APIs are generic over
+    `P: ?Sized + Profile` so trait objects work out of the box.
+  - [`validate::core_fields_match`](corim/src/validate.rs) is now
+    public so profile implementations can compose core matching
+    with their own extra-field logic.
+  - The `diagnose` walker descends into `measurement-values-map`
+    and consults the registered `Profile` for unknown keys.
+- **Intel CoRIM profile** under the new `profile-intel` feature —
+  was previously a separate `corim-profile-intel` crate; folded
+  back into `corim` so that profile plug-ins ship without extra
+  workspace setup. Adds:
+  - [`profile::intel::IntelProfile`](corim/src/profile/intel/mod.rs)
+    (OID `2.16.840.1.113741.1.16.1`).
+  - Operator-based [`match_measurement`](corim/src/profile/intel/mod.rs)
+    with the Intel-defined comparators.
+  - [`profile::intel::expression`](corim/src/profile/intel/expression.rs)
+    decoder for the `#6.60010` tagged expression form, including
+    `tdate` (epoch-based) expressions evaluated against
+    `MatchContext`.
 - **Environment catalog on `ComidBuilder`** — opt-in build-time mechanism
   for sharing one `EnvironmentMap` across multiple triples in a CoMID:
   - `ComidBuilder::declare_env(label, env) -> Result<EnvRef, _>` registers
@@ -37,6 +73,47 @@ versions.
   [`BuilderError::UnanchoredConditionEnv`](corim/src/error.rs) variant.
   Default is unchanged (no cross-triple checks); wire format is
   unaffected.
+- **`#[cbor(extras = "field")]` derive attribute** in
+  [`corim-macros`](corim-macros) — declarative CDDL extension-socket
+  support. Unknown integer-keyed map entries are collected into the
+  named `BTreeMap<i64, Value>` field on deserialize and re-emitted
+  on serialize, preserving forward-compatibility for
+  `$$*-extension` group sockets.
+- **Exported `CWT_CLAIM_*` constants** — `CWT_CLAIM_ISS`,
+  `CWT_CLAIM_SUB`, `CWT_CLAIM_EXP`, `CWT_CLAIM_NBF`, `CWT_CLAIM_IAT`
+  are now `pub` and re-exported from
+  [`corim::types::signed`](corim/src/types/signed/mod.rs), matching
+  the existing `COSE_HEADER_*` exports. Lets external signer /
+  verifier tooling use the named keys instead of hard-coding the
+  integer claim numbers.
+
+### Changed
+
+- The standalone `corim-profile-intel` crate was removed; its
+  contents now live in `corim` behind the `profile-intel` feature.
+  Downstream users should switch from
+  `corim-profile-intel = "..."` to
+  `corim = { version = "0.1.2", features = ["profile-intel"] }`.
+
+### Internal
+
+- Pre-commit hook gained a rustdoc gate
+  (`RUSTDOCFLAGS=-D warnings cargo doc --no-deps`), matching the CI
+  Documentation job. Documented in [`CONTRIBUTING.md`](CONTRIBUTING.md).
+- Test files reorganized by topic (`display_tests.rs`,
+  `builder_tests.rs`, `cbor_value_tests.rs`,
+  `json_value_conv_tests.rs`, `cbor_tag_choice_de_tests.rs`,
+  `signed_corim_tests.rs`, `validate_tests.rs`); the legacy
+  `coverage_*_tests.rs` files were removed once their cases moved
+  to behavior-named files.
+
+### Notes
+
+- `corim-cli` is bumped to 0.1.2 in lockstep but is **not
+  published** to crates.io (`publish = false`).
+- No breaking changes to existing public APIs. The `profile-intel`
+  feature is additive; the env catalog and `strict_links` lint are
+  opt-in.
 
 ## [0.1.1] — 2026-05-04
 
