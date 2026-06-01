@@ -16,11 +16,27 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 - **Zero-dependency CBOR** — built-in encoder/decoder, deterministic per RFC 8949 §4.2.1
 - **`no_std` support** — `#![no_std]` + `alloc`; `std` feature (default) adds
   `SystemTime`-based validation
-- **Builder API** — `ComidBuilder`, `CotlBuilder`, `CorimBuilder`, `SignedCorimBuilder`
+- **Builder API** — `ComidBuilder`, `CotlBuilder`, `CorimBuilder`, `SignedCorimBuilder`.
+  Opt-in environment catalog (`declare_env` / `EnvRef` / `add_*_for`) lets one
+  `EnvironmentMap` be shared across triples without duplication, and
+  `strict_links` adds a cross-triple env-anchoring lint.
 - **Validation & Appraisal** — reference value matching (§9.3), conditional
   endorsement series (§9.3.4)
+- **Profile framework** — [`Profile`] trait, [`ProfileRegistry`], and a
+  [`MatchContext`] for time-aware comparators let downstream crates plug in
+  CoRIM profiles that define their own tags or `measurement-values-map`
+  extras. The first-party Intel profile ships under the `profile-intel`
+  feature flag.
 - **CoSWID** — structured types per RFC 9393 with co-constraint validation
 - **Optional JSON** — `json` feature gate for `Value ↔ serde_json::Value` conversion
+- **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
+  outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
+  CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
+  firmware). Decode-only; encoders always emit draft-10 wire format.
+
+[`Profile`]: https://docs.rs/corim/latest/corim/profile/trait.Profile.html
+[`ProfileRegistry`]: https://docs.rs/corim/latest/corim/profile/struct.ProfileRegistry.html
+[`MatchContext`]: https://docs.rs/corim/latest/corim/profile/struct.MatchContext.html
 
 ## Quick start
 
@@ -71,6 +87,7 @@ let (_corim, _comids) = corim::validate::decode_and_validate(&bytes).unwrap();
 |---------|---------|-------------|
 | `std` | ✅ | Enables `SystemTime`-based validation, `std::error::Error` impls |
 | `json` | | Adds JSON serialization (implies `std`) |
+| `profile-intel` | | Registers the Intel CoRIM profile (`corim::profile::intel`) including the `#6.60010` expression decoder. Opt-in; no extra dependencies. |
 
 For `no_std`, disable default features:
 

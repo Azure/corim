@@ -35,10 +35,22 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
   §4.2.1.
 
 - **Builder API** — fluent `ComidBuilder`, `CotlBuilder`, `CorimBuilder`, and
-  `SignedCorimBuilder` for constructing tagged CoRIM payloads.
+  `SignedCorimBuilder` for constructing tagged CoRIM payloads. `ComidBuilder`
+  has an opt-in environment catalog (`declare_env` / `EnvRef` /
+  `add_*_for(…)`) for sharing one `EnvironmentMap` across multiple triples,
+  plus a `strict_links` lint that flags conditional/endorsed triples whose
+  condition env is not anchored by any reference triple in the same CoMID.
 
 - **Validation & Appraisal** — reference value matching (Phase 3) and
   conditional endorsement series application (Phase 4) per §9 of the spec.
+
+- **Profile framework** — [`corim::profile`](corim/src/profile.rs) defines a
+  `Profile` trait, a `ProfileRegistry`, and a `MatchContext` (epoch-aware)
+  so downstream crates can plug in CoRIM profiles that introduce extra
+  measurement-values-map fields or non-core CBOR tags. The first-party
+  Intel profile (`draft-cds-rats-intel-corim-profile`) ships under the
+  `profile-intel` Cargo feature with an `IntelProfile`, the `#6.60010`
+  expression decoder, and `tdate`-aware match semantics.
 
 - **CoSWID** — structured `ConciseSwidTag`, `SwidEntity`, `SwidLink` types
   per RFC 9393 with co-constraint validation (patch/supplemental, tag-creator
@@ -145,7 +157,7 @@ let signed_bytes = builder.build_with_signature(signature).unwrap();
 
 For detached payloads, use `build_detached_with_signature()` and
 `to_be_signed_detached()` on the decoded envelope. See the
-[`types::signed`](corim/src/types/signed.rs) module documentation for
+[`types::signed`](corim/src/types/signed/mod.rs) module documentation for
 the full API.
 
 ## Crate structure
