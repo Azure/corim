@@ -26,10 +26,7 @@ versions.
     internally, so the by-ref equivalence guarantee extends to
     conditional triples — the most common case where one env must be
     structurally shared with a reference triple.
-  - `ComidBuilder::env_value(&EnvRef)` accessor for inspecting a declared
-    env — retained as an escape hatch but no longer required for normal
-    construction.
-  - New `BuilderError` variants: `DuplicateEnvLabel`, `DanglingEnvRef`,
+  - New `BuilderError` variants: `DuplicateEnvLabel` and
     `RefFromOtherBuilder`. Refs from one builder used on another fail
     deterministically rather than silently aliasing.
 - **`ComidBuilder::strict_links(bool)`** — opt-in builder-side lint that

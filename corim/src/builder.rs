@@ -476,46 +476,25 @@ impl ComidBuilder {
         self
     }
 
-    /// Retrieve the [`EnvironmentMap`] previously declared under `r`.
-    ///
-    /// Prefer the [`add_*_for`](Self::add_reference_triple_for) family —
-    /// including
-    /// [`add_conditional_endorsement_series_for`](Self::add_conditional_endorsement_series_for)
-    /// and
-    /// [`add_conditional_endorsement_for`](Self::add_conditional_endorsement_for)
-    /// — which accept an [`EnvRef`] directly and resolve it internally at
-    /// [`build`](Self::build) time. This accessor is retained as an escape
-    /// hatch for callers that need to inspect a declared env (e.g. for
-    /// logging or for assembling a triple type the builder does not yet
-    /// know about) and is not part of the recommended construction path.
-    ///
-    /// Returns [`BuilderError::RefFromOtherBuilder`] when `r` came from a
-    /// different builder.
-    ///
-    /// [`BuilderError::DanglingEnvRef`] is also returned if the catalog entry
-    /// is missing, but this is a defensive guard: the catalog only grows and
-    /// [`EnvRef`] cannot be constructed outside this crate, so it is not
-    /// reachable through the public API today.
-    pub fn env_value(&self, r: &EnvRef) -> Result<&EnvironmentMap, BuilderError> {
-        if r.builder_id != self.builder_id {
-            return Err(BuilderError::RefFromOtherBuilder {
-                label: r.label.clone(),
-            });
-        }
-        self.env_catalog
-            .get(&r.label)
-            .map(|(_uid, env)| env)
-            .ok_or_else(|| BuilderError::DanglingEnvRef {
-                label: r.label.clone(),
-            })
-    }
-
     /// Resolve an [`EnvSpec`] to an owned [`EnvironmentMap`], validating
-    /// builder-scoping and catalog presence for `Ref` variants.
+    /// builder-scoping for `Ref` variants.
     fn resolve(&self, spec: EnvSpec) -> Result<EnvironmentMap, BuilderError> {
         match spec {
             EnvSpec::Inline(env) => Ok(env),
-            EnvSpec::Ref(r) => self.env_value(&r).cloned(),
+            EnvSpec::Ref(r) => {
+                if r.builder_id != self.builder_id {
+                    return Err(BuilderError::RefFromOtherBuilder { label: r.label });
+                }
+                // Invariant: `EnvRef` is only constructed by `declare_env`,
+                // which always inserts into `env_catalog` before returning
+                // the ref. The catalog only grows, so a builder-scoped ref
+                // is always present.
+                let (_uid, env) = self
+                    .env_catalog
+                    .get(&r.label)
+                    .expect("EnvRef invariant: catalog entry present");
+                Ok(env.clone())
+            }
         }
     }
 

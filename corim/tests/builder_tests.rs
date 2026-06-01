@@ -390,22 +390,6 @@ fn comid_builder_cross_builder_ref_rejected_at_build() {
 }
 
 #[test]
-fn comid_builder_env_value_returns_declared_env_and_rejects_foreign_ref() {
-    use corim::error::BuilderError;
-
-    let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
-    let mut b1 = ComidBuilder::new(TagIdChoice::Text("t1".into()));
-    let cpu = b1.declare_env("cpu", env_cpu.clone()).expect("declare ok");
-
-    let got = b1.env_value(&cpu).expect("env_value ok");
-    assert_eq!(got, &env_cpu);
-
-    let b2 = ComidBuilder::new(TagIdChoice::Text("t2".into()));
-    let err = b2.env_value(&cpu).expect_err("foreign ref must error");
-    assert!(matches!(err, BuilderError::RefFromOtherBuilder { .. }));
-}
-
-#[test]
 fn comid_builder_strict_links_with_catalog_anchored_passes() {
     let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
     let env_cpu = EnvironmentMap::for_class("CPU-CO", "CPU-MD");
