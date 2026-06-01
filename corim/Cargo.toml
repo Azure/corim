@@ -3,7 +3,7 @@
 
 [package]
 name = "corim"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 rust-version = "1.85"
 description = "Concise Reference Integrity Manifest (CoRIM) — CBOR-based encoding of Endorsements and Reference Values for Remote Attestation (RATS)."
