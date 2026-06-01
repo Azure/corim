@@ -3,6 +3,7 @@
 
 //! Pretty-printing helpers for CoRIM/CoMID structures.
 
+use corim::cbor::value::Value;
 use corim::types::comid::ComidTag;
 use corim::types::common::*;
 use corim::types::corim::*;
@@ -177,7 +178,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
 
     if let Some(ref v) = triples.conditional_endorsement_series {
         println!(
-            "{}conditional-endorsement-series: ({} entries)",
+            "{}conditional-endorsement-series: ({} entries) [triples-map key 8, CESTR]",
             ti,
             v.len()
         );
@@ -191,22 +192,63 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
                     ti,
                     cond.claims_list.len()
                 );
+                for m in &cond.claims_list {
+                    print_measurement(m, &format!("{}      ", ti));
+                }
+            }
+            if let Some(ref auth) = cond.authorized_by {
+                println!("{}    authorized-by: ({} keys)", ti, auth.len());
+                for k in auth {
+                    println!("{}      {}", ti, crypto_key_str(k));
+                }
             }
             println!("{}    series: ({} entries)", ti, t.series().len());
             for (j, sr) in t.series().iter().enumerate() {
                 println!(
-                    "{}      [{}] selection: {} meas → addition: {} meas",
+                    "{}      [{}] selection: ({} meas)",
                     ti,
                     j,
-                    sr.selection().len(),
-                    sr.addition().len()
+                    sr.selection().len()
                 );
+                for m in sr.selection() {
+                    print_measurement(m, &format!("{}        ", ti));
+                }
+                println!("{}        addition: ({} meas)", ti, sr.addition().len());
+                for m in sr.addition() {
+                    print_measurement(m, &format!("{}          ", ti));
+                }
             }
         }
     }
 
     if let Some(ref v) = triples.conditional_endorsement {
-        println!("{}conditional-endorsement: ({} entries)", ti, v.len());
+        println!(
+            "{}conditional-endorsement: ({} entries) [triples-map key 10, CETR]",
+            ti,
+            v.len()
+        );
+        for (i, t) in v.iter().enumerate() {
+            println!("{}  [{}] conditions: ({} entries)", ti, i, t.0.len());
+            for (j, sr) in t.0.iter().enumerate() {
+                println!("{}    [{}]", ti, j);
+                print_env(&sr.0, &format!("{}      ", ti));
+                if !sr.1.is_empty() {
+                    println!("{}      claims-list: ({} entries)", ti, sr.1.len());
+                    for m in &sr.1 {
+                        print_measurement(m, &format!("{}        ", ti));
+                    }
+                }
+            }
+            println!("{}    endorsements: ({} entries)", ti, t.1.len());
+            for (j, et) in t.1.iter().enumerate() {
+                println!("{}      [{}]", ti, j);
+                print_env(&et.0, &format!("{}        ", ti));
+                println!("{}        measurements: ({} entries)", ti, et.1.len());
+                for m in &et.1 {
+                    print_measurement(m, &format!("{}          ", ti));
+                }
+            }
+        }
     }
 }
 
@@ -369,6 +411,37 @@ fn print_measurement(m: &MeasurementMap, indent: &str) {
 
     if let Some(ref auth) = m.authorized_by {
         println!("{}authorized-by: ({} keys)", indent, auth.len());
+    }
+
+    if !mv.extra_entries.is_empty() {
+        println!(
+            "{}extra-entries: ({} profile-specific keys)",
+            mi,
+            mv.extra_entries.len()
+        );
+        for (k, v) in &mv.extra_entries {
+            println!("{}  [{}] {}", mi, k, value_summary(v));
+        }
+    }
+}
+
+/// One-line summary of a CBOR `Value` that highlights tags and primitive
+/// payloads. Used for `extra_entries` in measurement-values where the
+/// concrete shape is profile-specific.
+fn value_summary(v: &Value) -> String {
+    match v {
+        Value::Integer(n) => n.to_string(),
+        Value::Text(s) => format!("\"{}\"", s),
+        Value::Bytes(b) => format!("bytes({} B) {}", b.len(), hex_short(b)),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".into(),
+        Value::Float(f) => format!("{}", f),
+        Value::Array(a) => {
+            let parts: Vec<String> = a.iter().map(value_summary).collect();
+            format!("[{}]", parts.join(", "))
+        }
+        Value::Map(m) => format!("map({} entries)", m.len()),
+        Value::Tag(tag, inner) => format!("#6.{}({})", tag, value_summary(inner)),
     }
 }
 
