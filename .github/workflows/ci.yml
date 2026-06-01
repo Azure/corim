@@ -36,11 +36,18 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build
-        run: cargo build --workspace --features json
+      - name: Build (workspace, all features)
+        run: cargo build --workspace --all-features
 
-      - name: Test
-        run: cargo test --workspace --features json
+      - name: Test (workspace, all features)
+        run: cargo test --workspace --all-features
+
+      # Library-only no_std build. corim-cli requires std, so scope to -p corim.
+      - name: Build (corim, no-default-features, no_std + alloc)
+        run: cargo build -p corim --no-default-features
+
+      - name: Build (corim, no-default-features + profile-intel)
+        run: cargo build -p corim --no-default-features --features profile-intel
 
   fmt:
     name: Formatting
@@ -76,8 +83,11 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Clippy
-        run: cargo clippy --workspace --features json -- -D warnings
+      - name: Clippy (workspace, all features)
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+
+      - name: Clippy (corim, no-default-features)
+        run: cargo clippy -p corim --lib --no-default-features -- -D warnings
 
   docs:
     name: Documentation

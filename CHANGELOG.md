@@ -46,33 +46,33 @@ versions.
     decoder for the `#6.60010` tagged expression form, including
     `tdate` (epoch-based) expressions evaluated against
     `MatchContext`.
-- **Environment catalog on `ComidBuilder`** — opt-in build-time
-  mechanism for sharing one `EnvironmentMap` across multiple triples
-  in a CoMID:
-  - `ComidBuilder::declare_env(label, env) -> Result<EnvRef, _>`
-    registers an env under a unique label and returns an opaque,
-    builder-scoped handle.
-  - Seven new `add_*_for(impl Into<EnvSpec>, ...)` methods
-    (reference, endorsed, identity, attest-key, dependency,
-    membership, coswid) accept either an inline `EnvironmentMap`
-    or an `EnvRef`. Refs are resolved to inline envs at `build()`
-    time; wire format is unchanged.
-  - `ComidBuilder::env_value(&EnvRef)` accessor for retrieving an
-    inline env value to use with `ConditionalEndorsementSeries` /
-    `ConditionalEndorsement` triples (whose nested shapes have no
-    `_for`).
-  - New [`BuilderError`](corim/src/error.rs) variants:
-    `DuplicateEnvLabel`, `DanglingEnvRef`, `RefFromOtherBuilder`.
-    Refs from one builder used on another fail deterministically
-    rather than silently aliasing.
-- **`ComidBuilder::strict_links(bool)`** — opt-in builder-side lint
-  that rejects conditional-endorsement-series, endorsed, and
-  conditional-endorsement triples whose condition `EnvironmentMap`
-  does not structurally equal any reference-triple env in the same
-  CoMID. Surfaces as the new
-  [`BuilderError::UnanchoredConditionEnv`](corim/src/error.rs)
-  variant. Default is unchanged (no cross-triple checks); wire
-  format is unaffected.
+- **Environment catalog on `ComidBuilder`** — opt-in build-time mechanism
+  for sharing one `EnvironmentMap` across multiple triples in a CoMID:
+  - `ComidBuilder::declare_env(label, env) -> Result<EnvRef, _>` registers
+    an env under a unique label and returns an opaque, builder-scoped handle.
+  - Nine new `add_*_for(impl Into<EnvSpec>, ...)` methods covering all
+    triple kinds — reference, endorsed, identity, attest-key, dependency,
+    membership, coswid, conditional-endorsement-series, and
+    conditional-endorsement. Each accepts either an inline
+    `EnvironmentMap` or an `EnvRef`. Refs are resolved to inline envs at
+    `build()` time; wire format is unchanged.
+  - `add_conditional_endorsement_series_for(condition_env, claims_list, authorized_by, series)`
+    and `add_conditional_endorsement_for(conditions, endorsements)` take
+    env-specs for the nested condition env(s) and assemble the wire-type
+    internally, so the by-ref equivalence guarantee extends to
+    conditional triples — the most common case where one env must be
+    structurally shared with a reference triple.
+  - New `BuilderError` variants: `DuplicateEnvLabel` and
+    `RefFromOtherBuilder`. Refs from one builder used on another fail
+    deterministically rather than silently aliasing.
+- **`ComidBuilder::strict_links(bool)`** — opt-in builder-side lint that
+  rejects conditional-endorsement-series, endorsed, and
+  conditional-endorsement triples whose condition `EnvironmentMap` does
+  not structurally equal any reference-triple env in the same CoMID.
+  Surfaces as the new
+  [`BuilderError::UnanchoredConditionEnv`](corim/src/error.rs) variant.
+  Default is unchanged (no cross-triple checks); wire format is
+  unaffected.
 - **`#[cbor(extras = "field")]` derive attribute** in
   [`corim-macros`](corim-macros) — declarative CDDL extension-socket
   support. Unknown integer-keyed map entries are collected into the
