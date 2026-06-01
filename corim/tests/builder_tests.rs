@@ -472,3 +472,146 @@ fn comid_builder_dependency_triple_for_resolves_mixed_env_specs() {
     assert_eq!(&deps[0].0, &env_a);
     assert_eq!(deps[0].1, vec![env_b, env_c]);
 }
+
+#[test]
+fn comid_builder_conditional_endorsement_series_for_resolves_ref() {
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env = EnvironmentMap::for_class("V", "M");
+    let env_ref = b.declare_env("platform", env.clone()).expect("declare ok");
+
+    let series = vec![ConditionalSeriesRecord::new(
+        vec![one_measurement(1)],
+        vec![one_measurement(2)],
+    )];
+
+    // Same ref drives both the reference and the CES condition env — this is
+    // the by-construction equivalence that the catalog API exists to provide.
+    let comid = b
+        .add_reference_triple_for(&env_ref, vec![one_measurement(1)])
+        .add_conditional_endorsement_series_for(&env_ref, vec![], None, series)
+        .strict_links(true)
+        .build()
+        .expect("build ok");
+
+    let refs = comid.triples.reference_triples.expect("ref present");
+    let cess = comid
+        .triples
+        .conditional_endorsement_series
+        .expect("ces present");
+    assert_eq!(refs.len(), 1);
+    assert_eq!(cess.len(), 1);
+    assert_eq!(&refs[0].0, &env);
+    assert_eq!(&cess[0].0.environment, &env);
+    // Wire-format equivalence: the two envs are structurally identical.
+    assert_eq!(&refs[0].0, &cess[0].0.environment);
+}
+
+#[test]
+fn comid_builder_conditional_endorsement_series_for_inline_env_also_works() {
+    let env = EnvironmentMap::for_class("V", "M");
+    let comid = ComidBuilder::new(TagIdChoice::Text("t".into()))
+        .add_reference_triple_for(env.clone(), vec![one_measurement(1)])
+        .add_conditional_endorsement_series_for(
+            env,
+            vec![one_measurement(7)],
+            None,
+            vec![ConditionalSeriesRecord::new(
+                vec![one_measurement(1)],
+                vec![one_measurement(2)],
+            )],
+        )
+        .build()
+        .expect("build ok");
+    let cess = comid
+        .triples
+        .conditional_endorsement_series
+        .expect("ces present");
+    assert_eq!(cess.len(), 1);
+    assert_eq!(cess[0].0.claims_list.len(), 1);
+}
+
+#[test]
+fn comid_builder_conditional_endorsement_for_resolves_refs() {
+    use corim::builder::EnvSpec;
+
+    let mut b = ComidBuilder::new(TagIdChoice::Text("t".into()));
+    let env_a = EnvironmentMap::for_class("V", "A");
+    let env_b = EnvironmentMap::for_class("V", "B");
+    let a = b.declare_env("a", env_a.clone()).expect("declare ok");
+    // Two stateful-environment-records, one by ref, one inline.
+    let comid = b
+        .add_reference_triple_for(&a, vec![one_measurement(1)])
+        .add_reference_triple_for(env_b.clone(), vec![one_measurement(2)])
+        .add_conditional_endorsement_for(
+            vec![
+                (EnvSpec::from(&a), vec![one_measurement(1)]),
+                (EnvSpec::from(env_b.clone()), vec![one_measurement(2)]),
+            ],
+            vec![EndorsedTriple::new(env_a.clone(), vec![one_measurement(9)])],
+        )
+        .strict_links(true)
+        .build()
+        .expect("build ok");
+
+    let ces = comid.triples.conditional_endorsement.expect("ce present");
+    assert_eq!(ces.len(), 1);
+    assert_eq!(ces[0].0.len(), 2);
+    assert_eq!(&ces[0].0[0].0, &env_a);
+    assert_eq!(&ces[0].0[1].0, &env_b);
+    // Endorsement env preserved as-passed.
+    assert_eq!(&ces[0].1[0].0, &env_a);
+}
+
+#[test]
+fn comid_builder_conditional_endorsement_series_for_rejects_foreign_ref() {
+    use corim::error::BuilderError;
+
+    let mut b1 = ComidBuilder::new(TagIdChoice::Text("t1".into()));
+    let env = EnvironmentMap::for_class("V", "M");
+    let foreign_ref = b1.declare_env("e", env.clone()).expect("declare ok");
+
+    let mut b2 = ComidBuilder::new(TagIdChoice::Text("t2".into()));
+    let local = b2.declare_env("e", env.clone()).expect("declare ok");
+    let err = b2
+        .add_reference_triple_for(&local, vec![one_measurement(1)])
+        .add_conditional_endorsement_series_for(
+            &foreign_ref,
+            vec![],
+            None,
+            vec![ConditionalSeriesRecord::new(
+                vec![one_measurement(1)],
+                vec![one_measurement(2)],
+            )],
+        )
+        .build()
+        .expect_err("foreign ref must be rejected");
+    match err {
+        BuilderError::RefFromOtherBuilder { label } => assert_eq!(label, "e"),
+        other => panic!("expected RefFromOtherBuilder, got {other:?}"),
+    }
+}
+
+#[test]
+fn comid_builder_conditional_endorsement_for_rejects_foreign_ref() {
+    use corim::builder::EnvSpec;
+    use corim::error::BuilderError;
+
+    let mut b1 = ComidBuilder::new(TagIdChoice::Text("t1".into()));
+    let env = EnvironmentMap::for_class("V", "M");
+    let foreign_ref = b1.declare_env("e", env.clone()).expect("declare ok");
+
+    let mut b2 = ComidBuilder::new(TagIdChoice::Text("t2".into()));
+    let local = b2.declare_env("e", env.clone()).expect("declare ok");
+    let err = b2
+        .add_reference_triple_for(&local, vec![one_measurement(1)])
+        .add_conditional_endorsement_for(
+            vec![(EnvSpec::from(&foreign_ref), vec![one_measurement(1)])],
+            vec![EndorsedTriple::new(env, vec![one_measurement(9)])],
+        )
+        .build()
+        .expect_err("foreign ref must be rejected");
+    match err {
+        BuilderError::RefFromOtherBuilder { label } => assert_eq!(label, "e"),
+        other => panic!("expected RefFromOtherBuilder, got {other:?}"),
+    }
+}

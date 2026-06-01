@@ -49,14 +49,34 @@
 //!
 //! ## Scope of `add_*_for`
 //!
-//! The catalog API covers the seven triple kinds with a single env slot
-//! or a flat list of env slots: reference, endorsed, identity, attest-key,
-//! dependency, membership, coswid. The two complex shapes
+//! The catalog API covers all nine triple kinds. The seven simple shapes
+//! (reference, endorsed, identity, attest-key, dependency, membership,
+//! coswid) have a single env slot or flat list of env slots and use the
+//! straightforward `add_*_for(env, ...)` signature.
+//!
+//! The two conditional shapes
 //! ([`ConditionalEndorsementSeriesTriple`] and
-//! [`ConditionalEndorsementTriple`]) embed the env inside a nested record;
-//! their `_for` methods are deliberately not provided. Use
-//! [`env_value`](ComidBuilder::env_value) to retrieve the inline env from
-//! the catalog and pass it to those triples' constructors directly.
+//! [`ConditionalEndorsementTriple`]) embed the env inside a nested record.
+//! Their `_for` variants —
+//! [`add_conditional_endorsement_series_for`](ComidBuilder::add_conditional_endorsement_series_for)
+//! and
+//! [`add_conditional_endorsement_for`](ComidBuilder::add_conditional_endorsement_for)
+//! — accept the env(s) and the rest of the record's fields as separate
+//! arguments and assemble the wire-type internally.
+//!
+//! ## When the catalog pays off
+//!
+//! The catalog is most useful when **one environment appears in three or
+//! more triples**, or when you need a stable label for build-time
+//! diagnostics. For the common one-reference + one-conditional pattern
+//! (e.g. an Intel-profile CoMID with a reference triple and a paired CES
+//! triple), declaring an env is also worthwhile because it eliminates the
+//! risk of structural drift between the two copies of the env — the lint
+//! that [`strict_links`](ComidBuilder::strict_links) provides becomes
+//! redundant in the by-ref case.
+//!
+//! For one-shot CoMIDs with a single triple, the catalog adds boilerplate
+//! without benefit; pass the [`EnvironmentMap`] directly.
 //!
 //! ## Builder scoping
 //!
@@ -135,9 +155,10 @@ use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::MeasurementMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
-    AttestKeyTriple, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
-    CoswidTriple, DomainDependencyTriple, DomainMembershipTriple, EndorsedTriple, IdentityTriple,
-    KeyTripleConditions, ReferenceTriple, TriplesMap,
+    AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,
+    ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainDependencyTriple,
+    DomainMembershipTriple, EndorsedTriple, IdentityTriple, KeyTripleConditions, ReferenceTriple,
+    StatefulEnvironmentRecord, TriplesMap,
 };
 use crate::Validate;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -241,6 +262,15 @@ pub struct ComidBuilder {
     pending_dependency: Vec<(EnvSpec, Vec<EnvSpec>)>,
     pending_membership: Vec<(EnvSpec, Vec<EnvSpec>)>,
     pending_coswid: Vec<(EnvSpec, Vec<TagIdChoice>)>,
+    #[allow(clippy::type_complexity)]
+    pending_ces: Vec<(
+        EnvSpec,
+        Vec<MeasurementMap>,
+        Option<Vec<CryptoKey>>,
+        Vec<ConditionalSeriesRecord>,
+    )>,
+    #[allow(clippy::type_complexity)]
+    pending_ce: Vec<(Vec<(EnvSpec, Vec<MeasurementMap>)>, Vec<EndorsedTriple>)>,
 }
 
 impl ComidBuilder {
@@ -274,6 +304,8 @@ impl ComidBuilder {
             pending_dependency: Vec::new(),
             pending_membership: Vec::new(),
             pending_coswid: Vec::new(),
+            pending_ces: Vec::new(),
+            pending_ce: Vec::new(),
         }
     }
 
@@ -399,14 +431,63 @@ impl ComidBuilder {
         self
     }
 
+    /// Add a conditional-endorsement-series triple by env-spec.
+    ///
+    /// The arguments correspond to the fields of [`CesCondition`] plus the
+    /// `series` list. The condition env may be an [`EnvironmentMap`] or an
+    /// [`EnvRef`]; refs are resolved at [`build`](Self::build) time exactly
+    /// like the other `_for` methods.
+    ///
+    /// This is the preferred way to construct a CES triple whose condition
+    /// env is shared with a reference triple — passing the same [`EnvRef`]
+    /// to both [`add_reference_triple_for`](Self::add_reference_triple_for)
+    /// and this method guarantees the two envs are byte-for-byte identical
+    /// on the wire, with no caller-visible clone.
+    pub fn add_conditional_endorsement_series_for(
+        mut self,
+        condition_env: impl Into<EnvSpec>,
+        condition_claims_list: Vec<MeasurementMap>,
+        condition_authorized_by: Option<Vec<CryptoKey>>,
+        series: Vec<ConditionalSeriesRecord>,
+    ) -> Self {
+        self.pending_ces.push((
+            condition_env.into(),
+            condition_claims_list,
+            condition_authorized_by,
+            series,
+        ));
+        self
+    }
+
+    /// Add a conditional-endorsement triple by env-spec.
+    ///
+    /// `conditions` is the `[+ stateful-environment-record]` list — each
+    /// entry pairs an env (inline or [`EnvRef`]) with its measurement list.
+    /// `endorsements` is the `[+ endorsed-triple-record]` list; those inner
+    /// envs are not covered by the catalog (use
+    /// [`add_endorsed_triple_for`](Self::add_endorsed_triple_for) when the
+    /// shared-env intent is across whole endorsed triples instead).
+    pub fn add_conditional_endorsement_for(
+        mut self,
+        conditions: Vec<(EnvSpec, Vec<MeasurementMap>)>,
+        endorsements: Vec<EndorsedTriple>,
+    ) -> Self {
+        self.pending_ce.push((conditions, endorsements));
+        self
+    }
+
     /// Retrieve the [`EnvironmentMap`] previously declared under `r`.
     ///
-    /// Use this when constructing complex triple types like
-    /// [`ConditionalEndorsementSeriesTriple`] or [`ConditionalEndorsementTriple`]
-    /// where the env lives inside a nested struct and the
-    /// [`add_*_for`](Self::add_reference_triple_for) family does not apply.
-    /// The returned value is a borrow into the catalog; clone it if you need
-    /// to embed it in a triple constructor.
+    /// Prefer the [`add_*_for`](Self::add_reference_triple_for) family —
+    /// including
+    /// [`add_conditional_endorsement_series_for`](Self::add_conditional_endorsement_series_for)
+    /// and
+    /// [`add_conditional_endorsement_for`](Self::add_conditional_endorsement_for)
+    /// — which accept an [`EnvRef`] directly and resolve it internally at
+    /// [`build`](Self::build) time. This accessor is retained as an escape
+    /// hatch for callers that need to inspect a declared env (e.g. for
+    /// logging or for assembling a triple type the builder does not yet
+    /// know about) and is not part of the recommended construction path.
     ///
     /// Returns [`BuilderError::RefFromOtherBuilder`] when `r` came from a
     /// different builder.
@@ -597,6 +678,30 @@ impl ComidBuilder {
             self.coswid_triples
                 .get_or_insert_with(Vec::new)
                 .push(CoswidTriple::new(env, tag_ids));
+        }
+        for (env_spec, claims_list, authorized_by, series) in core::mem::take(&mut self.pending_ces)
+        {
+            let environment = self.resolve(env_spec)?;
+            self.conditional_endorsement_series
+                .get_or_insert_with(Vec::new)
+                .push(ConditionalEndorsementSeriesTriple::new(
+                    CesCondition {
+                        environment,
+                        claims_list,
+                        authorized_by,
+                    },
+                    series,
+                ));
+        }
+        for (conditions_spec, endorsements) in core::mem::take(&mut self.pending_ce) {
+            let mut conditions = Vec::with_capacity(conditions_spec.len());
+            for (env_spec, measurements) in conditions_spec {
+                let env = self.resolve(env_spec)?;
+                conditions.push(StatefulEnvironmentRecord(env, measurements));
+            }
+            self.conditional_endorsement
+                .get_or_insert_with(Vec::new)
+                .push(ConditionalEndorsementTriple(conditions, endorsements));
         }
 
         let has_triples = self.reference_triples.is_some()

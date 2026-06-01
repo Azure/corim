@@ -14,13 +14,21 @@ versions.
   for sharing one `EnvironmentMap` across multiple triples in a CoMID:
   - `ComidBuilder::declare_env(label, env) -> Result<EnvRef, _>` registers
     an env under a unique label and returns an opaque, builder-scoped handle.
-  - Seven new `add_*_for(impl Into<EnvSpec>, ...)` methods (reference,
-    endorsed, identity, attest-key, dependency, membership, coswid) accept
-    either an inline `EnvironmentMap` or an `EnvRef`. Refs are resolved
-    to inline envs at `build()` time; wire format is unchanged.
-  - `ComidBuilder::env_value(&EnvRef)` accessor for retrieving an inline
-    env value to use with `ConditionalEndorsementSeries` /
-    `ConditionalEndorsement` triples (whose nested shapes have no `_for`).
+  - Nine new `add_*_for(impl Into<EnvSpec>, ...)` methods covering all
+    triple kinds — reference, endorsed, identity, attest-key, dependency,
+    membership, coswid, conditional-endorsement-series, and
+    conditional-endorsement. Each accepts either an inline
+    `EnvironmentMap` or an `EnvRef`. Refs are resolved to inline envs at
+    `build()` time; wire format is unchanged.
+  - `add_conditional_endorsement_series_for(condition_env, claims_list, authorized_by, series)`
+    and `add_conditional_endorsement_for(conditions, endorsements)` take
+    env-specs for the nested condition env(s) and assemble the wire-type
+    internally, so the by-ref equivalence guarantee extends to
+    conditional triples — the most common case where one env must be
+    structurally shared with a reference triple.
+  - `ComidBuilder::env_value(&EnvRef)` accessor for inspecting a declared
+    env — retained as an escape hatch but no longer required for normal
+    construction.
   - New `BuilderError` variants: `DuplicateEnvLabel`, `DanglingEnvRef`,
     `RefFromOtherBuilder`. Refs from one builder used on another fail
     deterministically rather than silently aliasing.
