@@ -116,6 +116,7 @@ Cargo features and registered with a `corim::profile::ProfileRegistry`.
 | §8.2.3 | `tagged-exp-tstr-{member,not-member}` (`#6.60021`) | ✅ Full | `Expression::SetOfTstr` |
 | base CoRIM | `tagged-int-range` (`#6.564`) | ✅ Full | `Expression::IntRange` |
 | base CoRIM | `tagged-min-svn` (`#6.553`) | ✅ Full | `Expression::MinSvn` |
+| base CoRIM | `tagged-masked-raw-value` (`#6.563`) | ✅ Full — mask-aware comparison | `Expression::MaskedRawValue` |
 | §8.3 | All 16 `measurement-values-map` extension keys | ✅ Labelled + matched | `intel::MVAL_TEE_*` constants, `IntelProfile::match_measurement` |
 | §9.1–9.2 | Bare-value equality, set comparison algorithm | ✅ Full | `intel::eval` |
 
@@ -123,7 +124,6 @@ Cargo features and registered with a `corim::profile::ProfileRegistry`.
 
 | Item | Reason |
 |------|--------|
-| `$masked-value-type` mask-aware comparison (`tagged-masked-raw-value`, `#6.563`) | Used by `tee.attributes` / `tee.miscselect`; evaluator currently falls back to bare CBOR equality. Mask-aware comparison is a base-CoRIM concern shared across profiles and is tracked separately. |
 | RFC 9581 `etime` / `period` evaluation for `tee.tcbdate` (-72) | Decoder accepts them and `--diagnose` labels them; tcbdate is exact-match per v07 §8.3.4, so CBOR equality already covers the common case. |
 | Profile-typed accessors on `MeasurementValuesMap` | Out of scope; values stay in `extra_entries`. |
 

@@ -395,6 +395,23 @@ mod tests {
     }
 
     #[test]
+    fn diagnose_renders_masked_raw_value_expression() {
+        let p = IntelProfile::new();
+        let expr = Value::Tag(
+            crate::types::tags::TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![
+                Value::Bytes(vec![0xF0, 0x00, 0x00, 0x00]),
+                Value::Bytes(vec![0xF0, 0xFF, 0xFF, 0xFF]),
+            ])),
+        );
+        let label = p.diagnose_mval_entry(MVAL_TEE_ATTRIBUTES, &expr);
+        assert_eq!(
+            label.as_deref(),
+            Some("tee.attributes = masked-bstr <4-byte value, 4-byte mask>")
+        );
+    }
+
+    #[test]
     fn diagnose_labels_rfc9581_time_tags() {
         let p = IntelProfile::new();
         // tee.tcbdate may carry etime / duration / period per v07 §8.3.4.

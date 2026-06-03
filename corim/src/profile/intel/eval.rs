@@ -22,6 +22,7 @@
 //! | set-of-digests (`mem`/`nmem`)          | digest equality membership (§9.2.2)            |
 //! | `tagged-int-range`                     | `min <= ev <= max` (open bounds skip the side) |
 //! | `tagged-min-svn`                       | `ev >= min`                                    |
+//! | `tagged-masked-raw-value`              | `(ev & mask) == (value & mask)` (bytewise)     |
 //!
 //! ## Failure policy
 //!
@@ -36,7 +37,7 @@ use crate::cbor::value::Value;
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
 use crate::profile::MatchContext;
-use crate::types::tags::{TAG_INT_RANGE, TAG_MIN_SVN};
+use crate::types::tags::{TAG_BYTES, TAG_INT_RANGE, TAG_MASKED_RAW_VALUE, TAG_MIN_SVN};
 
 use super::expression::{
     Expression, Numeric, NumericOp, SetOp, TAG_INTEL_EXPRESSION, TAG_INTEL_SET_DIGEST_EXPRESSION,
@@ -69,6 +70,7 @@ pub(crate) fn evaluate_one_key(
                 | TAG_INTEL_SET_TSTR_EXPRESSION
                 | TAG_INT_RANGE
                 | TAG_MIN_SVN
+                | TAG_MASKED_RAW_VALUE
         ) {
             return match Expression::from_tag(reference) {
                 Ok(expr) => evaluate_expression(&expr, evidence),
@@ -126,6 +128,10 @@ fn evaluate_expression(e: &Expression, ev: &Value) -> Verdict {
             }
             _ => Verdict::Fail,
         },
+        Expression::MaskedRawValue { value, mask } => match bytes_evidence(ev) {
+            Some(ev_bytes) => masked_eq(ev_bytes, value, mask),
+            None => Verdict::Fail,
+        },
     }
 }
 
@@ -166,7 +172,6 @@ fn numeric_ref_as_f64(n: &Numeric) -> f64 {
         Numeric::Float(f) => *f,
     }
 }
-
 fn cmp_numeric(op: NumericOp, ev: f64, refv: &Numeric) -> Verdict {
     let r = numeric_ref_as_f64(refv);
     if ev.is_nan() || r.is_nan() {
@@ -181,6 +186,37 @@ fn cmp_numeric(op: NumericOp, ev: f64, refv: &Numeric) -> Verdict {
         NumericOp::Le => ev <= r,
     };
     bool_verdict(outcome)
+}
+
+/// Extract a byte-string evidence value. Accepts bare `bstr` (the
+/// `~tagged-bytes` form) and `#6.560(bstr)` (`tagged-bytes` from base
+/// CoRIM). Both are valid encodings of `$masked-value-type` on the
+/// evidence side.
+fn bytes_evidence(v: &Value) -> Option<&[u8]> {
+    match v {
+        Value::Bytes(b) => Some(b.as_slice()),
+        Value::Tag(TAG_BYTES, inner) => match inner.as_ref() {
+            Value::Bytes(b) => Some(b.as_slice()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Mask-aware byte comparison: `(ev & mask) == (value & mask)`.
+/// All three slices must have the same length (the `tagged-masked-raw-value`
+/// CDDL does not specify a length-coercion rule, so we fail-closed
+/// rather than zero-padding).
+fn masked_eq(evidence: &[u8], value: &[u8], mask: &[u8]) -> Verdict {
+    if evidence.len() != mask.len() || value.len() != mask.len() {
+        return Verdict::Fail;
+    }
+    let matches = evidence
+        .iter()
+        .zip(value.iter())
+        .zip(mask.iter())
+        .all(|((e, v), m)| (e & m) == (v & m));
+    bool_verdict(matches)
 }
 
 fn bool_verdict(b: bool) -> Verdict {
@@ -448,6 +484,52 @@ mod tests {
         let r = min_svn_expr(3);
         let ev = Value::Tag(crate::types::tags::TAG_SVN, Box::new(Value::Integer(7)));
         assert_eq!(eval_pair(&r, &ev), Verdict::Pass);
+    }
+
+    // -- masked-raw-value ---------------------------------------------------
+
+    fn masked_expr(value: Vec<u8>, mask: Vec<u8>) -> Value {
+        Value::Tag(
+            TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![Value::Bytes(value), Value::Bytes(mask)])),
+        )
+    }
+
+    #[test]
+    fn masked_raw_value_pass_under_mask() {
+        // reference value=0xF0, mask=0xF0  →  upper nibble must be 0xF.
+        let r = masked_expr(vec![0xF0], vec![0xF0]);
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xFA])), Verdict::Pass);
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xF7])), Verdict::Pass);
+    }
+
+    #[test]
+    fn masked_raw_value_fail_outside_mask() {
+        let r = masked_expr(vec![0xF0], vec![0xF0]);
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0x10])), Verdict::Fail);
+    }
+
+    #[test]
+    fn masked_raw_value_length_mismatch_fails() {
+        let r = masked_expr(vec![0xFF, 0xFF], vec![0xFF, 0xFF]);
+        assert_eq!(eval_pair(&r, &Value::Bytes(vec![0xFF])), Verdict::Fail);
+    }
+
+    #[test]
+    fn masked_raw_value_accepts_tag_560_evidence() {
+        // Evidence wrapped as #6.560(bstr) (`tagged-bytes`).
+        let r = masked_expr(vec![0xF0], vec![0xF0]);
+        let ev = Value::Tag(
+            crate::types::tags::TAG_BYTES,
+            Box::new(Value::Bytes(vec![0xFA])),
+        );
+        assert_eq!(eval_pair(&r, &ev), Verdict::Pass);
+    }
+
+    #[test]
+    fn masked_raw_value_non_bytes_evidence_fails() {
+        let r = masked_expr(vec![0x00], vec![0xFF]);
+        assert_eq!(eval_pair(&r, &Value::Integer(0)), Verdict::Fail);
     }
 
     // -- malformed expression fails-closed ---------------------------------

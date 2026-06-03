@@ -8,13 +8,14 @@
 //! Reference Values in the Intel profile may carry one of several CBOR-
 //! tagged shapes that instruct the Verifier how to compare Evidence
 //! against the Reference (e.g. "greater than", "member of set",
-//! "between min and max"). Five tags carry such shapes:
+//! "between min and max"). Six tags carry such shapes:
 //!
 //! | Tag       | CDDL name                                  | Shape       | §             |
 //! |-----------|--------------------------------------------|-------------|---------------|
 //! | `#6.60010`| `tagged-numeric-{gt,ge,lt,le}`             | numeric     | v07 §8.2.2    |
 //! | `#6.60020`| `tagged-exp-digest-{member,not-member}`    | set-digests | v07 §8.2.3    |
 //! | `#6.60021`| `tagged-exp-tstr-{member,not-member}`      | set-tstr    | v07 §8.2.3    |
+//! | `#6.563`  | `tagged-masked-raw-value` (base CoRIM)     | masked-bstr | base CoRIM    |
 //! | `#6.564`  | `tagged-int-range` (base CoRIM)            | int-range   | base CoRIM    |
 //! | `#6.553`  | `tagged-min-svn` (base CoRIM)              | min-svn     | base CoRIM    |
 //!
@@ -27,7 +28,7 @@
 
 use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
-use crate::types::tags::{TAG_INT_RANGE, TAG_MIN_SVN};
+use crate::types::tags::{TAG_INT_RANGE, TAG_MASKED_RAW_VALUE, TAG_MIN_SVN};
 
 /// CBOR tag for Intel numeric expressions (v07 §8.2.2).
 pub const TAG_INTEL_EXPRESSION: u64 = 60010;
@@ -196,16 +197,26 @@ pub enum Expression {
     /// `#6.553(uint)` — minimum SVN (`tagged-min-svn`, base CoRIM).
     /// Evidence SVN must be `>=` this value.
     MinSvn(u64),
+    /// `#6.563([value: bstr, mask: bstr])` — mask-aware raw value
+    /// (`tagged-masked-raw-value`, base CoRIM). Evidence bytes `ev`
+    /// match iff `(ev & mask) == (value & mask)`, with `value`,
+    /// `mask`, and `ev` all the same length.
+    MaskedRawValue {
+        /// Reference value bytes.
+        value: Vec<u8>,
+        /// Bit-mask selecting which bits to compare.
+        mask: Vec<u8>,
+    },
 }
 
 impl Expression {
     /// Decode an expression from a CBOR value that is expected to be
-    /// one of the five operator-shaped tags
-    /// (`60010`/`60020`/`60021`/`564`/`553`).
+    /// one of the six operator-shaped tags
+    /// (`60010`/`60020`/`60021`/`563`/`564`/`553`).
     ///
     /// Returns [`ExpressionDecodeError::NotTagged`] if the input is
     /// not a tag, [`ExpressionDecodeError::WrongTag`] if the tag
-    /// number is not one of the five, or a shape-specific error from
+    /// number is not one of the six, or a shape-specific error from
     /// the per-tag decoder.
     pub fn from_tag(value: &Value) -> Result<Self, ExpressionDecodeError> {
         match value {
@@ -222,13 +233,16 @@ impl Expression {
                 Self::int_range_from_body(inner.as_ref())
             }
             Value::Tag(t, inner) if *t == TAG_MIN_SVN => Self::min_svn_from_body(inner.as_ref()),
+            Value::Tag(t, inner) if *t == TAG_MASKED_RAW_VALUE => {
+                Self::masked_raw_value_from_body(inner.as_ref())
+            }
             Value::Tag(t, _) => Err(ExpressionDecodeError::WrongTag(*t)),
             _ => Err(ExpressionDecodeError::NotTagged),
         }
     }
 
-    /// Returns `true` if `tag` is one of the five tags this decoder
-    /// recognises (`60010`/`60020`/`60021`/`564`/`553`).
+    /// Returns `true` if `tag` is one of the six tags this decoder
+    /// recognises (`60010`/`60020`/`60021`/`563`/`564`/`553`).
     pub fn is_intel_expression_tag(tag: u64) -> bool {
         matches!(
             tag,
@@ -237,6 +251,7 @@ impl Expression {
                 | TAG_INTEL_SET_TSTR_EXPRESSION
                 | TAG_INT_RANGE
                 | TAG_MIN_SVN
+                | TAG_MASKED_RAW_VALUE
         )
     }
 
@@ -317,6 +332,22 @@ impl Expression {
             Value::Integer(_) => Err(ExpressionDecodeError::MinSvnOutOfRange),
             _ => Err(ExpressionDecodeError::MinSvnNotUint),
         }
+    }
+
+    fn masked_raw_value_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        let items = expect_array(body)?;
+        if items.len() != 2 {
+            return Err(ExpressionDecodeError::WrongArity(items.len()));
+        }
+        let value = match &items[0] {
+            Value::Bytes(b) => b.clone(),
+            _ => return Err(ExpressionDecodeError::MaskedRawValueNotBytes),
+        };
+        let mask = match &items[1] {
+            Value::Bytes(b) => b.clone(),
+            _ => return Err(ExpressionDecodeError::MaskedRawValueNotBytes),
+        };
+        Ok(Self::MaskedRawValue { value, mask })
     }
 }
 
@@ -399,6 +430,8 @@ pub enum ExpressionDecodeError {
     MinSvnOutOfRange,
     /// A `tagged-min-svn` body was not an unsigned integer.
     MinSvnNotUint,
+    /// A `tagged-masked-raw-value` element was not a byte string.
+    MaskedRawValueNotBytes,
 }
 
 impl core::fmt::Display for ExpressionDecodeError {
@@ -424,6 +457,9 @@ impl core::fmt::Display for ExpressionDecodeError {
             Self::IntRangeReversed => write!(f, "int-range has min > max"),
             Self::MinSvnOutOfRange => write!(f, "tagged-min-svn value does not fit in u64"),
             Self::MinSvnNotUint => write!(f, "tagged-min-svn body must be an unsigned integer"),
+            Self::MaskedRawValueNotBytes => {
+                write!(f, "tagged-masked-raw-value element must be a byte string")
+            }
         }
     }
 }
@@ -441,6 +477,7 @@ impl std::error::Error for ExpressionDecodeError {}
 /// - `SetOfTstr { op: NotMember, members: ["CVE-1"] }` → `"not-member (1 string)"`
 /// - `IntRange { min: Some(0), max: Some(15) }` → `"range [0..15]"`
 /// - `MinSvn(5)` → `"min-svn 5"`
+/// - `MaskedRawValue { value: <8 bytes>, mask: <8 bytes> }` → `"masked-bstr <8-byte value, 8-byte mask>"`
 pub fn display_expression(e: &Expression) -> String {
     match e {
         Expression::Numeric { op, value } => format!("{} {}", op.as_str(), display_numeric(value)),
@@ -470,6 +507,11 @@ pub fn display_expression(e: &Expression) -> String {
             format!("range [{}..{}]", lo, hi)
         }
         Expression::MinSvn(v) => format!("min-svn {}", v),
+        Expression::MaskedRawValue { value, mask } => format!(
+            "masked-bstr <{}-byte value, {}-byte mask>",
+            value.len(),
+            mask.len()
+        ),
     }
 }
 
@@ -728,6 +770,58 @@ mod tests {
         );
     }
 
+    // -- masked-raw-value ---------------------------------------------------
+
+    #[test]
+    fn decodes_masked_raw_value() {
+        let v = Value::Tag(
+            TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![
+                Value::Bytes(vec![0xAA, 0xBB]),
+                Value::Bytes(vec![0xFF, 0x00]),
+            ])),
+        );
+        let e = Expression::from_tag(&v).unwrap();
+        assert_eq!(
+            e,
+            Expression::MaskedRawValue {
+                value: vec![0xAA, 0xBB],
+                mask: vec![0xFF, 0x00],
+            }
+        );
+        assert_eq!(
+            display_expression(&e),
+            "masked-bstr <2-byte value, 2-byte mask>"
+        );
+    }
+
+    #[test]
+    fn masked_raw_value_rejects_wrong_arity() {
+        let v = Value::Tag(
+            TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![Value::Bytes(vec![0])])),
+        );
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::WrongArity(1)
+        );
+    }
+
+    #[test]
+    fn masked_raw_value_rejects_non_bytes() {
+        let v = Value::Tag(
+            TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![
+                Value::Text("oops".into()),
+                Value::Bytes(vec![0xFF]),
+            ])),
+        );
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::MaskedRawValueNotBytes
+        );
+    }
+
     // -- error cases ---------------------------------------------------------
 
     #[test]
@@ -815,6 +909,7 @@ mod tests {
         assert!(Expression::is_intel_expression_tag(60010));
         assert!(Expression::is_intel_expression_tag(60020));
         assert!(Expression::is_intel_expression_tag(60021));
+        assert!(Expression::is_intel_expression_tag(563));
         assert!(Expression::is_intel_expression_tag(564));
         assert!(Expression::is_intel_expression_tag(553));
         assert!(!Expression::is_intel_expression_tag(0));

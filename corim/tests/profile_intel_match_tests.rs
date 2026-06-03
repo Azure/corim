@@ -635,3 +635,57 @@ fn match_measurement_set_of_digests_member() {
         Some(true)
     );
 }
+
+#[test]
+fn match_measurement_masked_raw_value_passes_under_mask() {
+    // v07 §8.3.2 / §8.3.8: tee.attributes / tee.miscselect can carry a
+    // `tagged-masked-raw-value` (#6.563) reference; evidence is a bare
+    // `bstr`. Matching uses `(ev & mask) == (value & mask)`.
+    use corim::types::tags::TAG_MASKED_RAW_VALUE;
+    let p = IntelProfile::new();
+    let mut r_extras = BTreeMap::new();
+    r_extras.insert(
+        MVAL_TEE_ATTRIBUTES,
+        Value::Tag(
+            TAG_MASKED_RAW_VALUE,
+            Box::new(Value::Array(vec![
+                Value::Bytes(vec![0xF0, 0x00]),
+                Value::Bytes(vec![0xF0, 0xFF]),
+            ])),
+        ),
+    );
+    let r_triple = ref_triple_with_extras(r_extras);
+    let r = r_triple.measurements()[0].clone();
+
+    // Lower nibble of byte 0 is masked off; byte 1 must equal 0x00.
+    let mut e_extras = BTreeMap::new();
+    e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0xFA, 0x00]));
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
+
+    // Evidence outside the mask must fail.
+    let mut e_extras = BTreeMap::new();
+    e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0x1A, 0x00]));
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
+}
