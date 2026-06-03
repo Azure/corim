@@ -99,8 +99,8 @@ Cargo features and registered with a `corim::profile::ProfileRegistry`.
 | | |
 |-|-|
 | **Status** | Internet-Draft |
-| **Version implemented** | **-03** |
-| **URL** | https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-03.html |
+| **Version implemented** | **-07** |
+| **URL** | https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-07.html |
 | **Profile OID** | `2.16.840.1.113741.1.16.1` |
 | **Feature gate** | `corim/profile-intel` (opt-in) |
 | **Rust module** | `corim::profile::intel` |
@@ -110,28 +110,32 @@ Cargo features and registered with a `corim::profile::ProfileRegistry`.
 | Section | Topic | Status | Rust Item |
 |---------|-------|--------|-----------|
 | §4.1 | Profile identifier (OID) | ✅ Full | `intel::INTEL_PROFILE_OID_DER`, `IntelProfile::identifier` |
-| §8.1.2 | Numeric operators (`gt`/`ge`/`lt`/`le`) | ✅ Full | `Expression::Numeric` |
-| §8.1.3 | Object-in-set (`member`/`not-member`) | ✅ Full | `Expression::Set` |
-| §8.1.3 | Set-of-set (`subset`/`superset`/`disjoint`) | ⚠️ Decode-only | `Expression::SetOfSet`; evaluator returns `Skip` (no §8.2 key uses them) |
-| §8.1.4.1 | `tdate` comparison | ✅ Full | `Expression::Tdate` |
-| §8.1.4.2 | Epoch comparison (default verifier-time) | ✅ Full | `Expression::Epoch` + `MatchContext::now` |
-| §8.1.5 | `mask-eq` (3-element form) | ✅ Full | `Expression::Mask` |
-| §8.2 | All 17 `measurement-values-map` extension keys | ✅ Labelled + matched | `intel::MVAL_TEE_*` constants, `IntelProfile::match_measurement` |
-| §9.1 | Bare-value equality fallback | ✅ Full | `intel::eval` |
+| §8.2.1 | Operator codes (`eq`/`gt`/`ge`/`lt`/`le`/`mem`/`nmem`) | ✅ Full | `NumericOp`, `SetOp` |
+| §8.2.2 | `tagged-numeric-{eq,gt,ge,lt,le}` (`#6.60010`) | ✅ Full | `Expression::Numeric` |
+| §8.2.3 | `tagged-exp-digest-{member,not-member}` (`#6.60020`) | ✅ Full | `Expression::SetOfDigests` |
+| §8.2.3 | `tagged-exp-tstr-{member,not-member}` (`#6.60021`) | ✅ Full | `Expression::SetOfTstr` |
+| base CoRIM | `tagged-int-range` (`#6.564`) | ✅ Full | `Expression::IntRange` |
+| base CoRIM | `tagged-min-svn` (`#6.553`) | ✅ Full | `Expression::MinSvn` |
+| §8.3 | All 16 `measurement-values-map` extension keys | ✅ Labelled + matched | `intel::MVAL_TEE_*` constants, `IntelProfile::match_measurement` |
+| §9.1–9.2 | Bare-value equality, set comparison algorithm | ✅ Full | `intel::eval` |
 
 #### Not Implemented
 
 | Item | Reason |
 |------|--------|
-| Alternate `epoch-id` schemes (non-default epoch) | No §8.2 key uses them; evaluator returns `Skip` |
-| Profile-typed accessors on `MeasurementValuesMap` | Out of scope; values stay in `extra_entries` |
+| `$masked-value-type` mask-aware comparison (`tagged-masked-raw-value`, `#6.563`) | Used by `tee.attributes` / `tee.miscselect`; evaluator currently falls back to bare CBOR equality. Mask-aware comparison is a base-CoRIM concern shared across profiles and is tracked separately. |
+| RFC 9581 `etime` / `period` evaluation for `tee.tcbdate` (-72) | Decoder accepts them and `--diagnose` labels them; tcbdate is exact-match per v07 §8.3.4, so CBOR equality already covers the common case. |
+| Profile-typed accessors on `MeasurementValuesMap` | Out of scope; values stay in `extra_entries`. |
 
 #### ⚠️ Draft Tracking Notes
 
 This is an **Internet-Draft**, not a finalized RFC. When a new revision
-is published, diff §8.1 (expression operator codes), §8.2 (key
+is published, diff §8.2 (operator codes and tag dispatch), §8.3 (key
 assignments), and the profile OID against the constants in
-`corim/src/profile/intel/{mod,expression}.rs`.
+`corim/src/profile/intel/{mod,expression}.rs`. Pay special attention
+to code points listed in the Removed / Renamed columns above; v07
+already dropped `tee.instance-id` (-77), `tee.epoch` (-90), the
+`mask-eq` operator, and the set-of-set operators.
 
 ---
 
