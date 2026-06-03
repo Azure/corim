@@ -83,6 +83,35 @@ pub enum BuilderError {
         index: usize,
     },
 
+    /// A selection-side measurement on a conditional triple (a CES
+    /// `claims_list`, a CES series `selection`, or a CE
+    /// `stateful-environment-record` measurement list) does not
+    /// structurally equal any measurement in a reference triple **for
+    /// the same env**.
+    ///
+    /// Only produced when `ComidBuilder::strict_links(true)` is set; the
+    /// wire format itself imposes no such constraint, and the lint
+    /// deliberately uses structural equality rather than the richer
+    /// matching rules verifiers apply at appraisal time.
+    #[error(
+        "{triple_kind} triple at index {triple_index}, measurement {measurement_index}: \
+         not anchored by any reference-triple measurement for the same env"
+    )]
+    UnanchoredConditionMeasurement {
+        /// Which triple list / sub-list the offending entry came from.
+        /// One of: `"conditional-endorsement-series"` (the CES
+        /// `claims_list`), `"conditional-endorsement-series-selection"`
+        /// (a series record's `selection`), or
+        /// `"conditional-endorsement"` (a CE stateful-environment-record
+        /// measurement).
+        triple_kind: &'static str,
+        /// Position of the offending triple within its list (0-based).
+        triple_index: usize,
+        /// Position of the offending measurement within the to-anchor
+        /// list (0-based).
+        measurement_index: usize,
+    },
+
     /// `declare_env` was called twice with the same label on one builder.
     #[error("environment label {label:?} already declared on this builder")]
     DuplicateEnvLabel {
