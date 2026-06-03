@@ -1,46 +1,47 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! CBOR `#6.60010` expression decoder, per §8.1 of
-//! `draft-cds-rats-intel-corim-profile-03`.
+//! Operator-shaped reference-value decoder for the Intel CoRIM profile,
+//! per `draft-cds-rats-intel-corim-profile-07` §8.1 / §8.2 and the base
+//! CoRIM definitions for `tagged-int-range` and `tagged-min-svn`.
 //!
-//! Reference Values in the Intel profile may carry an operator-and-operand
-//! expression in place of a bare value. The expression instructs the Verifier
-//! how Evidence should be compared against the Reference Value (e.g. "greater
-//! than", "member of set", "subset of"). All such expressions share the same
-//! CBOR shape:
+//! Reference Values in the Intel profile may carry one of several CBOR-
+//! tagged shapes that instruct the Verifier how to compare Evidence
+//! against the Reference (e.g. "greater than", "member of set",
+//! "between min and max"). Five tags carry such shapes:
 //!
-//! ```text
-//! #6.60010( [ operator, operand_2, operand_3? ] )
-//! ```
+//! | Tag       | CDDL name                                  | Shape       | §             |
+//! |-----------|--------------------------------------------|-------------|---------------|
+//! | `#6.60010`| `tagged-numeric-{gt,ge,lt,le}`             | numeric     | v07 §8.2.2    |
+//! | `#6.60020`| `tagged-exp-digest-{member,not-member}`    | set-digests | v07 §8.2.3    |
+//! | `#6.60021`| `tagged-exp-tstr-{member,not-member}`      | set-tstr    | v07 §8.2.3    |
+//! | `#6.564`  | `tagged-int-range` (base CoRIM)            | int-range   | base CoRIM    |
+//! | `#6.553`  | `tagged-min-svn` (base CoRIM)              | min-svn     | base CoRIM    |
 //!
-//! The `operator` is a small integer; the remaining elements depend on the
-//! expression kind. Seven shapes are defined:
-//!
-//! | Shape         | Operators                       | §        |
-//! |---------------|---------------------------------|----------|
-//! | numeric       | `gt`(1) `ge`(2) `lt`(3) `le`(4) | §8.1.2   |
-//! | mask          | `mask-eq`(1) (3-element form)   | §8.1.5   |
-//! | set           | `member`(6) `not-member`(7)     | §8.1.3   |
-//! | set-of-set    | `subset`(8) `superset`(9) `disjoint`(10) | §8.1.3 |
-//! | tdate         | `gt`/`ge`/`lt`/`le` on `tdate`  | §8.1.4.1 |
-//! | epoch         | `gt`/`ge`/`lt`/`le` + grace s   | §8.1.4.2 |
-//! | (time)        | folded into `numeric`           | §8.1.4.1 |
-//!
-//! The `mask-eq` operator code (`1`) collides with `gt`; arity (3 vs 2) and
-//! operand types (bstr+bstr vs numeric) disambiguate. Per RFC 8949 §3.4.1
-//! and §3.4.2, `tdate` operands may appear as either bare `text` or
-//! `#6.0(text)`, and numeric times may appear as either bare integer/float
-//! or `#6.1(number)`; both forms are accepted on decode.
+//! v07 §8.2.1 fixes the operator codes:
+//! `op.eq=0`, `op.gt=1`, `op.ge=2`, `op.lt=3`, `op.le=4`,
+//! `op.mem=6`, `op.nmem=7`. The v03 codes `op.subset=8` /
+//! `op.superset=9` / `op.disjoint=10` and the overloaded `mask-eq=1`
+//! 3-element shape were removed in v07 PR-equivalent edits; this
+//! decoder no longer accepts them.
 
 use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
+use crate::types::tags::{TAG_INT_RANGE, TAG_MIN_SVN};
 
-/// CBOR tag number used by every Intel comparison expression (§8.1).
+/// CBOR tag for Intel numeric expressions (v07 §8.2.2).
 pub const TAG_INTEL_EXPRESSION: u64 = 60010;
+/// CBOR tag for Intel set-of-digests expressions (v07 §8.2.3).
+pub const TAG_INTEL_SET_DIGEST_EXPRESSION: u64 = 60020;
+/// CBOR tag for Intel set-of-tstr expressions (v07 §8.2.3).
+pub const TAG_INTEL_SET_TSTR_EXPRESSION: u64 = 60021;
 
-// -- Operator wire codes (§8.1.1). ------------------------------------------
+// -- Operator wire codes (v07 §8.2.1). --------------------------------------
 
+/// Equivalence operator. The CDDL never emits a tagged expression with
+/// this code (exact-match is the default), but the integer is reserved
+/// and accepted on decode for forward compatibility.
+const OP_EQ: i64 = 0;
 /// Numeric operator: greater-than.
 const OP_GT: i64 = 1;
 /// Numeric operator: greater-than-or-equal.
@@ -49,42 +50,34 @@ const OP_GE: i64 = 2;
 const OP_LT: i64 = 3;
 /// Numeric operator: less-than-or-equal.
 const OP_LE: i64 = 4;
-/// Mask-equivalence operator. Shares the wire code `1` with `gt`; the
-/// arity (3) and operand types (bstr + bstr) disambiguate.
-const OP_MASK_EQ: i64 = 1;
-/// Object-in-set operator: member.
+/// Set-membership operator: `op.mem`.
 const OP_MEMBER: i64 = 6;
-/// Object-in-set operator: not-member.
+/// Set-membership operator: `op.nmem` (not member).
 const OP_NOT_MEMBER: i64 = 7;
-/// Set-of-set operator: every member of the evidence set maps to a
-/// member of the reference set.
-const OP_SUBSET: i64 = 8;
-/// Set-of-set operator: every member of the reference set maps to a
-/// member of the evidence set.
-const OP_SUPERSET: i64 = 9;
-/// Set-of-set operator: no member of the evidence set maps to any
-/// member of the reference set.
-const OP_DISJOINT: i64 = 10;
 
 // -- Operator enums. --------------------------------------------------------
 
-/// Numeric (and time / tdate / epoch) comparison operator (§8.1.2, §8.1.4).
+/// Numeric comparison operator (v07 §8.2.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum NumericOp {
-    /// `gt` — greater-than.
+    /// `op.eq` — equality. Reserved by the spec; not emitted by any
+    /// `tagged-numeric-*` CDDL rule but accepted on decode.
+    Eq,
+    /// `op.gt` — greater-than.
     Gt,
-    /// `ge` — greater-than-or-equal.
+    /// `op.ge` — greater-than-or-equal.
     Ge,
-    /// `lt` — less-than.
+    /// `op.lt` — less-than.
     Lt,
-    /// `le` — less-than-or-equal.
+    /// `op.le` — less-than-or-equal.
     Le,
 }
 
 impl NumericOp {
     fn from_code(code: i64) -> Option<Self> {
         Some(match code {
+            OP_EQ => Self::Eq,
             OP_GT => Self::Gt,
             OP_GE => Self::Ge,
             OP_LT => Self::Lt,
@@ -93,10 +86,11 @@ impl NumericOp {
         })
     }
 
-    /// Short text mnemonic suitable for diagnostic output: `"gt"`,
-    /// `"ge"`, `"lt"`, or `"le"`.
+    /// Short text mnemonic suitable for diagnostic output: `"eq"`,
+    /// `"gt"`, `"ge"`, `"lt"`, or `"le"`.
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Eq => "eq",
             Self::Gt => "gt",
             Self::Ge => "ge",
             Self::Lt => "lt",
@@ -105,13 +99,13 @@ impl NumericOp {
     }
 }
 
-/// Object-in-set operator (§8.1.3 first form).
+/// Set-membership operator (v07 §8.2.3).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum SetOp {
-    /// `member` — operand_1 must be a member of operand_2 (a set).
+    /// `op.mem` — operand_1 must be a member of operand_2 (a set).
     Member,
-    /// `not-member` — operand_1 must NOT be a member of operand_2.
+    /// `op.nmem` — operand_1 must NOT be a member of operand_2.
     NotMember,
 }
 
@@ -133,42 +127,10 @@ impl SetOp {
     }
 }
 
-/// Set-of-set operator (§8.1.3 second form).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum SetOfSetOp {
-    /// `subset` — every member of evidence set S1 maps to a member of S2.
-    Subset,
-    /// `superset` — every member of reference set S2 maps to a member of S1.
-    Superset,
-    /// `disjoint` — no member of S1 maps to any member of S2.
-    Disjoint,
-}
-
-impl SetOfSetOp {
-    fn from_code(code: i64) -> Option<Self> {
-        Some(match code {
-            OP_SUBSET => Self::Subset,
-            OP_SUPERSET => Self::Superset,
-            OP_DISJOINT => Self::Disjoint,
-            _ => return None,
-        })
-    }
-
-    /// Short text mnemonic: `"subset"`, `"superset"`, or `"disjoint"`.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Subset => "subset",
-            Self::Superset => "superset",
-            Self::Disjoint => "disjoint",
-        }
-    }
-}
-
 // -- Numeric operand. -------------------------------------------------------
 
 /// Operand of a [`Expression::Numeric`] — an integer or float per the
-/// `numeric-type = integer / unsigned / float` rule in §8.1.2.
+/// `numeric-type = integer / unsigned / float` rule in v07 §8.2.2.
 ///
 /// CBOR has no distinct representation for unsigned vs signed; the
 /// `unsigned` case is covered by a non-negative `Int`.
@@ -183,265 +145,285 @@ pub enum Numeric {
 
 // -- Expression enum. -------------------------------------------------------
 
-/// Decoded representation of a CBOR `#6.60010(...)` expression.
+/// Decoded representation of an operator-shaped Intel reference value.
 ///
-/// Decoded via [`Expression::from_tag`] (which expects the surrounding
-/// `Value::Tag(60010, _)`) or [`Expression::from_body`] (which expects
-/// the inner array directly).
+/// Constructed via [`Expression::from_tag`] (which expects the outer
+/// `Value::Tag(_, _)` and dispatches on the tag number) or via the
+/// per-shape `from_body` constructors when the tag has already been
+/// stripped.
 ///
-/// The seven variants correspond to the seven shapes listed at the
-/// top of the module. Disambiguation among shapes whose operator
-/// codes overlap (`mask-eq` shares `1` with `gt`; numeric, time, tdate,
-/// and epoch all share operators `1..=4`) is performed by arity and
-/// operand type, so the decode is unambiguous for any well-formed
-/// expression.
+/// The five variants correspond to the five tag shapes listed at the
+/// top of the module.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
 pub enum Expression {
-    /// `[ op∈{gt,ge,lt,le}, int / float ]` — numeric or time
-    /// comparison (§8.1.2, §8.1.4.1). Time values wrapped in `#6.1`
-    /// are accepted on decode and stored unwrapped.
+    /// `#6.60010([ op∈{eq,gt,ge,lt,le}, int / float ])` —
+    /// numeric comparison (v07 §8.2.2).
     Numeric {
         /// Comparison operator.
         op: NumericOp,
         /// Reference numeric value.
         value: Numeric,
     },
-    /// `[ mask-eq, value: bstr, mask: bstr ]` — mask equivalence (§8.1.5).
-    Mask {
-        /// Reference value bytes.
-        value: Vec<u8>,
-        /// Bit-mask selecting which bits to compare.
-        mask: Vec<u8>,
-    },
-    /// `[ op∈{member,not-member}, [* any] ]` — object-in-set (§8.1.3).
-    Set {
+    /// `#6.60020([ op∈{mem,nmem}, [* digest] ])` — set-of-digests
+    /// membership (v07 §8.2.3). Each digest is preserved verbatim
+    /// as a CBOR value so the per-digest CDDL shape
+    /// (`[alg: int / text, val: bytes]`) is not coupled to this enum.
+    SetOfDigests {
         /// Membership operator.
         op: SetOp,
-        /// Reference set members.
+        /// Reference digests (each typically `[int, bstr]`).
         members: Vec<Value>,
     },
-    /// `[ op∈{subset,superset,disjoint}, [* [+ any]] ]` — set-of-set (§8.1.3).
-    SetOfSet {
-        /// Set-relation operator.
-        op: SetOfSetOp,
-        /// Reference sets (each an array of arbitrary CBOR items).
-        sets: Vec<Vec<Value>>,
+    /// `#6.60021([ op∈{mem,nmem}, [* tstr] ])` — set-of-text-strings
+    /// membership (v07 §8.2.3).
+    SetOfTstr {
+        /// Membership operator.
+        op: SetOp,
+        /// Reference strings.
+        members: Vec<String>,
     },
-    /// `[ op∈{gt,ge,lt,le}, tdate ]` — date-time string comparison
-    /// (§8.1.4.1). Values wrapped in `#6.0` are accepted on decode and
-    /// stored unwrapped.
-    Tdate {
-        /// Comparison operator.
-        op: NumericOp,
-        /// Reference date-time as an RFC 3339 string.
-        date: String,
+    /// `#6.564([ min: int / null, max: int / null ])` — closed
+    /// integer interval (`tagged-int-range`, base CoRIM). `None`
+    /// signals `negative-inf` (for `min`) or `positive-inf` (for
+    /// `max`).
+    IntRange {
+        /// Inclusive lower bound, or `None` for `-∞`.
+        min: Option<i128>,
+        /// Inclusive upper bound, or `None` for `+∞`.
+        max: Option<i128>,
     },
-    /// `[ op∈{gt,ge,lt,le}, grace-period: int, ?epoch-id ]` — epoch
-    /// comparison (§8.1.4.2). The optional epoch-id selects an
-    /// alternate epoch scheme; the default is verifier-current-time.
-    Epoch {
-        /// Comparison operator applied to the grace window.
-        op: NumericOp,
-        /// Grace period in seconds, relative to the epoch.
-        grace_period: i64,
-        /// Optional epoch identifier (`$tagged-epoch-id`); `None`
-        /// means "verifier current time".
-        epoch_id: Option<Value>,
-    },
+    /// `#6.553(uint)` — minimum SVN (`tagged-min-svn`, base CoRIM).
+    /// Evidence SVN must be `>=` this value.
+    MinSvn(u64),
 }
 
 impl Expression {
-    /// Decode an expression from a CBOR value that is expected to be a
-    /// `Value::Tag(60010, ...)`.
+    /// Decode an expression from a CBOR value that is expected to be
+    /// one of the five operator-shaped tags
+    /// (`60010`/`60020`/`60021`/`564`/`553`).
     ///
     /// Returns [`ExpressionDecodeError::NotTagged`] if the input is
     /// not a tag, [`ExpressionDecodeError::WrongTag`] if the tag
-    /// number differs from `60010`, or any of the body errors from
-    /// [`Expression::from_body`].
+    /// number is not one of the five, or a shape-specific error from
+    /// the per-tag decoder.
     pub fn from_tag(value: &Value) -> Result<Self, ExpressionDecodeError> {
         match value {
-            Value::Tag(t, inner) if *t == TAG_INTEL_EXPRESSION => Self::from_body(inner.as_ref()),
+            Value::Tag(t, inner) if *t == TAG_INTEL_EXPRESSION => {
+                Self::numeric_from_body(inner.as_ref())
+            }
+            Value::Tag(t, inner) if *t == TAG_INTEL_SET_DIGEST_EXPRESSION => {
+                Self::set_digest_from_body(inner.as_ref())
+            }
+            Value::Tag(t, inner) if *t == TAG_INTEL_SET_TSTR_EXPRESSION => {
+                Self::set_tstr_from_body(inner.as_ref())
+            }
+            Value::Tag(t, inner) if *t == TAG_INT_RANGE => {
+                Self::int_range_from_body(inner.as_ref())
+            }
+            Value::Tag(t, inner) if *t == TAG_MIN_SVN => Self::min_svn_from_body(inner.as_ref()),
             Value::Tag(t, _) => Err(ExpressionDecodeError::WrongTag(*t)),
             _ => Err(ExpressionDecodeError::NotTagged),
         }
     }
 
-    /// Decode an expression from its CBOR array body (i.e. the value
-    /// inside the `#6.60010(...)` tag).
-    ///
-    /// Useful when the caller has already unwrapped the tag.
-    pub fn from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = match body {
-            Value::Array(a) => a,
-            _ => return Err(ExpressionDecodeError::NotArray),
-        };
-        if items.len() < 2 || items.len() > 3 {
+    /// Returns `true` if `tag` is one of the five tags this decoder
+    /// recognises (`60010`/`60020`/`60021`/`564`/`553`).
+    pub fn is_intel_expression_tag(tag: u64) -> bool {
+        matches!(
+            tag,
+            TAG_INTEL_EXPRESSION
+                | TAG_INTEL_SET_DIGEST_EXPRESSION
+                | TAG_INTEL_SET_TSTR_EXPRESSION
+                | TAG_INT_RANGE
+                | TAG_MIN_SVN
+        )
+    }
+
+    fn numeric_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        let items = expect_array(body)?;
+        if items.len() != 2 {
             return Err(ExpressionDecodeError::WrongArity(items.len()));
         }
-        let op_code = match &items[0] {
-            Value::Integer(n) => {
-                i64::try_from(*n).map_err(|_| ExpressionDecodeError::OperatorOutOfRange(*n))?
-            }
-            _ => return Err(ExpressionDecodeError::OperatorNotInteger),
+        let op = numeric_op(&items[0])?;
+        let value = numeric_value(&items[1])?;
+        Ok(Self::Numeric { op, value })
+    }
+
+    fn set_digest_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        let items = expect_array(body)?;
+        if items.len() != 2 {
+            return Err(ExpressionDecodeError::WrongArity(items.len()));
+        }
+        let op = set_op(&items[0])?;
+        let members = match &items[1] {
+            Value::Array(a) => a.clone(),
+            _ => return Err(ExpressionDecodeError::SetOperandNotArray),
         };
+        Ok(Self::SetOfDigests { op, members })
+    }
 
-        // Set and set-of-set have unambiguous operator codes (6..=10).
-        if let Some(op) = SetOp::from_code(op_code) {
-            if items.len() != 2 {
-                return Err(ExpressionDecodeError::WrongArity(items.len()));
-            }
-            let members = match &items[1] {
-                Value::Array(a) => a.clone(),
-                _ => return Err(ExpressionDecodeError::SetOperandNotArray),
-            };
-            return Ok(Self::Set { op, members });
+    fn set_tstr_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        let items = expect_array(body)?;
+        if items.len() != 2 {
+            return Err(ExpressionDecodeError::WrongArity(items.len()));
         }
-        if let Some(op) = SetOfSetOp::from_code(op_code) {
-            if items.len() != 2 {
-                return Err(ExpressionDecodeError::WrongArity(items.len()));
-            }
-            let outer = match &items[1] {
-                Value::Array(a) => a,
-                _ => return Err(ExpressionDecodeError::SetOperandNotArray),
-            };
-            let mut sets: Vec<Vec<Value>> = Vec::with_capacity(outer.len());
-            for inner in outer {
-                match inner {
-                    Value::Array(a) => sets.push(a.clone()),
-                    _ => return Err(ExpressionDecodeError::SetOfSetMemberNotArray),
+        let op = set_op(&items[0])?;
+        let members = match &items[1] {
+            Value::Array(a) => {
+                let mut out = Vec::with_capacity(a.len());
+                for v in a {
+                    match v {
+                        Value::Text(s) => out.push(s.clone()),
+                        _ => return Err(ExpressionDecodeError::SetTstrMemberNotText),
+                    }
                 }
+                out
             }
-            return Ok(Self::SetOfSet { op, sets });
+            _ => return Err(ExpressionDecodeError::SetOperandNotArray),
+        };
+        Ok(Self::SetOfTstr { op, members })
+    }
+
+    fn int_range_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        let items = expect_array(body)?;
+        if items.len() != 2 {
+            return Err(ExpressionDecodeError::WrongArity(items.len()));
         }
-
-        // Remaining operators (1..=4) cover numeric, mask, tdate, and epoch.
-        let nop =
-            NumericOp::from_code(op_code).ok_or(ExpressionDecodeError::UnknownOperator(op_code))?;
-
-        if items.len() == 3 {
-            // mask-eq (op==1, two bstr operands) or epoch (op + int + epoch-id).
-            if op_code == OP_MASK_EQ {
-                if let (Value::Bytes(value), Value::Bytes(mask)) = (&items[1], &items[2]) {
-                    return Ok(Self::Mask {
-                        value: value.clone(),
-                        mask: mask.clone(),
-                    });
-                }
+        let min = match &items[0] {
+            Value::Null => None,
+            Value::Integer(n) => Some(*n),
+            _ => return Err(ExpressionDecodeError::IntRangeBoundType),
+        };
+        let max = match &items[1] {
+            Value::Null => None,
+            Value::Integer(n) => Some(*n),
+            _ => return Err(ExpressionDecodeError::IntRangeBoundType),
+        };
+        if let (Some(lo), Some(hi)) = (min, max) {
+            if lo > hi {
+                return Err(ExpressionDecodeError::IntRangeReversed);
             }
-            if let Value::Integer(n) = &items[1] {
-                let grace_period = i64::try_from(*n)
-                    .map_err(|_| ExpressionDecodeError::EpochGraceOutOfRange(*n))?;
-                return Ok(Self::Epoch {
-                    op: nop,
-                    grace_period,
-                    epoch_id: Some(items[2].clone()),
-                });
-            }
-            return Err(ExpressionDecodeError::UnrecognizedShape);
         }
+        Ok(Self::IntRange { min, max })
+    }
 
-        // len == 2: numeric, tdate (text), or 2-element epoch.
-        // Numeric is preferred when ambiguous with 2-element epoch.
-        match &items[1] {
-            Value::Text(t) => Ok(Self::Tdate {
-                op: nop,
-                date: t.clone(),
-            }),
-            // `#6.0(text)` — RFC 8949 §3.4.1 tdate.
-            Value::Tag(0, inner) => match inner.as_ref() {
-                Value::Text(t) => Ok(Self::Tdate {
-                    op: nop,
-                    date: t.clone(),
-                }),
-                _ => Err(ExpressionDecodeError::TdateNotText),
-            },
-            // `#6.1(number)` — RFC 8949 §3.4.2 epoch-based time.
-            Value::Tag(1, inner) => match inner.as_ref() {
-                Value::Integer(n) => Ok(Self::Numeric {
-                    op: nop,
-                    value: Numeric::Int(*n),
-                }),
-                Value::Float(f) => Ok(Self::Numeric {
-                    op: nop,
-                    value: Numeric::Float(*f),
-                }),
-                _ => Err(ExpressionDecodeError::NumericOperandWrongType),
-            },
-            Value::Integer(n) => Ok(Self::Numeric {
-                op: nop,
-                value: Numeric::Int(*n),
-            }),
-            Value::Float(f) => Ok(Self::Numeric {
-                op: nop,
-                value: Numeric::Float(*f),
-            }),
-            _ => Err(ExpressionDecodeError::UnrecognizedShape),
+    fn min_svn_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
+        match body {
+            Value::Integer(n) if *n >= 0 => {
+                let v = u64::try_from(*n).map_err(|_| ExpressionDecodeError::MinSvnOutOfRange)?;
+                Ok(Self::MinSvn(v))
+            }
+            Value::Integer(_) => Err(ExpressionDecodeError::MinSvnOutOfRange),
+            _ => Err(ExpressionDecodeError::MinSvnNotUint),
         }
+    }
+}
+
+fn expect_array(body: &Value) -> Result<&Vec<Value>, ExpressionDecodeError> {
+    match body {
+        Value::Array(a) => Ok(a),
+        _ => Err(ExpressionDecodeError::NotArray),
+    }
+}
+
+fn numeric_op(v: &Value) -> Result<NumericOp, ExpressionDecodeError> {
+    let code = op_code(v)?;
+    NumericOp::from_code(code).ok_or(ExpressionDecodeError::UnknownOperator(code))
+}
+
+fn set_op(v: &Value) -> Result<SetOp, ExpressionDecodeError> {
+    let code = op_code(v)?;
+    SetOp::from_code(code).ok_or(ExpressionDecodeError::UnknownOperator(code))
+}
+
+fn op_code(v: &Value) -> Result<i64, ExpressionDecodeError> {
+    match v {
+        Value::Integer(n) => {
+            i64::try_from(*n).map_err(|_| ExpressionDecodeError::OperatorOutOfRange(*n))
+        }
+        _ => Err(ExpressionDecodeError::OperatorNotInteger),
+    }
+}
+
+fn numeric_value(v: &Value) -> Result<Numeric, ExpressionDecodeError> {
+    match v {
+        Value::Integer(n) => Ok(Numeric::Int(*n)),
+        Value::Float(f) => Ok(Numeric::Float(*f)),
+        // `#6.1(number)` — RFC 8949 §3.4.2 epoch-based time.
+        Value::Tag(1, inner) => match inner.as_ref() {
+            Value::Integer(n) => Ok(Numeric::Int(*n)),
+            Value::Float(f) => Ok(Numeric::Float(*f)),
+            _ => Err(ExpressionDecodeError::NumericOperandWrongType),
+        },
+        _ => Err(ExpressionDecodeError::NumericOperandWrongType),
     }
 }
 
 // -- Error type. ------------------------------------------------------------
 
-/// Error returned by [`Expression::from_tag`] / [`Expression::from_body`]
-/// when a CBOR value does not match any §8.1 expression shape.
+/// Error returned by [`Expression::from_tag`] when a CBOR value does
+/// not match any operator-shaped reference value defined by v07
+/// §8.2 or the base CoRIM `tagged-int-range` / `tagged-min-svn`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum ExpressionDecodeError {
-    /// Input was not a CBOR tag (expected `#6.60010(...)`).
+    /// Input was not a CBOR tag.
     NotTagged,
-    /// Input was a CBOR tag but the number was not `60010`.
+    /// Input was a CBOR tag but the number was not one of
+    /// `{60010, 60020, 60021, 564, 553}`.
     WrongTag(u64),
-    /// The tag body was not a CBOR array.
+    /// The tag body was not a CBOR array (where one was required).
     NotArray,
-    /// The array had fewer than 2 or more than 3 elements; no §8.1
-    /// expression has any other arity.
+    /// The body array had the wrong number of elements for the tag.
     WrongArity(usize),
-    /// The first element of the array was not an integer.
+    /// The operator slot was not an integer.
     OperatorNotInteger,
-    /// The first element was an integer but did not fit in `i64`.
+    /// The operator slot was an integer that did not fit in `i64`.
     OperatorOutOfRange(i128),
-    /// The operator code was not one of `{1, 2, 3, 4, 6, 7, 8, 9, 10}`.
+    /// The operator code did not match the operator set permitted by
+    /// the tag (e.g. a set tag carried a numeric operator code).
     UnknownOperator(i64),
-    /// A set / set-of-set expression's operand was not an array.
+    /// A set expression's operand was not an array.
     SetOperandNotArray,
-    /// A member of a set-of-set's outer array was not itself an array.
-    SetOfSetMemberNotArray,
-    /// A `tdate` operand was not `text` (bare or `#6.0(text)`).
-    TdateNotText,
+    /// A `set-tstr-type` member was not a text string.
+    SetTstrMemberNotText,
     /// A numeric operand had a type other than integer or float
     /// (bare or `#6.1`-wrapped).
     NumericOperandWrongType,
-    /// An epoch `grace-period` integer did not fit in `i64`.
-    EpochGraceOutOfRange(i128),
-    /// Operand types did not match any §8.1 expression shape.
-    UnrecognizedShape,
+    /// An `int-range` bound was neither `null` nor an integer.
+    IntRangeBoundType,
+    /// An `int-range` had `min > max`.
+    IntRangeReversed,
+    /// A `tagged-min-svn` body did not fit in `u64`.
+    MinSvnOutOfRange,
+    /// A `tagged-min-svn` body was not an unsigned integer.
+    MinSvnNotUint,
 }
 
 impl core::fmt::Display for ExpressionDecodeError {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            Self::NotTagged => write!(f, "expected `#6.60010(...)` CBOR tag"),
-            Self::WrongTag(n) => write!(f, "expected CBOR tag 60010, got tag {}", n),
+            Self::NotTagged => write!(f, "expected an Intel expression CBOR tag"),
+            Self::WrongTag(n) => write!(
+                f,
+                "expected tag 60010 / 60020 / 60021 / 564 / 553, got tag {}",
+                n
+            ),
             Self::NotArray => write!(f, "expression tag body must be a CBOR array"),
-            Self::WrongArity(n) => {
-                write!(f, "expression array must have 2 or 3 elements, got {}", n)
-            }
+            Self::WrongArity(n) => write!(f, "expression array has wrong arity: {}", n),
             Self::OperatorNotInteger => write!(f, "expression operator must be an integer"),
             Self::OperatorOutOfRange(n) => write!(f, "operator code {} does not fit in i64", n),
-            Self::UnknownOperator(n) => write!(f, "unknown operator code {}", n),
-            Self::SetOperandNotArray => write!(f, "set / set-of-set operand must be an array"),
-            Self::SetOfSetMemberNotArray => write!(f, "set-of-set member must itself be an array"),
-            Self::TdateNotText => write!(f, "tdate operand must be a text string"),
+            Self::UnknownOperator(n) => write!(f, "operator code {} not permitted by this tag", n),
+            Self::SetOperandNotArray => write!(f, "set operand must be an array"),
+            Self::SetTstrMemberNotText => write!(f, "set-tstr member must be a text string"),
             Self::NumericOperandWrongType => {
                 write!(f, "numeric operand must be an integer or float")
             }
-            Self::EpochGraceOutOfRange(n) => {
-                write!(f, "epoch grace-period {} does not fit in i64", n)
-            }
-            Self::UnrecognizedShape => {
-                write!(f, "operand shape does not match any §8.1 expression")
-            }
+            Self::IntRangeBoundType => write!(f, "int-range bound must be int or null"),
+            Self::IntRangeReversed => write!(f, "int-range has min > max"),
+            Self::MinSvnOutOfRange => write!(f, "tagged-min-svn value does not fit in u64"),
+            Self::MinSvnNotUint => write!(f, "tagged-min-svn body must be an unsigned integer"),
         }
     }
 }
@@ -455,42 +437,39 @@ impl std::error::Error for ExpressionDecodeError {}
 /// `--diagnose` output. Examples:
 ///
 /// - `Numeric { op: Ge, value: Int(5) }` → `"ge 5"`
-/// - `Mask { value: <8 bytes>, mask: <8 bytes> }` → `"mask-eq <8-byte value, 8-byte mask>"`
-/// - `Set { op: Member, members: [3 items] }` → `"member (3 items)"`
-/// - `Tdate { op: Ge, date: "2024-01-01" }` → `"ge \"2024-01-01\""`
+/// - `SetOfDigests { op: Member, members: [3 items] }` → `"member (3 digests)"`
+/// - `SetOfTstr { op: NotMember, members: ["CVE-1"] }` → `"not-member (1 string)"`
+/// - `IntRange { min: Some(0), max: Some(15) }` → `"range [0..15]"`
+/// - `MinSvn(5)` → `"min-svn 5"`
 pub fn display_expression(e: &Expression) -> String {
     match e {
         Expression::Numeric { op, value } => format!("{} {}", op.as_str(), display_numeric(value)),
-        Expression::Mask { value, mask } => format!(
-            "mask-eq <{}-byte value, {}-byte mask>",
-            value.len(),
-            mask.len()
-        ),
-        Expression::Set { op, members } => {
+        Expression::SetOfDigests { op, members } => {
             format!(
-                "{} ({} item{})",
+                "{} ({} digest{})",
                 op.as_str(),
                 members.len(),
                 s_plural(members.len())
             )
         }
-        Expression::SetOfSet { op, sets } => {
+        Expression::SetOfTstr { op, members } => {
             format!(
-                "{} ({} set{})",
+                "{} ({} string{})",
                 op.as_str(),
-                sets.len(),
-                s_plural(sets.len())
+                members.len(),
+                s_plural(members.len())
             )
         }
-        Expression::Tdate { op, date } => format!("{} \"{}\"", op.as_str(), date),
-        Expression::Epoch {
-            op,
-            grace_period,
-            epoch_id,
-        } => match epoch_id {
-            Some(_) => format!("{} grace={}s +epoch-id", op.as_str(), grace_period),
-            None => format!("{} grace={}s", op.as_str(), grace_period),
-        },
+        Expression::IntRange { min, max } => {
+            let lo = min
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "-∞".to_string());
+            let hi = max
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| "+∞".to_string());
+            format!("range [{}..{}]", lo, hi)
+        }
+        Expression::MinSvn(v) => format!("min-svn {}", v),
     }
 }
 
@@ -515,15 +494,24 @@ fn s_plural(n: usize) -> &'static str {
 mod tests {
     use super::*;
 
-    fn expr(items: Vec<Value>) -> Value {
+    fn numeric_expr(items: Vec<Value>) -> Value {
         Value::Tag(TAG_INTEL_EXPRESSION, Box::new(Value::Array(items)))
     }
+    fn set_digest_expr(items: Vec<Value>) -> Value {
+        Value::Tag(
+            TAG_INTEL_SET_DIGEST_EXPRESSION,
+            Box::new(Value::Array(items)),
+        )
+    }
+    fn set_tstr_expr(items: Vec<Value>) -> Value {
+        Value::Tag(TAG_INTEL_SET_TSTR_EXPRESSION, Box::new(Value::Array(items)))
+    }
 
-    // -- numeric ---
+    // -- numeric -------------------------------------------------------------
 
     #[test]
     fn decodes_numeric_ge_int() {
-        let v = expr(vec![Value::Integer(2), Value::Integer(5)]);
+        let v = numeric_expr(vec![Value::Integer(OP_GE as i128), Value::Integer(5)]);
         let e = Expression::from_tag(&v).unwrap();
         assert_eq!(
             e,
@@ -536,8 +524,21 @@ mod tests {
     }
 
     #[test]
+    fn decodes_numeric_eq() {
+        let v = numeric_expr(vec![Value::Integer(OP_EQ as i128), Value::Integer(7)]);
+        let e = Expression::from_tag(&v).unwrap();
+        assert_eq!(
+            e,
+            Expression::Numeric {
+                op: NumericOp::Eq,
+                value: Numeric::Int(7),
+            }
+        );
+    }
+
+    #[test]
     fn decodes_numeric_lt_float() {
-        let v = expr(vec![Value::Integer(3), Value::Float(1.5)]);
+        let v = numeric_expr(vec![Value::Integer(OP_LT as i128), Value::Float(1.5)]);
         let e = Expression::from_tag(&v).unwrap();
         assert_eq!(
             e,
@@ -551,7 +552,7 @@ mod tests {
     #[test]
     fn unwraps_tagged_time_61() {
         let inner = Value::Tag(1, Box::new(Value::Integer(1700000000)));
-        let v = expr(vec![Value::Integer(2), inner]);
+        let v = numeric_expr(vec![Value::Integer(OP_GE as i128), inner]);
         let e = Expression::from_tag(&v).unwrap();
         assert_eq!(
             e,
@@ -562,156 +563,172 @@ mod tests {
         );
     }
 
-    // -- mask ---
+    // -- set-of-tstr ---------------------------------------------------------
 
     #[test]
-    fn decodes_mask_eq() {
-        let v = expr(vec![
-            Value::Integer(1),
-            Value::Bytes(vec![0xAA, 0xBB]),
-            Value::Bytes(vec![0xFF, 0x00]),
-        ]);
-        let e = Expression::from_tag(&v).unwrap();
-        assert_eq!(
-            e,
-            Expression::Mask {
-                value: vec![0xAA, 0xBB],
-                mask: vec![0xFF, 0x00],
-            }
-        );
-        assert_eq!(
-            display_expression(&e),
-            "mask-eq <2-byte value, 2-byte mask>"
-        );
-    }
-
-    // -- set ---
-
-    #[test]
-    fn decodes_set_member() {
-        let v = expr(vec![
-            Value::Integer(6),
+    fn decodes_set_tstr_member() {
+        let v = set_tstr_expr(vec![
+            Value::Integer(OP_MEMBER as i128),
             Value::Array(vec![
-                Value::Integer(1),
-                Value::Integer(2),
-                Value::Integer(3),
+                Value::Text("UpToDate".into()),
+                Value::Text("OutOfDate".into()),
             ]),
         ]);
         let e = Expression::from_tag(&v).unwrap();
-        match e {
-            Expression::Set { op, ref members } => {
-                assert_eq!(op, SetOp::Member);
-                assert_eq!(members.len(), 3);
+        match &e {
+            Expression::SetOfTstr { op, members } => {
+                assert_eq!(*op, SetOp::Member);
+                assert_eq!(members.len(), 2);
             }
-            other => panic!("expected Set, got {:?}", other),
+            other => panic!("expected SetOfTstr, got {:?}", other),
         }
-        assert_eq!(
-            display_expression(&Expression::from_tag(&v).unwrap()),
-            "member (3 items)"
-        );
+        assert_eq!(display_expression(&e), "member (2 strings)");
     }
 
     #[test]
-    fn decodes_set_not_member_singleton_uses_singular() {
-        let v = expr(vec![
-            Value::Integer(7),
+    fn decodes_set_tstr_not_member_singleton_uses_singular() {
+        let v = set_tstr_expr(vec![
+            Value::Integer(OP_NOT_MEMBER as i128),
             Value::Array(vec![Value::Text("CVE-1".into())]),
         ]);
         let e = Expression::from_tag(&v).unwrap();
-        assert_eq!(display_expression(&e), "not-member (1 item)");
-    }
-
-    // -- set-of-set ---
-
-    #[test]
-    fn decodes_set_of_set_subset() {
-        let v = expr(vec![
-            Value::Integer(8),
-            Value::Array(vec![
-                Value::Array(vec![Value::Integer(1)]),
-                Value::Array(vec![Value::Integer(2), Value::Integer(3)]),
-            ]),
-        ]);
-        let e = Expression::from_tag(&v).unwrap();
-        match e {
-            Expression::SetOfSet { op, ref sets } => {
-                assert_eq!(op, SetOfSetOp::Subset);
-                assert_eq!(sets.len(), 2);
-                assert_eq!(sets[1].len(), 2);
-            }
-            other => panic!("expected SetOfSet, got {:?}", other),
-        }
+        assert_eq!(display_expression(&e), "not-member (1 string)");
     }
 
     #[test]
-    fn set_of_set_rejects_non_array_member() {
-        let v = expr(vec![
-            Value::Integer(9),
-            Value::Array(vec![Value::Integer(42)]),
+    fn set_tstr_rejects_non_text_member() {
+        let v = set_tstr_expr(vec![
+            Value::Integer(OP_MEMBER as i128),
+            Value::Array(vec![Value::Integer(1)]),
         ]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
-            ExpressionDecodeError::SetOfSetMemberNotArray,
+            ExpressionDecodeError::SetTstrMemberNotText
         );
     }
 
-    // -- tdate ---
+    // -- set-of-digests ------------------------------------------------------
 
     #[test]
-    fn decodes_tdate_bare_text() {
-        let v = expr(vec![
-            Value::Integer(2),
-            Value::Text("2024-01-01T00:00:00Z".into()),
+    fn decodes_set_digest_member() {
+        let digest = Value::Array(vec![Value::Integer(1), Value::Bytes(vec![0u8; 32])]);
+        let v = set_digest_expr(vec![
+            Value::Integer(OP_MEMBER as i128),
+            Value::Array(vec![digest]),
         ]);
+        let e = Expression::from_tag(&v).unwrap();
+        match &e {
+            Expression::SetOfDigests { op, members } => {
+                assert_eq!(*op, SetOp::Member);
+                assert_eq!(members.len(), 1);
+            }
+            other => panic!("expected SetOfDigests, got {:?}", other),
+        }
+        assert_eq!(display_expression(&e), "member (1 digest)");
+    }
+
+    // -- int-range -----------------------------------------------------------
+
+    #[test]
+    fn decodes_int_range_closed() {
+        let v = Value::Tag(
+            TAG_INT_RANGE,
+            Box::new(Value::Array(vec![Value::Integer(0), Value::Integer(15)])),
+        );
         let e = Expression::from_tag(&v).unwrap();
         assert_eq!(
             e,
-            Expression::Tdate {
-                op: NumericOp::Ge,
-                date: "2024-01-01T00:00:00Z".into(),
+            Expression::IntRange {
+                min: Some(0),
+                max: Some(15),
             }
+        );
+        assert_eq!(display_expression(&e), "range [0..15]");
+    }
+
+    #[test]
+    fn decodes_int_range_half_open_min() {
+        let v = Value::Tag(
+            TAG_INT_RANGE,
+            Box::new(Value::Array(vec![Value::Null, Value::Integer(10)])),
+        );
+        let e = Expression::from_tag(&v).unwrap();
+        assert_eq!(
+            e,
+            Expression::IntRange {
+                min: None,
+                max: Some(10),
+            }
+        );
+        assert_eq!(display_expression(&e), "range [-∞..10]");
+    }
+
+    #[test]
+    fn decodes_int_range_half_open_max() {
+        let v = Value::Tag(
+            TAG_INT_RANGE,
+            Box::new(Value::Array(vec![Value::Integer(5), Value::Null])),
+        );
+        let e = Expression::from_tag(&v).unwrap();
+        assert_eq!(display_expression(&e), "range [5..+∞]");
+    }
+
+    #[test]
+    fn int_range_rejects_reversed() {
+        let v = Value::Tag(
+            TAG_INT_RANGE,
+            Box::new(Value::Array(vec![Value::Integer(10), Value::Integer(0)])),
+        );
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::IntRangeReversed
         );
     }
 
     #[test]
-    fn decodes_tdate_with_tag_0() {
-        let inner = Value::Tag(0, Box::new(Value::Text("2024-06-01T00:00:00Z".into())));
-        let v = expr(vec![Value::Integer(2), inner]);
-        let e = Expression::from_tag(&v).unwrap();
-        assert!(matches!(
-            e,
-            Expression::Tdate {
-                op: NumericOp::Ge,
-                ..
-            }
-        ));
+    fn int_range_rejects_non_int_non_null_bound() {
+        let v = Value::Tag(
+            TAG_INT_RANGE,
+            Box::new(Value::Array(vec![
+                Value::Text("0".into()),
+                Value::Integer(10),
+            ])),
+        );
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::IntRangeBoundType
+        );
     }
 
-    // -- epoch ---
+    // -- min-svn -------------------------------------------------------------
 
     #[test]
-    fn decodes_epoch_with_id() {
-        let v = expr(vec![
-            Value::Integer(1),
-            Value::Integer(60),
-            Value::Text("custom-epoch".into()),
-        ]);
+    fn decodes_min_svn() {
+        let v = Value::Tag(TAG_MIN_SVN, Box::new(Value::Integer(5)));
         let e = Expression::from_tag(&v).unwrap();
-        match e {
-            Expression::Epoch {
-                op,
-                grace_period,
-                epoch_id,
-            } => {
-                assert_eq!(op, NumericOp::Gt);
-                assert_eq!(grace_period, 60);
-                assert!(epoch_id.is_some());
-            }
-            other => panic!("expected Epoch, got {:?}", other),
-        }
+        assert_eq!(e, Expression::MinSvn(5));
+        assert_eq!(display_expression(&e), "min-svn 5");
     }
 
-    // -- error cases ---
+    #[test]
+    fn min_svn_rejects_negative() {
+        let v = Value::Tag(TAG_MIN_SVN, Box::new(Value::Integer(-1)));
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::MinSvnOutOfRange
+        );
+    }
+
+    #[test]
+    fn min_svn_rejects_non_int() {
+        let v = Value::Tag(TAG_MIN_SVN, Box::new(Value::Text("5".into())));
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::MinSvnNotUint
+        );
+    }
+
+    // -- error cases ---------------------------------------------------------
 
     #[test]
     fn rejects_non_tag() {
@@ -731,36 +748,44 @@ mod tests {
     }
 
     #[test]
-    fn rejects_wrong_arity() {
-        let v = expr(vec![Value::Integer(2)]);
+    fn numeric_rejects_wrong_arity() {
+        let v = numeric_expr(vec![Value::Integer(OP_GE as i128)]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
             ExpressionDecodeError::WrongArity(1),
         );
-        let v = expr(vec![
-            Value::Integer(2),
-            Value::Integer(0),
+        let v = numeric_expr(vec![
+            Value::Integer(OP_GE as i128),
             Value::Integer(0),
             Value::Integer(0),
         ]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
-            ExpressionDecodeError::WrongArity(4),
+            ExpressionDecodeError::WrongArity(3),
         );
     }
 
     #[test]
-    fn rejects_unknown_operator() {
-        let v = expr(vec![Value::Integer(99), Value::Integer(0)]);
+    fn numeric_rejects_set_operator() {
+        let v = numeric_expr(vec![Value::Integer(OP_MEMBER as i128), Value::Integer(0)]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
-            ExpressionDecodeError::UnknownOperator(99),
+            ExpressionDecodeError::UnknownOperator(OP_MEMBER),
+        );
+    }
+
+    #[test]
+    fn set_rejects_numeric_operator() {
+        let v = set_tstr_expr(vec![Value::Integer(OP_GE as i128), Value::Array(vec![])]);
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::UnknownOperator(OP_GE),
         );
     }
 
     #[test]
     fn rejects_non_integer_operator() {
-        let v = expr(vec![Value::Text("gt".into()), Value::Integer(0)]);
+        let v = numeric_expr(vec![Value::Text("ge".into()), Value::Integer(0)]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
             ExpressionDecodeError::OperatorNotInteger,
@@ -768,8 +793,17 @@ mod tests {
     }
 
     #[test]
-    fn rejects_set_with_non_array_operand() {
-        let v = expr(vec![Value::Integer(6), Value::Integer(1)]);
+    fn rejects_unknown_operator_code() {
+        let v = numeric_expr(vec![Value::Integer(99), Value::Integer(0)]);
+        assert_eq!(
+            Expression::from_tag(&v).unwrap_err(),
+            ExpressionDecodeError::UnknownOperator(99),
+        );
+    }
+
+    #[test]
+    fn set_rejects_non_array_operand() {
+        let v = set_tstr_expr(vec![Value::Integer(OP_MEMBER as i128), Value::Integer(1)]);
         assert_eq!(
             Expression::from_tag(&v).unwrap_err(),
             ExpressionDecodeError::SetOperandNotArray,
@@ -777,25 +811,13 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unrecognized_2elem_shape() {
-        // numeric op + non-int/non-text/non-float -> can't classify
-        let v = expr(vec![Value::Integer(2), Value::Bool(true)]);
-        assert_eq!(
-            Expression::from_tag(&v).unwrap_err(),
-            ExpressionDecodeError::UnrecognizedShape,
-        );
-    }
-
-    #[test]
-    fn from_body_skips_tag_unwrap() {
-        let body = Value::Array(vec![Value::Integer(2), Value::Integer(5)]);
-        let e = Expression::from_body(&body).unwrap();
-        assert_eq!(
-            e,
-            Expression::Numeric {
-                op: NumericOp::Ge,
-                value: Numeric::Int(5),
-            }
-        );
+    fn is_intel_expression_tag_check() {
+        assert!(Expression::is_intel_expression_tag(60010));
+        assert!(Expression::is_intel_expression_tag(60020));
+        assert!(Expression::is_intel_expression_tag(60021));
+        assert!(Expression::is_intel_expression_tag(564));
+        assert!(Expression::is_intel_expression_tag(553));
+        assert!(!Expression::is_intel_expression_tag(0));
+        assert!(!Expression::is_intel_expression_tag(60011));
     }
 }

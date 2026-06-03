@@ -1,15 +1,17 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Intel CoRIM profile (`draft-cds-rats-intel-corim-profile-03`,
+//! Intel CoRIM profile (`draft-cds-rats-intel-corim-profile-07`,
 //! profile OID `2.16.840.1.113741.1.16.1`).
 //!
 //! Gated on the `profile-intel` Cargo feature. Provides:
 //!
 //! - [`IntelProfile`](crate::profile::intel::IntelProfile) — the [`Profile`](crate::profile::Profile) implementation, registerable
 //!   with [`ProfileRegistry`](crate::profile::ProfileRegistry).
-//! - [`expression`](crate::profile::intel::expression) — the `#6.60010` operator-expression decoder used
-//!   by Intel-defined `measurement-values-map` extension keys.
+//! - [`expression`](crate::profile::intel::expression) — the operator-shaped reference-value decoder
+//!   for tags `#6.60010` (numeric), `#6.60020` (set-of-digests),
+//!   `#6.60021` (set-of-tstr), `#6.564` (`tagged-int-range`), and
+//!   `#6.553` (`tagged-min-svn`).
 //! - Internal per-key evaluator (see `eval` module, private).
 //!
 //! The core `corim` crate already preserves every Intel-defined key
@@ -20,7 +22,7 @@
 //!
 //! [Intel Profile for Remote Attestation][spec]
 //!
-//! [spec]: https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-03.html
+//! [spec]: https://www.ietf.org/archive/id/draft-cds-rats-intel-corim-profile-07.html
 //!
 //! # Example
 //!
@@ -46,12 +48,12 @@ use crate::types::measurement::MeasurementMap;
 mod eval;
 pub mod expression;
 pub use expression::{
-    display_expression, Expression, ExpressionDecodeError, Numeric, NumericOp, SetOfSetOp, SetOp,
-    TAG_INTEL_EXPRESSION,
+    display_expression, Expression, ExpressionDecodeError, Numeric, NumericOp, SetOp,
+    TAG_INTEL_EXPRESSION, TAG_INTEL_SET_DIGEST_EXPRESSION, TAG_INTEL_SET_TSTR_EXPRESSION,
 };
 
 // ---------------------------------------------------------------------------
-// Profile identifier — §4.1 of draft-cds-rats-intel-corim-profile-03
+// Profile identifier — §4.1 of draft-cds-rats-intel-corim-profile-07
 // ---------------------------------------------------------------------------
 
 /// Intel profile OID `2.16.840.1.113741.1.16.1`, DER-encoded.
@@ -74,44 +76,53 @@ pub const INTEL_PROFILE_OID_DER: &[u8] =
     &[0x60, 0x86, 0x48, 0x01, 0x86, 0xF8, 0x4D, 0x01, 0x10, 0x01];
 
 // ---------------------------------------------------------------------------
-// Measurement-values-map extension keys — §8.2 of the draft.
+// Measurement-values-map extension keys — §8.3 of v07.
 // All keys are negative integers; the spec assigns them outside the
 // 0..=15 range used by the base CoRIM measurement-values-map.
 // ---------------------------------------------------------------------------
 
-/// `tee.vendor` (§8.2.16) — TEE vendor name (`tstr`).
+/// `tee.vendor` (§8.3.15) — TEE vendor name (`tstr`).
 pub const MVAL_TEE_VENDOR: i64 = -70;
-/// `tee.model` (§8.2.10) — TEE model string (`tstr`).
+/// `tee.model` (§8.3.9) — TEE model string (`tstr`).
 pub const MVAL_TEE_MODEL: i64 = -71;
-/// `tee.tcbdate` (§8.2.4) — TCB validity date (`tdate` / expression).
+/// `tee.tcbdate` (§8.3.4) — TCB validity date
+/// (`tdate` / `time` / `etime` / `period`).
 pub const MVAL_TEE_TCBDATE: i64 = -72;
-/// `tee.isvsvn` (§8.2.12) — ISV SVN (numeric / `tagged-numeric-ge`).
+/// `tee.isvsvn` (§8.3.11) — ISV SVN
+/// (`svn-type` / `tagged-numeric-ge` / `tagged-int-range` / `tagged-min-svn`).
 pub const MVAL_TEE_ISVSVN: i64 = -73;
-/// `tee.instance-id` (§8.2.7) — instance identifier (`uint` / `bstr`).
-pub const MVAL_TEE_INSTANCE_ID: i64 = -77;
-/// `tee.pceid` (§8.2.11) — PCE identifier (`tstr`).
+/// `tee.pceid` (§8.3.10) — PCE identifier (`tstr` / `uint`).
 pub const MVAL_TEE_PCEID: i64 = -80;
-/// `tee.miscselect` (§8.2.9) — SGX MISCSELECT (`bstr` / `tagged-exp-mask-eq`).
+/// `tee.miscselect` (§8.3.8) — SGX MISCSELECT (`$masked-value-type`).
 pub const MVAL_TEE_MISCSELECT: i64 = -81;
-/// `tee.attributes` (§8.2.2) — TEE attributes (`bstr` / `tagged-exp-mask-eq`).
+/// `tee.attributes` (§8.3.2) — TEE attributes (`$masked-value-type`).
 pub const MVAL_TEE_ATTRIBUTES: i64 = -82;
-/// `tee.mrtee` (§8.2.5) — measurement of the TEE (`digest` / `tagged-exp-member`).
+/// `tee.mrtee` (§8.3.5) — measurement of the TEE
+/// (`digest` / `digests-type` / `tagged-exp-digest-{member,not-member}`).
 pub const MVAL_TEE_MRTEE: i64 = -83;
-/// `tee.mrsigner` (§8.2.5) — measurement of the TEE signer (`digest` / `tagged-exp-member`).
+/// `tee.mrsigner` (§8.3.5) — measurement of the TEE signer
+/// (`digest` / `digests-type` / `tagged-exp-digest-{member,not-member}`).
 pub const MVAL_TEE_MRSIGNER: i64 = -84;
-/// `tee.isvprodid` (§8.2.8) — ISV product ID (`uint` / `bstr`).
+/// `tee.isvprodid` (§8.3.7) — ISV product ID (`uint` / `bstr`).
 pub const MVAL_TEE_ISVPRODID: i64 = -85;
-/// `tee.tcb-eval-num` (§8.2.14) — TCB evaluation number (`uint` / `tagged-numeric-ge`).
+/// `tee.tcb-eval-num` (§8.3.13) — TCB evaluation number
+/// (`uint` / `tagged-numeric-ge` / `tagged-int-range`).
 pub const MVAL_TEE_TCB_EVAL_NUM: i64 = -86;
-/// `tee.tcbstatus` (§8.2.15) — TCB status (`set-type` / `tagged-exp-member`).
+/// `tee.tcbstatus` (§8.3.14) — TCB status
+/// (`set-tstr-type` / `tagged-exp-tstr-{member,not-member}`).
 pub const MVAL_TEE_TCBSTATUS: i64 = -88;
-/// `tee.advisory-ids` (§8.2.1) — security advisory IDs (`set-type` / `tagged-exp-not-member`).
+/// `tee.advisory-ids` (§8.3.1) — security advisory IDs
+/// (`set-tstr-type` / `tagged-exp-tstr-{member,not-member}`).
 pub const MVAL_TEE_ADVISORY_IDS: i64 = -89;
-/// `tee.epoch` (§8.2.6) — epoch timestamp (`tdate` / `tagged-exp-epoch-gt`).
-pub const MVAL_TEE_EPOCH: i64 = -90;
-/// `tee.cryptokeys` (§8.2.3) — TEE cryptographic keys (`[+ crypto-key]`).
+/// `tee.cryptokeys` (§8.3.3) — TEE cryptographic keys (`[+ crypto-key]`).
 pub const MVAL_TEE_CRYPTOKEYS: i64 = -91;
-/// `tee.tcb-comp-svn` (§8.2.13) — per-component TCB SVNs (`[16*16 svn]`).
+/// `tee.platform-instance-id` (§8.3.6) — platform instance ID (`bstr`).
+///
+/// Replaces the v03 `tee.instance-id` (code point `-77`), which was
+/// removed in v07.
+pub const MVAL_TEE_PLATFORM_INSTANCE_ID: i64 = -101;
+/// `tee.tcb-comp-svn` (§8.3.12) — per-component TCB SVNs
+/// (`[16*16 svn-type / tagged-numeric-ge / tagged-int-range / tagged-min-svn]`).
 pub const MVAL_TEE_TCB_COMP_SVN: i64 = -125;
 
 // ---------------------------------------------------------------------------
@@ -161,10 +172,11 @@ impl Profile for IntelProfile {
     /// Iterates the Intel-defined entries in
     /// [`reference.mval.extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
     /// (any integer key recognised by [`intel_mval_name`]) and evaluates
-    /// each one against the corresponding entry in `evidence` under the
-    /// operator semantics of `#6.60010(...)` expressions per
-    /// `draft-cds-rats-intel-corim-profile-03` §8.1. See the `eval`
-    /// submodule for the per-key verdict policy.
+    /// each one against the corresponding entry in `evidence` per the
+    /// v07 §8.2 operator-shaped tags (`#6.60010` / `60020` / `60021`)
+    /// and the base-CoRIM `tagged-int-range` (`#6.564`) /
+    /// `tagged-min-svn` (`#6.553`). See the `eval` submodule for the
+    /// per-key verdict policy.
     ///
     /// Composition with the core structural fields (`mkey`, `digests`,
     /// `svn`, `name`, ...) uses
@@ -175,13 +187,8 @@ impl Profile for IntelProfile {
     /// Per-key verdicts roll up as follows:
     /// - any Intel-keyed `Fail` → `Some(false)` (early exit; structural
     ///   check skipped)
-    /// - all evaluatable Intel keys `Pass` and at least one was
-    ///   evaluated → `Some(core_fields_match(...))`
-    /// - the reference contains only `Skip`-class Intel keys (tdate,
-    ///   epoch, set-of-set) → `None` (defer entirely to core's
-    ///   non-extension comparison; the time constraint is silently
-    ///   skipped pending the future time-semantics design)
-    /// - the reference has no Intel keys → `None` (defer)
+    /// - all Intel keys `Pass` → `Some(core_fields_match(...))`
+    /// - the reference has no Intel keys → `None` (defer to core)
     ///
     /// If the reference references an Intel key whose entry is missing
     /// from evidence, the verdict is `Some(false)` — a verifier MUST
@@ -229,7 +236,6 @@ pub fn intel_mval_name(key: i64) -> Option<&'static str> {
         MVAL_TEE_MODEL => "tee.model",
         MVAL_TEE_TCBDATE => "tee.tcbdate",
         MVAL_TEE_ISVSVN => "tee.isvsvn",
-        MVAL_TEE_INSTANCE_ID => "tee.instance-id",
         MVAL_TEE_PCEID => "tee.pceid",
         MVAL_TEE_MISCSELECT => "tee.miscselect",
         MVAL_TEE_ATTRIBUTES => "tee.attributes",
@@ -239,8 +245,8 @@ pub fn intel_mval_name(key: i64) -> Option<&'static str> {
         MVAL_TEE_TCB_EVAL_NUM => "tee.tcb-eval-num",
         MVAL_TEE_TCBSTATUS => "tee.tcbstatus",
         MVAL_TEE_ADVISORY_IDS => "tee.advisory-ids",
-        MVAL_TEE_EPOCH => "tee.epoch",
         MVAL_TEE_CRYPTOKEYS => "tee.cryptokeys",
+        MVAL_TEE_PLATFORM_INSTANCE_ID => "tee.platform-instance-id",
         MVAL_TEE_TCB_COMP_SVN => "tee.tcb-comp-svn",
         _ => return None,
     })
@@ -249,10 +255,13 @@ pub fn intel_mval_name(key: i64) -> Option<&'static str> {
 /// Render a CBOR value as a short, human-readable shape description
 /// suitable for one-line diagnostic output.
 ///
-/// `#6.60010(...)` expressions are decoded via [`Expression::from_tag`]
-/// and rendered as e.g. `"ge 5"` or `"member (3 items)"`. Tags that
-/// either are not `60010` or fail expression decode are rendered as
-/// `"#6.<tag>(…)"`.
+/// The five Intel expression tags
+/// (`#6.60010` / `60020` / `60021` / `564` / `553`) are decoded via
+/// [`Expression::from_tag`] and rendered as e.g. `"ge 5"` or
+/// `"member (3 strings)"`. RFC 9581 time tags (`#6.1001` etime,
+/// `#6.1002` duration, `#6.1003` period — referenced by v07 §8.3.4
+/// for `tee.tcbdate`) are labelled by name. Other tags are rendered
+/// as `"#6.<tag>(…)"`.
 fn value_summary(v: &Value) -> String {
     match v {
         Value::Integer(n) => format!("{}", n),
@@ -266,9 +275,25 @@ fn value_summary(v: &Value) -> String {
         Value::Bytes(b) => format!("<{}-byte bstr>", b.len()),
         Value::Array(a) => format!("array[{}]", a.len()),
         Value::Map(m) => format!("map({} entries)", m.len()),
-        Value::Tag(tag, _) if *tag == TAG_INTEL_EXPRESSION => match Expression::from_tag(v) {
-            Ok(expr) => display_expression(&expr),
-            Err(_) => format!("#6.{}(…)", tag),
+        Value::Tag(tag, _) if Expression::is_intel_expression_tag(*tag) => {
+            match Expression::from_tag(v) {
+                Ok(expr) => display_expression(&expr),
+                Err(_) => format!("#6.{}(…)", tag),
+            }
+        }
+        // RFC 9581 time wrappers, referenced by v07 §8.3.4 `tee.tcbdate`.
+        Value::Tag(1001, _) => "etime(…)".to_string(),
+        Value::Tag(1002, _) => "duration(…)".to_string(),
+        Value::Tag(1003, _) => "period(…)".to_string(),
+        // RFC 8949 standard time tags.
+        Value::Tag(0, inner) => match inner.as_ref() {
+            Value::Text(t) => format!("tdate(\"{}\")", t),
+            _ => "#6.0(…)".to_string(),
+        },
+        Value::Tag(1, inner) => match inner.as_ref() {
+            Value::Integer(n) => format!("time({})", n),
+            Value::Float(f) => format!("time({})", f),
+            _ => "#6.1(…)".to_string(),
         },
         Value::Tag(tag, _) => format!("#6.{}(…)", tag),
         Value::Bool(b) => {
@@ -307,8 +332,16 @@ mod tests {
     fn unknown_mval_keys_return_none() {
         assert_eq!(intel_mval_name(-1), None);
         assert_eq!(intel_mval_name(0), None);
+        assert_eq!(intel_mval_name(-77), None); // v03 tee.instance-id (removed in v07)
+        assert_eq!(intel_mval_name(-90), None); // v03 tee.epoch (removed in v07)
         assert_eq!(intel_mval_name(-100), None);
         assert_eq!(intel_mval_name(-126), None);
+    }
+
+    #[test]
+    fn platform_instance_id_is_recognised() {
+        // v07 §8.3.6 replaces -77 with -101.
+        assert_eq!(intel_mval_name(-101), Some("tee.platform-instance-id"));
     }
 
     #[test]
@@ -323,6 +356,54 @@ mod tests {
 
         let label = p.diagnose_mval_entry(MVAL_TEE_ISVSVN, &Value::Integer(3));
         assert_eq!(label.as_deref(), Some("tee.isvsvn = 3"));
+    }
+
+    #[test]
+    fn diagnose_renders_v07_set_tstr_expression() {
+        let p = IntelProfile::new();
+        let expr = Value::Tag(
+            TAG_INTEL_SET_TSTR_EXPRESSION,
+            Box::new(Value::Array(vec![
+                Value::Integer(6), // op.mem
+                Value::Array(vec![
+                    Value::Text("UpToDate".into()),
+                    Value::Text("Hardening".into()),
+                ]),
+            ])),
+        );
+        let label = p.diagnose_mval_entry(MVAL_TEE_TCBSTATUS, &expr);
+        assert_eq!(label.as_deref(), Some("tee.tcbstatus = member (2 strings)"));
+    }
+
+    #[test]
+    fn diagnose_renders_int_range_expression() {
+        let p = IntelProfile::new();
+        let expr = Value::Tag(
+            crate::types::tags::TAG_INT_RANGE,
+            Box::new(Value::Array(vec![Value::Integer(0), Value::Integer(15)])),
+        );
+        let label = p.diagnose_mval_entry(MVAL_TEE_ISVSVN, &expr);
+        assert_eq!(label.as_deref(), Some("tee.isvsvn = range [0..15]"));
+    }
+
+    #[test]
+    fn diagnose_renders_min_svn_expression() {
+        let p = IntelProfile::new();
+        let expr = Value::Tag(crate::types::tags::TAG_MIN_SVN, Box::new(Value::Integer(7)));
+        let label = p.diagnose_mval_entry(MVAL_TEE_ISVSVN, &expr);
+        assert_eq!(label.as_deref(), Some("tee.isvsvn = min-svn 7"));
+    }
+
+    #[test]
+    fn diagnose_labels_rfc9581_time_tags() {
+        let p = IntelProfile::new();
+        // tee.tcbdate may carry etime / duration / period per v07 §8.3.4.
+        let etime = Value::Tag(1001, Box::new(Value::Map(vec![])));
+        let label = p.diagnose_mval_entry(MVAL_TEE_TCBDATE, &etime);
+        assert_eq!(label.as_deref(), Some("tee.tcbdate = etime(…)"));
+        let period = Value::Tag(1003, Box::new(Value::Array(vec![])));
+        let label = p.diagnose_mval_entry(MVAL_TEE_TCBDATE, &period);
+        assert_eq!(label.as_deref(), Some("tee.tcbdate = period(…)"));
     }
 
     #[test]

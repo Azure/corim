@@ -13,7 +13,7 @@ use corim::cbor::value::{Tagged, Value};
 use corim::diagnose::inspect;
 use corim::profile::intel::{
     IntelProfile, INTEL_PROFILE_OID_DER, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ISVSVN,
-    TAG_INTEL_EXPRESSION,
+    TAG_INTEL_EXPRESSION, TAG_INTEL_SET_TSTR_EXPRESSION,
 };
 use corim::profile::ProfileRegistry;
 use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
@@ -28,9 +28,9 @@ fn build_corim_with_expressions() -> Vec<u8> {
         ])),
     );
 
-    // tagged-exp-not-member: #6.60010([ 7 (not-member), [advisory1, advisory2] ])
+    // tagged-exp-tstr-not-member: #6.60021([ 7 (not-member), [advisory1, advisory2] ])
     let advisory_ref = Value::Tag(
-        TAG_INTEL_EXPRESSION,
+        TAG_INTEL_SET_TSTR_EXPRESSION,
         Box::new(Value::Array(vec![
             Value::Integer(7i128),
             Value::Array(vec![
@@ -119,7 +119,7 @@ fn diagnose_renders_not_member_expression() {
         .expect("issue for -89");
     assert_eq!(
         advisory.message(),
-        "tee.advisory-ids = not-member (2 items)",
+        "tee.advisory-ids = not-member (2 strings)",
         "got: {:?}",
         advisory.message()
     );
