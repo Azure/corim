@@ -31,13 +31,31 @@ versions.
   - Added: `TAG_INTEL_SET_DIGEST_EXPRESSION`,
     `TAG_INTEL_SET_TSTR_EXPRESSION`, `MVAL_TEE_PLATFORM_INSTANCE_ID`,
     `Expression::SetOfDigests`, `Expression::SetOfTstr`,
-    `Expression::IntRange`, `Expression::MinSvn`, `NumericOp::Eq`,
+    `Expression::IntRange`, `Expression::MinSvn`,
+    `Expression::MaskedRawValue`, `NumericOp::Eq`,
     `Expression::is_intel_expression_tag`.
   - Removed: `MVAL_TEE_INSTANCE_ID`, `MVAL_TEE_EPOCH`, `SetOfSetOp`,
     `Expression::Mask`, `Expression::SetOfSet`, `Expression::Tdate`,
     `Expression::Epoch`, and the corresponding
     `ExpressionDecodeError::{EpochGraceOutOfRange, SetOfSetMemberNotArray,
     TdateNotText}` variants.
+
+### Added (profile-intel feature)
+
+- **Mask-aware comparison for `tagged-masked-raw-value` (`#6.563`)** —
+  `tee.attributes` and `tee.miscselect` references that use the masked
+  raw-value form are now matched as `(evidence & mask) == (value & mask)`
+  rather than falling through to bare CBOR equality. Evidence may be
+  encoded as bare `bstr` (`~tagged-bytes`) or `#6.560(bstr)`
+  (`tagged-bytes`). See `profile::intel::Expression::MaskedRawValue`.
+- **`tee.tcbdate` (-72) normalized comparison across encodings** —
+  the five point-in-time encodings (`tdate` text, `#6.0(tdate)`,
+  bare `time` int/float, `#6.1(time)`, RFC 9581 `#6.1001(etime)`) and
+  the interval form `#6.1003(period)` are now normalized to a common
+  representation before equality is decided, so producers and
+  verifiers that pick different encodings of the same instant still
+  match. Period references additionally support the natural
+  "instant ∈ [lo, hi]" check. See `profile::intel::tcbdate`.
 
 ## [0.1.2] — 2026-06-01
 
