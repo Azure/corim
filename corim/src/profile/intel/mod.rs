@@ -47,6 +47,7 @@ use crate::types::measurement::MeasurementMap;
 
 mod eval;
 pub mod expression;
+mod tcbdate;
 pub use expression::{
     display_expression, Expression, ExpressionDecodeError, Numeric, NumericOp, SetOp,
     TAG_INTEL_EXPRESSION, TAG_INTEL_SET_DIGEST_EXPRESSION, TAG_INTEL_SET_TSTR_EXPRESSION,
@@ -208,7 +209,7 @@ impl Profile for IntelProfile {
                 continue;
             }
             match evidence.mval.extra_entries.get(key) {
-                Some(ev_val) => verdicts.push(eval::evaluate_one_key(ref_val, ev_val, ctx)),
+                Some(ev_val) => verdicts.push(eval::evaluate_one_key(*key, ref_val, ev_val, ctx)),
                 None => return Some(false),
             }
         }

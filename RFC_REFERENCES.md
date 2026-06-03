@@ -118,13 +118,13 @@ Cargo features and registered with a `corim::profile::ProfileRegistry`.
 | base CoRIM | `tagged-min-svn` (`#6.553`) | ✅ Full | `Expression::MinSvn` |
 | base CoRIM | `tagged-masked-raw-value` (`#6.563`) | ✅ Full — mask-aware comparison | `Expression::MaskedRawValue` |
 | §8.3 | All 16 `measurement-values-map` extension keys | ✅ Labelled + matched | `intel::MVAL_TEE_*` constants, `IntelProfile::match_measurement` |
+| §8.3.4 | `tee.tcbdate` normalization across `tdate` / `time` / `etime` (RFC 9581) / `period` (RFC 9581) | ✅ Full | `profile::intel::tcbdate` |
 | §9.1–9.2 | Bare-value equality, set comparison algorithm | ✅ Full | `intel::eval` |
 
 #### Not Implemented
 
 | Item | Reason |
 |------|--------|
-| RFC 9581 `etime` / `period` evaluation for `tee.tcbdate` (-72) | Decoder accepts them and `--diagnose` labels them; tcbdate is exact-match per v07 §8.3.4, so CBOR equality already covers the common case. |
 | Profile-typed accessors on `MeasurementValuesMap` | Out of scope; values stay in `extra_entries`. |
 
 #### ⚠️ Draft Tracking Notes

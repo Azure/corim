@@ -689,3 +689,89 @@ fn match_measurement_masked_raw_value_passes_under_mask() {
         Some(false)
     );
 }
+
+#[test]
+fn match_measurement_tcbdate_normalizes_across_encodings() {
+    // v07 §8.3.4: tee.tcbdate may be encoded as bare tdate text,
+    // bare epoch-seconds integer, etime, period, etc. The Intel
+    // evaluator normalizes both sides before comparing for exact
+    // match.
+    use corim::profile::intel::MVAL_TEE_TCBDATE;
+    let p = IntelProfile::new();
+
+    // Reference is the bare-text form; evidence is the integer form
+    // of the same instant.
+    let mut r_extras = BTreeMap::new();
+    r_extras.insert(MVAL_TEE_TCBDATE, Value::Text("2025-01-01T00:00:00Z".into()));
+    let r_triple = ref_triple_with_extras(r_extras);
+    let r = r_triple.measurements()[0].clone();
+
+    let mut e_extras = BTreeMap::new();
+    e_extras.insert(MVAL_TEE_TCBDATE, Value::Integer(1735689600));
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
+}
+
+#[test]
+fn match_measurement_tcbdate_period_contains_instant() {
+    // Reference is a period (#6.1003); evidence is an instant inside
+    // the period.
+    use corim::profile::intel::MVAL_TEE_TCBDATE;
+    let p = IntelProfile::new();
+
+    let mut r_extras = BTreeMap::new();
+    r_extras.insert(
+        MVAL_TEE_TCBDATE,
+        Value::Tag(
+            1003,
+            Box::new(Value::Array(vec![
+                Value::Text("2024-01-01T00:00:00Z".into()),
+                Value::Text("2025-01-01T00:00:00Z".into()),
+            ])),
+        ),
+    );
+    let r_triple = ref_triple_with_extras(r_extras);
+    let r = r_triple.measurements()[0].clone();
+
+    // In window.
+    let mut e_extras = BTreeMap::new();
+    e_extras.insert(MVAL_TEE_TCBDATE, Value::Text("2024-06-01T00:00:00Z".into()));
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(true)
+    );
+
+    // Out of window.
+    let mut e_extras = BTreeMap::new();
+    e_extras.insert(MVAL_TEE_TCBDATE, Value::Text("2026-01-01T00:00:00Z".into()));
+    let e = MeasurementMap {
+        mkey: None,
+        mval: MeasurementValuesMap {
+            extra_entries: e_extras,
+            ..Default::default()
+        },
+        authorized_by: None,
+    };
+    assert_eq!(
+        p.match_measurement(&r, &e, &MatchContext::new()),
+        Some(false)
+    );
+}

@@ -47,7 +47,7 @@ use super::expression::{
 /// Outcome of evaluating one (reference, evidence) pair for a single
 /// Intel `extra_entries` key.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Verdict {
+pub(super) enum Verdict {
     /// Evidence satisfies the reference.
     Pass,
     /// Evidence violates the reference (or the reference is
@@ -56,11 +56,23 @@ pub(crate) enum Verdict {
 }
 
 /// Evaluate one Intel-keyed `(reference, evidence)` pair.
-pub(crate) fn evaluate_one_key(
+///
+/// `key` is the Intel `measurement-values-map` extension code point
+/// (e.g. `MVAL_TEE_TCBDATE = -72`); per-key normalization passes
+/// (currently only tcbdate) inspect it to route to specialised
+/// comparators.
+pub(super) fn evaluate_one_key(
+    key: i64,
     reference: &Value,
     evidence: &Value,
     _ctx: &MatchContext,
 ) -> Verdict {
+    // tee.tcbdate (§8.3.4) has five equivalent point-in-time encodings
+    // plus a period form; normalize both sides before comparing.
+    if key == super::MVAL_TEE_TCBDATE {
+        return super::tcbdate::match_tcbdate(reference, evidence);
+    }
+
     // Operator-shaped reference (any of the five recognised tags).
     if let Value::Tag(t, _) = reference {
         if matches!(
@@ -233,7 +245,7 @@ fn bool_verdict(b: bool) -> Verdict {
 /// - `Some(true)`  — at least one key produced Pass and none Failed.
 /// - `Some(false)` — at least one key Failed.
 /// - `None`        — no keys were evaluated (caller defers to core).
-pub(crate) fn combine(verdicts: &[Verdict]) -> Option<bool> {
+pub(super) fn combine(verdicts: &[Verdict]) -> Option<bool> {
     let mut had_pass = false;
     for v in verdicts {
         match v {
@@ -254,7 +266,13 @@ mod tests {
     use crate::profile::intel::expression::{NumericOp, SetOp};
 
     fn eval_pair(reference: &Value, evidence: &Value) -> Verdict {
-        evaluate_one_key(reference, evidence, &MatchContext::new())
+        // Use a non-tcbdate key so the generic decoder path runs.
+        evaluate_one_key(
+            super::super::MVAL_TEE_ISVSVN,
+            reference,
+            evidence,
+            &MatchContext::new(),
+        )
     }
 
     fn numeric_expr(items: Vec<Value>) -> Value {
