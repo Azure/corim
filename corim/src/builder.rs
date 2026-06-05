@@ -6,7 +6,7 @@
 //! Provides a fluent interface for constructing CoRIM and CoMID structures
 //! per draft-ietf-rats-corim-10.
 //!
-//! # Cross-triple environment anchoring (opt-in)
+//! # Cross-triple anchoring (opt-in)
 //!
 //! By default, [`ComidBuilder`] performs no cross-triple checks: any
 //! `EnvironmentMap` may appear in any triple, even if no reference-triple
@@ -14,19 +14,29 @@
 //! and verifiers handle mismatches at appraisal time.
 //!
 //! Calling [`ComidBuilder::strict_links`] with `true` enables a builder-side
-//! lint: at [`build`](ComidBuilder::build) time, every condition env in a
-//! conditional-endorsement-series, endorsed, or conditional-endorsement
-//! triple must structurally equal some reference-triple env in the same
-//! CoMID. Mismatch produces [`BuilderError::UnanchoredConditionEnv`].
+//! lint with two parts:
 //!
-//! The lint uses **exact structural equality** — no subsumption or
-//! wildcard matching. It catches authoring mistakes like typos and
-//! forgotten reference triples; it deliberately does not enforce the
+//! 1. **Environment anchoring.** Every condition env in a
+//!    conditional-endorsement-series, conditional-endorsement, or endorsed
+//!    triple must structurally equal some reference-triple env in the same
+//!    CoMID. Mismatch produces [`BuilderError::UnanchoredConditionEnv`].
+//! 2. **Measurement anchoring.** Every selection-side measurement (a CES
+//!    `claims_list`, a CES series-record `selection`, or a CE
+//!    `stateful-environment-record` measurement) must structurally equal
+//!    some measurement in a reference triple **for the same env**.
+//!    Mismatch produces [`BuilderError::UnanchoredConditionMeasurement`].
+//!    Endorsement and addition lists are not anchored — they add values,
+//!    they do not select.
+//!
+//! Both checks use **exact structural equality** — no subsumption or
+//! wildcard matching. They catch authoring mistakes like typos and
+//! forgotten reference triples; they deliberately do not enforce the
 //! richer matching rules used by verifiers (§6 of the draft). Identity,
 //! attest-key, dependency, membership, and coswid triple envs are not
 //! considered anchors and not checked.
 //!
 //! [`BuilderError::UnanchoredConditionEnv`]: crate::error::BuilderError::UnanchoredConditionEnv
+//! [`BuilderError::UnanchoredConditionMeasurement`]: crate::error::BuilderError::UnanchoredConditionMeasurement
 //!
 //! # Environment catalog (opt-in)
 //!
@@ -311,11 +321,21 @@ impl ComidBuilder {
 
     /// Enable cross-triple link checking at `build()` time.
     ///
-    /// When enabled, every condition environment in a conditional-endorsement-series,
-    /// conditional-endorsement, or endorsed triple must structurally equal some
-    /// reference-triple environment in the same CoMID; otherwise `build()` returns
-    /// [`BuilderError::UnanchoredConditionEnv`]. The wire format does not encode
-    /// this constraint — it is a builder-side lint for catching authoring mistakes.
+    /// When enabled, two anchoring checks run:
+    ///
+    /// 1. Every condition environment in a conditional-endorsement-series,
+    ///    conditional-endorsement, or endorsed triple must structurally
+    ///    equal some reference-triple environment in the same CoMID;
+    ///    otherwise `build()` returns [`BuilderError::UnanchoredConditionEnv`].
+    /// 2. Every selection-side measurement (CES `claims_list`, CES series
+    ///    `selection`, or CE `stateful-environment-record` measurement)
+    ///    must structurally equal some measurement in a reference triple
+    ///    for the *same* env; otherwise `build()` returns
+    ///    [`BuilderError::UnanchoredConditionMeasurement`]. Endorsement
+    ///    and addition lists are not anchored.
+    ///
+    /// The wire format does not encode either constraint — these are
+    /// builder-side lints for catching authoring mistakes.
     pub fn strict_links(mut self, enable: bool) -> Self {
         self.strict_links = enable;
         self
@@ -756,6 +776,12 @@ impl ComidBuilder {
         // reference-triple env. Reference-triple envs are the only anchor set;
         // identity/attest-key/dependency/membership/coswid envs are not
         // considered anchors for this lint.
+        //
+        // The lint also extends to selection-side measurements: a CES
+        // claims_list, a CES series-record selection, or a CE stateful-
+        // environment-record measurement must structurally equal some
+        // measurement in a reference triple for the *same* env (S2 pool).
+        // Endorsement and addition lists are not anchored.
         if self.strict_links {
             let anchors: Vec<&EnvironmentMap> = self
                 .reference_triples
@@ -766,6 +792,38 @@ impl ComidBuilder {
                 .collect();
             let is_anchored = |env: &EnvironmentMap| anchors.contains(&env);
 
+            // Build the per-env measurement pool for S2 anchoring. The
+            // closure returns the union of measurements across all reference
+            // triples whose env structurally equals `env`.
+            let ref_triples = self.reference_triples.as_deref().unwrap_or(&[]);
+            let meas_anchors = |env: &EnvironmentMap| -> Vec<&MeasurementMap> {
+                ref_triples
+                    .iter()
+                    .filter(|t| &t.0 == env)
+                    .flat_map(|t| t.1.iter())
+                    .collect()
+            };
+            let check_meas = |env: &EnvironmentMap,
+                              to_anchor: &[MeasurementMap],
+                              triple_kind: &'static str,
+                              triple_index: usize|
+             -> Result<(), BuilderError> {
+                if to_anchor.is_empty() {
+                    return Ok(());
+                }
+                let pool = meas_anchors(env);
+                for (mi, m) in to_anchor.iter().enumerate() {
+                    if !pool.contains(&m) {
+                        return Err(BuilderError::UnanchoredConditionMeasurement {
+                            triple_kind,
+                            triple_index,
+                            measurement_index: mi,
+                        });
+                    }
+                }
+                Ok(())
+            };
+
             if let Some(ref triples) = self.conditional_endorsement_series {
                 for (i, t) in triples.iter().enumerate() {
                     if !is_anchored(&t.0.environment) {
@@ -773,6 +831,20 @@ impl ComidBuilder {
                             triple_kind: "conditional-endorsement-series",
                             index: i,
                         });
+                    }
+                    check_meas(
+                        &t.0.environment,
+                        &t.0.claims_list,
+                        "conditional-endorsement-series",
+                        i,
+                    )?;
+                    for series in &t.1 {
+                        check_meas(
+                            &t.0.environment,
+                            &series.0,
+                            "conditional-endorsement-series-selection",
+                            i,
+                        )?;
                     }
                 }
             }
@@ -795,6 +867,7 @@ impl ComidBuilder {
                                 index: i,
                             });
                         }
+                        check_meas(&stateful.0, &stateful.1, "conditional-endorsement", i)?;
                     }
                 }
             }
