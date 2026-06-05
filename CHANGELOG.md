@@ -8,6 +8,55 @@ versions.
 
 ## [Unreleased]
 
+### Changed (breaking, profile-intel feature)
+
+- **Intel CoRIM profile aligned with draft -07** (was -03). v07 reworks
+  the CBOR wire format for operator-shaped reference values:
+  - New CBOR tags `#6.60020` (`tagged-exp-digest-{member,not-member}`)
+    and `#6.60021` (`tagged-exp-tstr-{member,not-member}`); v03
+    overloaded tag `#6.60010` for these shapes.
+  - `op.eq=0` is now an explicit operator code.
+  - Removed: `op.subset=8`, `op.superset=9`, `op.disjoint=10`, and the
+    overloaded `mask-eq` 3-element form on tag `#6.60010`.
+  - Removed measurement key `tee.instance-id` (-77); use the new
+    `tee.platform-instance-id` (-101) per v07 §8.3.6.
+  - Removed measurement key `tee.epoch` (-90).
+  - SVN-typed extension keys (`tee.isvsvn`, `tee.tcb-eval-num`,
+    `tee.tcb-comp-svn`) now also accept base-CoRIM `tagged-int-range`
+    (`#6.564`) and `tagged-min-svn` (`#6.553`).
+  - `tee.tcbdate` (-72) now accepts RFC 9581 `etime` (`#6.1001`),
+    `duration` (`#6.1002`), and `period` (`#6.1003`).
+
+  Affected public API in [`corim::profile::intel`](corim/src/profile/intel/mod.rs):
+  - Added: `TAG_INTEL_SET_DIGEST_EXPRESSION`,
+    `TAG_INTEL_SET_TSTR_EXPRESSION`, `MVAL_TEE_PLATFORM_INSTANCE_ID`,
+    `Expression::SetOfDigests`, `Expression::SetOfTstr`,
+    `Expression::IntRange`, `Expression::MinSvn`,
+    `Expression::MaskedRawValue`, `NumericOp::Eq`,
+    `Expression::is_intel_expression_tag`.
+  - Removed: `MVAL_TEE_INSTANCE_ID`, `MVAL_TEE_EPOCH`, `SetOfSetOp`,
+    `Expression::Mask`, `Expression::SetOfSet`, `Expression::Tdate`,
+    `Expression::Epoch`, and the corresponding
+    `ExpressionDecodeError::{EpochGraceOutOfRange, SetOfSetMemberNotArray,
+    TdateNotText}` variants.
+
+### Added (profile-intel feature)
+
+- **Mask-aware comparison for `tagged-masked-raw-value` (`#6.563`)** —
+  `tee.attributes` and `tee.miscselect` references that use the masked
+  raw-value form are now matched as `(evidence & mask) == (value & mask)`
+  rather than falling through to bare CBOR equality. Evidence may be
+  encoded as bare `bstr` (`~tagged-bytes`) or `#6.560(bstr)`
+  (`tagged-bytes`). See `profile::intel::Expression::MaskedRawValue`.
+- **`tee.tcbdate` (-72) normalized comparison across encodings** —
+  the five point-in-time encodings (`tdate` text, `#6.0(tdate)`,
+  bare `time` int/float, `#6.1(time)`, RFC 9581 `#6.1001(etime)`) and
+  the interval form `#6.1003(period)` are now normalized to a common
+  representation before equality is decided, so producers and
+  verifiers that pick different encodings of the same instant still
+  match. Period references additionally support the natural
+  "instant ∈ [lo, hi]" check. See `profile::intel::tcbdate`.
+
 ## [0.1.2] — 2026-06-01
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.1.2, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.2
