@@ -10,6 +10,7 @@ use std::process;
 use clap::Parser;
 
 mod display;
+mod edn;
 
 /// Validate and inspect CoRIM (Concise Reference Integrity Manifest) documents.
 ///
@@ -43,6 +44,14 @@ struct Cli {
     /// errors are found, 2 otherwise.
     #[arg(long)]
     diagnose: bool,
+
+    /// Render the input as CBOR Extended Diagnostic Notation (RFC 8949 §8).
+    /// Bstr-wrapped CBOR at well-known CoRIM positions (concise-mid /
+    /// concise-swid / concise-tl tags, COSE_Sign1 protected header and
+    /// payload, corim-meta) is unwrapped using the `<<...>>` notation
+    /// (RFC 8610 §G.4). Mutually exclusive with `--diagnose`.
+    #[arg(long, conflicts_with = "diagnose")]
+    edn: bool,
 }
 
 fn main() {
@@ -59,6 +68,22 @@ fn main() {
     if bytes.is_empty() {
         eprintln!("Error: input is empty");
         process::exit(1);
+    }
+
+    // --edn: render the raw CBOR as Extended Diagnostic Notation and
+    // exit. Runs on the *original* bytes (no compat peeling) so the
+    // user sees the wire format as-is.
+    if cli.edn {
+        match edn::render(&bytes) {
+            Ok(s) => {
+                print!("{}", s);
+                process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("Error: {}", e);
+                process::exit(1);
+            }
+        }
     }
 
     // --diagnose: best-effort structural inspection that does NOT abort on
