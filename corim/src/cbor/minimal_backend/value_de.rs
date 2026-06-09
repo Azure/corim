@@ -23,8 +23,7 @@ impl core::fmt::Display for Error {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for Error {}
+impl core::error::Error for Error {}
 
 // Compile-time regression guard: serde's `de::Error: Sized + StdError`
 // supertrait is active whenever any crate in the dep graph enables
