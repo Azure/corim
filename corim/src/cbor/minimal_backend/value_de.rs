@@ -26,6 +26,18 @@ impl core::fmt::Display for Error {
 #[cfg(feature = "std")]
 impl std::error::Error for Error {}
 
+// Compile-time regression guard: serde's `de::Error: Sized + StdError`
+// supertrait is active whenever any crate in the dep graph enables
+// `serde/std`. If this `Error` type only implements the trait under our own
+// `feature = "std"`, a downstream `--no-default-features` build that
+// nevertheless unifies `serde/std` will fail with `Error: StdError`
+// unsatisfied. This assertion catches that regression at compile time in the
+// `cargo build -p corim --no-default-features` CI step.
+const _: fn() = || {
+    fn assert_core_error<E: core::error::Error>() {}
+    assert_core_error::<Error>();
+};
+
 impl de::Error for Error {
     fn custom<T: core::fmt::Display>(msg: T) -> Self {
         Error(msg.to_string())
