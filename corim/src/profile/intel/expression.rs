@@ -464,8 +464,7 @@ impl core::fmt::Display for ExpressionDecodeError {
     }
 }
 
-#[cfg(feature = "std")]
-impl std::error::Error for ExpressionDecodeError {}
+impl core::error::Error for ExpressionDecodeError {}
 
 // -- Display helper for diagnose output. ------------------------------------
 
