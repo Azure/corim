@@ -8,6 +8,11 @@ versions.
 
 ## [Unreleased]
 
+## [0.1.3] — 2026-06-10
+
+**Crates:** [`corim`](https://crates.io/crates/corim) v0.1.3, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.3
+**MSRV:** Rust 1.85
+
 ### Changed (breaking, profile-intel feature)
 
 - **Intel CoRIM profile aligned with draft -07** (was -03). v07 reworks
@@ -56,6 +61,59 @@ versions.
   verifiers that pick different encodings of the same instant still
   match. Period references additionally support the natural
   "instant ∈ [lo, hi]" check. See `profile::intel::tcbdate`.
+
+### Added (builder)
+
+- **`strict_links` now anchors condition measurements** in addition to
+  condition envs. When opted-in via
+  [`ComidBuilder::strict_links(true)`](corim/src/builder.rs), the
+  builder lint now verifies that every selection-side measurement on a
+  conditional-endorsement-series, endorsed, or conditional-endorsement
+  triple structurally equals some measurement on a reference triple
+  for the *same* env. Three new check sites: CES `condition.claims_list`,
+  per-record CES `selection`, and CE
+  `stateful-environment-record.measurements`. Endorsement/addition
+  lists (the "add value" side) are intentionally not anchored.
+  Failures continue to surface as
+  [`BuilderError::UnanchoredConditionEnv`](corim/src/error.rs);
+  default behavior (`strict_links` off) is unchanged.
+
+### Fixed
+
+- **`no_std` interop with `serde/std`** —
+  [`cbor::minimal_backend::value_de::Error`](corim/src/cbor/minimal_backend/value_de.rs),
+  [`cbor::minimal_backend::value_ser::Error`](corim/src/cbor/minimal_backend/value_ser.rs),
+  and
+  [`profile::intel::ExpressionDecodeError`](corim/src/profile/intel/expression.rs)
+  now implement `core::error::Error` unconditionally (previously gated
+  behind `#[cfg(feature = "std")]`). Downstream workspaces that built
+  `corim` with `--no-default-features` while a sibling crate enabled
+  `serde/std` saw 14 trait-bound errors because serde unifies its
+  `std` feature on and activates the `Error: StdError` supertrait
+  bound. `core::error::Error` was stabilized in Rust 1.81 and is the
+  same trait item as `std::error::Error` under `feature = "std"`, so
+  no behavior change for existing `std` consumers.
+
+### Notes
+
+- `corim-cli` is bumped to 0.1.3 in lockstep but is **not published**
+  to crates.io (`publish = false`). New CLI capability this release:
+  - `--edn` flag — render the input as CBOR Extended Diagnostic
+    Notation (RFC 8949 §8) with the RFC 8610 §G.4 `<<...>>`
+    embedded-CBOR shorthand applied at well-known CoRIM positions
+    (`#6.505` / `#6.506` / `#6.508` tag payloads; the protected
+    header and attached payload of a `#6.18` COSE_Sign1; the `corim-meta`
+    bstr inside a protected header). Runs on the *original* bytes
+    with no TCG-compat peeling, so the wire format is shown as-is;
+    embedded-CBOR decode failures fall back to a raw `h'...'` literal.
+    Mutually exclusive with `--diagnose`.
+  - `print_triples` display now expands both conditional triple
+    kinds (CES claims-list + per-record selection/addition; CE
+    conditions/endorsements) and the catch-all extras map.
+- No breaking changes to existing public APIs outside the
+  `profile-intel` feature (the v07 profile changes were already
+  recorded above and are gated). The `strict_links` extension and the
+  `no_std` fix are additive / behavior-preserving for existing users.
 
 ## [0.1.2] — 2026-06-01
 
