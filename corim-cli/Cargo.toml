@@ -3,7 +3,7 @@
 
 [package]
 name = "corim-cli"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 publish = false
 description = "CLI tool for validating and inspecting CoRIM (Concise Reference Integrity Manifest) documents."
@@ -26,7 +26,7 @@ name = "corim-gen-signed-sample"
 path = "src/gen_signed_sample.rs"
 
 [dependencies]
-corim = { path = "../corim", version = "0.1.2" }
+corim = { path = "../corim", version = "0.1.3" }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 
