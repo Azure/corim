@@ -109,15 +109,18 @@ pub(super) fn deserialize_cose_cert_hash<E: serde::de::Error>(v: Value) -> Resul
         Value::Array(a) if a.len() == 2 => a,
         _ => return Err(E::custom("COSE_CertHash must be [hashAlg, hashValue]")),
     };
-    let mut it = arr.into_iter();
-    let hash_alg = match it.next().unwrap() {
+    // The guard above guarantees `arr.len() == 2`, so the destructure is
+    // infallible; the `map_err` is only to satisfy the type checker.
+    let [alg_val, value_val] = <[Value; 2]>::try_from(arr)
+        .map_err(|_| E::custom("COSE_CertHash must be [hashAlg, hashValue]"))?;
+    let hash_alg = match alg_val {
         Value::Integer(n) => {
             DigestAlg::Int(i64::try_from(n).map_err(|_| E::custom("x5t hashAlg out of range"))?)
         }
         Value::Text(t) => DigestAlg::Text(t),
         _ => return Err(E::custom("x5t hashAlg must be int or text")),
     };
-    let hash_value = match it.next().unwrap() {
+    let hash_value = match value_val {
         Value::Bytes(b) => b,
         _ => return Err(E::custom("x5t hashValue must be bstr")),
     };

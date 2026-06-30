@@ -1484,9 +1484,12 @@ fn inspect_env_measurements_triples(
             );
             continue;
         }
-        let mut it = pair.into_iter();
-        let env = it.next().expect("len checked == 2");
-        let meas = it.next().expect("len checked == 2");
+        // The `pair.len() != 2` guard above guarantees exactly two elements,
+        // so this destructure is infallible.
+        let [env, meas] = match <[Value; 2]>::try_from(pair) {
+            Ok(pair) => pair,
+            Err(_) => continue,
+        };
 
         inspect_environment_map(ins, &format!("{}.env", tpath), env);
 
