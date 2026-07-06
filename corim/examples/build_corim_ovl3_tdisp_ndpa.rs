@@ -91,21 +91,17 @@ fn main() {
         )],
     );
 
-    let comid = ComidBuilder::new(TagIdChoice::Text(
-        "1.3.6.1.4.1.311.102.5_NDPA".into(),
-    ))
-    .add_conditional_endorsement_series(ces)
-    .build()
-    .expect("failed to build CoMID");
+    let comid = ComidBuilder::new(TagIdChoice::Text("1.3.6.1.4.1.311.102.5_NDPA".into()))
+        .add_conditional_endorsement_series(ces)
+        .build()
+        .expect("failed to build CoMID");
 
-    let bytes = CorimBuilder::new(CorimId::Text(
-        "1.3.6.1.4.1.311.102.5_NDPA_20260705".into(),
-    ))
-    .set_profile(ProfileChoice::Uri(AZURE_PROFILE_URI.into()))
-    .add_comid_tag(comid)
-    .expect("failed to encode CoMID")
-    .build_bytes()
-    .expect("failed to build CoRIM");
+    let bytes = CorimBuilder::new(CorimId::Text("1.3.6.1.4.1.311.102.5_NDPA_20260705".into()))
+        .set_profile(ProfileChoice::Uri(AZURE_PROFILE_URI.into()))
+        .add_comid_tag(comid)
+        .expect("failed to encode CoMID")
+        .build_bytes()
+        .expect("failed to build CoRIM");
 
     let (_corim, comids) =
         decode_and_validate_at(&bytes, 1_800_000_000).expect("decode_and_validate_at failed");
@@ -113,7 +109,11 @@ fn main() {
 
     let profile = AzureProfile::new();
     let evidence = vec![EvidenceClaim {
-        environment: decoded.triples.conditional_endorsement_series.as_ref().unwrap()[0]
+        environment: decoded
+            .triples
+            .conditional_endorsement_series
+            .as_ref()
+            .unwrap()[0]
             .condition()
             .environment
             .clone(),
@@ -128,7 +128,11 @@ fn main() {
     }];
 
     let ces_endorsed = apply_endorsement_series_with_profile(
-        decoded.triples.conditional_endorsement_series.as_deref().unwrap(),
+        decoded
+            .triples
+            .conditional_endorsement_series
+            .as_deref()
+            .unwrap(),
         &evidence,
         Some(&profile),
         &MatchContext::new(),

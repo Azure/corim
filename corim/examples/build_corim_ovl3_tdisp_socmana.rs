@@ -91,12 +91,10 @@ fn main() {
         )],
     );
 
-    let comid = ComidBuilder::new(TagIdChoice::Text(
-        "1.3.6.1.4.1.311.102.5_SOCMANA".into(),
-    ))
-    .add_conditional_endorsement_series(ces)
-    .build()
-    .expect("failed to build CoMID");
+    let comid = ComidBuilder::new(TagIdChoice::Text("1.3.6.1.4.1.311.102.5_SOCMANA".into()))
+        .add_conditional_endorsement_series(ces)
+        .build()
+        .expect("failed to build CoMID");
 
     let bytes = CorimBuilder::new(CorimId::Text(
         "1.3.6.1.4.1.311.102.5_SOCMANA_20260705".into(),
@@ -113,7 +111,11 @@ fn main() {
 
     let profile = AzureProfile::new();
     let evidence = vec![EvidenceClaim {
-        environment: decoded.triples.conditional_endorsement_series.as_ref().unwrap()[0]
+        environment: decoded
+            .triples
+            .conditional_endorsement_series
+            .as_ref()
+            .unwrap()[0]
             .condition()
             .environment
             .clone(),
@@ -128,7 +130,11 @@ fn main() {
     }];
 
     let ces_endorsed = apply_endorsement_series_with_profile(
-        decoded.triples.conditional_endorsement_series.as_deref().unwrap(),
+        decoded
+            .triples
+            .conditional_endorsement_series
+            .as_deref()
+            .unwrap(),
         &evidence,
         Some(&profile),
         &MatchContext::new(),

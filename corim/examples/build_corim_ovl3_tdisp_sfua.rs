@@ -191,10 +191,10 @@ fn main() {
     );
 
     let digest_384 = sha384_digest(vec![
-        0x4b, 0x56, 0xcf, 0xa0, 0x7f, 0xae, 0xb2, 0xab, 0x57, 0xde, 0x92, 0x1e, 0x4a, 0x97,
-        0xd6, 0x55, 0x14, 0x4b, 0x54, 0x64, 0x70, 0xeb, 0xaa, 0xab, 0x6f, 0x71, 0xc0, 0xdb,
-        0x51, 0x8d, 0xdf, 0x5b, 0x4a, 0x5f, 0xb2, 0x8f, 0xb2, 0xad, 0x1b, 0x49, 0x34, 0x26,
-        0x44, 0x24, 0xeb, 0x1e, 0x5a, 0x86,
+        0x4b, 0x56, 0xcf, 0xa0, 0x7f, 0xae, 0xb2, 0xab, 0x57, 0xde, 0x92, 0x1e, 0x4a, 0x97, 0xd6,
+        0x55, 0x14, 0x4b, 0x54, 0x64, 0x70, 0xeb, 0xaa, 0xab, 0x6f, 0x71, 0xc0, 0xdb, 0x51, 0x8d,
+        0xdf, 0x5b, 0x4a, 0x5f, 0xb2, 0x8f, 0xb2, 0xad, 0x1b, 0x49, 0x34, 0x26, 0x44, 0x24, 0xeb,
+        0x1e, 0x5a, 0x86,
     ]);
 
     let ces3_selection = vec![
@@ -207,8 +207,8 @@ fn main() {
         uint_raw_value_selection(
             254,
             vec![
-                0x72, 0x61, 0x77, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x0a, 0x72, 0x61, 0x77,
-                0x76, 0x61, 0x6c, 0x75, 0x65, 0x0a,
+                0x72, 0x61, 0x77, 0x76, 0x61, 0x6c, 0x75, 0x65, 0x0a, 0x72, 0x61, 0x77, 0x76, 0x61,
+                0x6c, 0x75, 0x65, 0x0a,
             ],
         ),
     ];
@@ -220,34 +220,30 @@ fn main() {
     );
 
     let thumbprint = sha256_digest(vec![
-        0x44, 0xaa, 0x33, 0x6a, 0xf4, 0xcb, 0x14, 0xa8, 0x79, 0x43, 0x2e, 0x53, 0xdd, 0x65,
-        0x71, 0xc7, 0xfa, 0x9b, 0xcc, 0xaf, 0xb7, 0x5f, 0x48, 0x82, 0x59, 0x26, 0x2d, 0x6e,
-        0xa3, 0xa4, 0xd9, 0x1b,
+        0x44, 0xaa, 0x33, 0x6a, 0xf4, 0xcb, 0x14, 0xa8, 0x79, 0x43, 0x2e, 0x53, 0xdd, 0x65, 0x71,
+        0xc7, 0xfa, 0x9b, 0xcc, 0xaf, 0xb7, 0x5f, 0x48, 0x82, 0x59, 0x26, 0x2d, 0x6e, 0xa3, 0xa4,
+        0xd9, 0x1b,
     ]);
     let id_keys = vec![
         CryptoKey::CertThumbprint(thumbprint.clone()),
         CryptoKey::CertThumbprint(thumbprint),
     ];
 
-    let comid = ComidBuilder::new(TagIdChoice::Text(
-        "1.3.6.1.4.1.311.102.5_SFUA".into(),
-    ))
-    .set_tag_version(1)
-    .add_identity_triple(IdentityTriple::new(make_env(None, None), id_keys, None))
-    .add_conditional_endorsement_series(ces)
-    .add_conditional_endorsement_series(ces2)
-    .add_conditional_endorsement_series(ces3)
-    .build()
-    .expect("failed to build CoMID");
+    let comid = ComidBuilder::new(TagIdChoice::Text("1.3.6.1.4.1.311.102.5_SFUA".into()))
+        .set_tag_version(1)
+        .add_identity_triple(IdentityTriple::new(make_env(None, None), id_keys, None))
+        .add_conditional_endorsement_series(ces)
+        .add_conditional_endorsement_series(ces2)
+        .add_conditional_endorsement_series(ces3)
+        .build()
+        .expect("failed to build CoMID");
 
-    let bytes = CorimBuilder::new(CorimId::Text(
-        "1.3.6.1.4.1.311.102.5_SFUA_20260705".into(),
-    ))
-    .set_profile(ProfileChoice::Uri(AZURE_PROFILE_URI.into()))
-    .add_comid_tag(comid)
-    .expect("failed to encode CoMID")
-    .build_bytes()
-    .expect("failed to build CoRIM");
+    let bytes = CorimBuilder::new(CorimId::Text("1.3.6.1.4.1.311.102.5_SFUA_20260705".into()))
+        .set_profile(ProfileChoice::Uri(AZURE_PROFILE_URI.into()))
+        .add_comid_tag(comid)
+        .expect("failed to encode CoMID")
+        .build_bytes()
+        .expect("failed to build CoRIM");
 
     let (_corim, comids) =
         decode_and_validate_at(&bytes, 1_800_000_000).expect("decode_and_validate_at failed");
@@ -255,7 +251,11 @@ fn main() {
 
     let profile = AzureProfile::new();
     let evidence = vec![EvidenceClaim {
-        environment: decoded.triples.conditional_endorsement_series.as_ref().unwrap()[0]
+        environment: decoded
+            .triples
+            .conditional_endorsement_series
+            .as_ref()
+            .unwrap()[0]
             .condition()
             .environment
             .clone(),
@@ -270,7 +270,11 @@ fn main() {
     }];
 
     let ces_endorsed = apply_endorsement_series_with_profile(
-        decoded.triples.conditional_endorsement_series.as_deref().unwrap(),
+        decoded
+            .triples
+            .conditional_endorsement_series
+            .as_deref()
+            .unwrap(),
         &evidence,
         Some(&profile),
         &MatchContext::new(),
