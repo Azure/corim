@@ -315,14 +315,10 @@ pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
     };
 
     match top {
-        Value::Tag(TAG_LEGACY_TOP, inner) | Value::Tag(TAG_LEGACY_SIGNED, inner) => {
+        Value::Tag(outer_tag @ (TAG_LEGACY_TOP | TAG_LEGACY_SIGNED), inner) => {
             // Producer used a legacy outer wrapper (TCG Endorsement spec /
             // early CoRIM drafts / NVIDIA NIC firmware). Warn and recurse
             // into the inner value so the user still gets full diagnostics.
-            let outer_tag = match cbor::decode::<Value>(bytes).ok() {
-                Some(Value::Tag(t, _)) => t,
-                _ => 0, // unreachable in practice
-            };
             ins.warn(
                 "$",
                 format!(
