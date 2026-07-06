@@ -32,6 +32,8 @@ json = ["std", "serde_json"]
 # the `#6.60010` expression decoder, and the per-key evaluator. Opt-in;
 # does not pull any additional dependencies.
 profile-intel = []
+# Example first-party Azure profile with strict `tcbstatus` enum matching.
+profile-azure = []
 
 [dependencies]
 corim-macros.workspace = true

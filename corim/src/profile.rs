@@ -165,6 +165,15 @@ use crate::types::measurement::MeasurementMap;
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-intel")))]
 pub mod intel;
 
+/// Example first-party Azure profile that defines a `tcbstatus`
+/// measurement-values-map extension key with enum semantics
+/// (`UpToDate` / `OutOfDate`).
+///
+/// Gated on the `profile-azure` Cargo feature.
+#[cfg(feature = "profile-azure")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-azure")))]
+pub mod azure;
+
 // ---------------------------------------------------------------------------
 // MatchContext
 // ---------------------------------------------------------------------------
