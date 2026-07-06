@@ -515,10 +515,11 @@ This relaxation is **decode-only** — encoding always uses CBOR tag 37.
 
 ### Text digest algorithm identifiers
 
-The CDDL says `eatmc.digest = [alg: int / text, val: bytes]`. Our
-`Digest` struct stores `alg: i64`. Text algorithm IDs are accepted
-on decode and stored as `alg = -1`. Full text-alg support is deferred
-to a `Digest` struct redesign.
+The CDDL says `eatmc.digest = [alg: int / text, val: bytes]`. The
+`Digest` struct stores the algorithm in a `DigestAlg` type-choice enum
+(`DigestAlg::Int(i64)` / `DigestAlg::Text(String)`), so both integer
+and text algorithm identifiers are first-class and round-trip on encode
+and decode. There is no `alg = -1` sentinel.
 
 ### Flat CWT claims in protected header
 
