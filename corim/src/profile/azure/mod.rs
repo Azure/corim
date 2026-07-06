@@ -71,10 +71,7 @@ impl Profile for AzureProfile {
         evidence: &MeasurementMap,
         _ctx: &MatchContext,
     ) -> Option<bool> {
-        let ref_val = match reference.mval.extra_entries.get(&MVAL_TCBSTATUS) {
-            Some(v) => v,
-            None => return None,
-        };
+        let ref_val = reference.mval.extra_entries.get(&MVAL_TCBSTATUS)?;
 
         let ev_val = match evidence.mval.extra_entries.get(&MVAL_TCBSTATUS) {
             Some(v) => v,
