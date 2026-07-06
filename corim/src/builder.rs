@@ -624,10 +624,46 @@ impl ComidBuilder {
     /// Returns an error if no triples have been added, or if any triple
     /// contains an empty list where the CDDL requires `[+ T]`.
     pub fn build(mut self) -> Result<ComidTag, BuilderError> {
-        // Resolve any pending triples added via the `_for` family.
-        // Each EnvSpec::Ref is checked against this builder's catalog and
-        // converted into an inline EnvironmentMap before being merged into
-        // the corresponding self.X_triples list.
+        // Resolve any pending triples added via the `_for` family, then
+        // validate the CoMID-level and triple-level constraints.
+        self.resolve_pending_triples()?;
+
+        if !self.has_any_triples() {
+            return Err(BuilderError::EmptyTriples);
+        }
+
+        self.validate_triple_lists()?;
+        self.validate_strict_links()?;
+
+        let triples = TriplesMap {
+            reference_triples: self.reference_triples,
+            endorsed_triples: self.endorsed_triples,
+            identity_triples: self.identity_triples,
+            attest_key_triples: self.attest_key_triples,
+            dependency_triples: self.dependency_triples,
+            membership_triples: self.membership_triples,
+            coswid_triples: self.coswid_triples,
+            conditional_endorsement_series: self.conditional_endorsement_series,
+            conditional_endorsement: self.conditional_endorsement,
+        };
+
+        Ok(ComidTag {
+            language: self.language,
+            tag_identity: TagIdentity {
+                tag_id: self.tag_id,
+                tag_version: self.tag_version,
+            },
+            entities: self.entities,
+            linked_tags: self.linked_tags,
+            triples,
+        })
+    }
+
+    /// Resolve every pending triple added via the `_for` family into an
+    /// inline triple record. Each `EnvSpec::Ref` is checked against this
+    /// builder's catalog and converted into an inline `EnvironmentMap`
+    /// before being merged into the corresponding `self.X_triples` list.
+    fn resolve_pending_triples(&mut self) -> Result<(), BuilderError> {
         for (env_spec, measurements) in core::mem::take(&mut self.pending_reference) {
             let env = self.resolve(env_spec)?;
             self.reference_triples
@@ -702,8 +738,13 @@ impl ComidBuilder {
                 .get_or_insert_with(Vec::new)
                 .push(ConditionalEndorsementTriple(conditions, endorsements));
         }
+        Ok(())
+    }
 
-        let has_triples = self.reference_triples.is_some()
+    /// Returns `true` if at least one triple list is populated. A CoMID with
+    /// no triples violates the `triples-map` non-empty constraint.
+    fn has_any_triples(&self) -> bool {
+        self.reference_triples.is_some()
             || self.endorsed_triples.is_some()
             || self.identity_triples.is_some()
             || self.attest_key_triples.is_some()
@@ -711,190 +752,142 @@ impl ComidBuilder {
             || self.membership_triples.is_some()
             || self.coswid_triples.is_some()
             || self.conditional_endorsement_series.is_some()
-            || self.conditional_endorsement.is_some();
+            || self.conditional_endorsement.is_some()
+    }
 
-        if !has_triples {
-            return Err(BuilderError::EmptyTriples);
+    /// Validate the `[+ T]` non-empty constraints inside triple records: each
+    /// triple's measurement/key/member list must contain at least one entry.
+    fn validate_triple_lists(&self) -> Result<(), BuilderError> {
+        fn check<T>(
+            list: &Option<Vec<T>>,
+            is_empty: impl Fn(&T) -> bool,
+            field: &'static str,
+        ) -> Result<(), BuilderError> {
+            if let Some(items) = list {
+                for t in items {
+                    if is_empty(t) {
+                        return Err(BuilderError::EmptyList { field });
+                    }
+                }
+            }
+            Ok(())
         }
 
-        // Validate [+ T] constraints inside triple records
-        if let Some(ref triples) = self.reference_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList {
-                        field: "ref-claims",
+        check(&self.reference_triples, |t| t.1.is_empty(), "ref-claims")?;
+        check(&self.endorsed_triples, |t| t.1.is_empty(), "endorsement")?;
+        check(&self.identity_triples, |t| t.1.is_empty(), "key-list")?;
+        check(&self.attest_key_triples, |t| t.1.is_empty(), "key-list")?;
+        check(&self.dependency_triples, |t| t.1.is_empty(), "trustees")?;
+        check(&self.membership_triples, |t| t.1.is_empty(), "members")?;
+        check(&self.coswid_triples, |t| t.1.is_empty(), "tag-ids")?;
+        Ok(())
+    }
+
+    /// Enforce the `strict_links` lint when enabled.
+    ///
+    /// Every condition env must structurally match some reference-triple env.
+    /// Reference-triple envs are the only anchor set; identity/attest-key/
+    /// dependency/membership/coswid envs are not considered anchors.
+    ///
+    /// The lint also extends to selection-side measurements: a CES
+    /// `claims_list`, a CES series-record selection, or a CE stateful-
+    /// environment-record measurement must structurally equal some
+    /// measurement in a reference triple for the *same* env (S2 pool).
+    /// Endorsement and addition lists are not anchored.
+    fn validate_strict_links(&self) -> Result<(), BuilderError> {
+        if !self.strict_links {
+            return Ok(());
+        }
+
+        let anchors: Vec<&EnvironmentMap> = self
+            .reference_triples
+            .as_deref()
+            .unwrap_or(&[])
+            .iter()
+            .map(|t| &t.0)
+            .collect();
+        let is_anchored = |env: &EnvironmentMap| anchors.contains(&env);
+
+        // Build the per-env measurement pool for S2 anchoring. The closure
+        // returns the union of measurements across all reference triples
+        // whose env structurally equals `env`.
+        let ref_triples = self.reference_triples.as_deref().unwrap_or(&[]);
+        let meas_anchors = |env: &EnvironmentMap| -> Vec<&MeasurementMap> {
+            ref_triples
+                .iter()
+                .filter(|t| &t.0 == env)
+                .flat_map(|t| t.1.iter())
+                .collect()
+        };
+        let check_meas = |env: &EnvironmentMap,
+                          to_anchor: &[MeasurementMap],
+                          triple_kind: &'static str,
+                          triple_index: usize|
+         -> Result<(), BuilderError> {
+            if to_anchor.is_empty() {
+                return Ok(());
+            }
+            let pool = meas_anchors(env);
+            for (mi, m) in to_anchor.iter().enumerate() {
+                if !pool.contains(&m) {
+                    return Err(BuilderError::UnanchoredConditionMeasurement {
+                        triple_kind,
+                        triple_index,
+                        measurement_index: mi,
                     });
+                }
+            }
+            Ok(())
+        };
+
+        if let Some(ref triples) = self.conditional_endorsement_series {
+            for (i, t) in triples.iter().enumerate() {
+                if !is_anchored(&t.0.environment) {
+                    return Err(BuilderError::UnanchoredConditionEnv {
+                        triple_kind: "conditional-endorsement-series",
+                        index: i,
+                    });
+                }
+                check_meas(
+                    &t.0.environment,
+                    &t.0.claims_list,
+                    "conditional-endorsement-series",
+                    i,
+                )?;
+                for series in &t.1 {
+                    check_meas(
+                        &t.0.environment,
+                        &series.0,
+                        "conditional-endorsement-series-selection",
+                        i,
+                    )?;
                 }
             }
         }
         if let Some(ref triples) = self.endorsed_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList {
-                        field: "endorsement",
+            for (i, t) in triples.iter().enumerate() {
+                if !is_anchored(&t.0) {
+                    return Err(BuilderError::UnanchoredConditionEnv {
+                        triple_kind: "endorsed",
+                        index: i,
                     });
                 }
             }
         }
-        if let Some(ref triples) = self.identity_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList { field: "key-list" });
-                }
-            }
-        }
-        if let Some(ref triples) = self.attest_key_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList { field: "key-list" });
-                }
-            }
-        }
-        if let Some(ref triples) = self.dependency_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList { field: "trustees" });
-                }
-            }
-        }
-        if let Some(ref triples) = self.membership_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList { field: "members" });
-                }
-            }
-        }
-        if let Some(ref triples) = self.coswid_triples {
-            for t in triples {
-                if t.1.is_empty() {
-                    return Err(BuilderError::EmptyList { field: "tag-ids" });
-                }
-            }
-        }
-
-        // strict_links: every condition env must structurally match some
-        // reference-triple env. Reference-triple envs are the only anchor set;
-        // identity/attest-key/dependency/membership/coswid envs are not
-        // considered anchors for this lint.
-        //
-        // The lint also extends to selection-side measurements: a CES
-        // claims_list, a CES series-record selection, or a CE stateful-
-        // environment-record measurement must structurally equal some
-        // measurement in a reference triple for the *same* env (S2 pool).
-        // Endorsement and addition lists are not anchored.
-        if self.strict_links {
-            let anchors: Vec<&EnvironmentMap> = self
-                .reference_triples
-                .as_deref()
-                .unwrap_or(&[])
-                .iter()
-                .map(|t| &t.0)
-                .collect();
-            let is_anchored = |env: &EnvironmentMap| anchors.contains(&env);
-
-            // Build the per-env measurement pool for S2 anchoring. The
-            // closure returns the union of measurements across all reference
-            // triples whose env structurally equals `env`.
-            let ref_triples = self.reference_triples.as_deref().unwrap_or(&[]);
-            let meas_anchors = |env: &EnvironmentMap| -> Vec<&MeasurementMap> {
-                ref_triples
-                    .iter()
-                    .filter(|t| &t.0 == env)
-                    .flat_map(|t| t.1.iter())
-                    .collect()
-            };
-            let check_meas = |env: &EnvironmentMap,
-                              to_anchor: &[MeasurementMap],
-                              triple_kind: &'static str,
-                              triple_index: usize|
-             -> Result<(), BuilderError> {
-                if to_anchor.is_empty() {
-                    return Ok(());
-                }
-                let pool = meas_anchors(env);
-                for (mi, m) in to_anchor.iter().enumerate() {
-                    if !pool.contains(&m) {
-                        return Err(BuilderError::UnanchoredConditionMeasurement {
-                            triple_kind,
-                            triple_index,
-                            measurement_index: mi,
-                        });
-                    }
-                }
-                Ok(())
-            };
-
-            if let Some(ref triples) = self.conditional_endorsement_series {
-                for (i, t) in triples.iter().enumerate() {
-                    if !is_anchored(&t.0.environment) {
+        if let Some(ref triples) = self.conditional_endorsement {
+            for (i, t) in triples.iter().enumerate() {
+                for stateful in &t.0 {
+                    if !is_anchored(&stateful.0) {
                         return Err(BuilderError::UnanchoredConditionEnv {
-                            triple_kind: "conditional-endorsement-series",
+                            triple_kind: "conditional-endorsement",
                             index: i,
                         });
                     }
-                    check_meas(
-                        &t.0.environment,
-                        &t.0.claims_list,
-                        "conditional-endorsement-series",
-                        i,
-                    )?;
-                    for series in &t.1 {
-                        check_meas(
-                            &t.0.environment,
-                            &series.0,
-                            "conditional-endorsement-series-selection",
-                            i,
-                        )?;
-                    }
-                }
-            }
-            if let Some(ref triples) = self.endorsed_triples {
-                for (i, t) in triples.iter().enumerate() {
-                    if !is_anchored(&t.0) {
-                        return Err(BuilderError::UnanchoredConditionEnv {
-                            triple_kind: "endorsed",
-                            index: i,
-                        });
-                    }
-                }
-            }
-            if let Some(ref triples) = self.conditional_endorsement {
-                for (i, t) in triples.iter().enumerate() {
-                    for stateful in &t.0 {
-                        if !is_anchored(&stateful.0) {
-                            return Err(BuilderError::UnanchoredConditionEnv {
-                                triple_kind: "conditional-endorsement",
-                                index: i,
-                            });
-                        }
-                        check_meas(&stateful.0, &stateful.1, "conditional-endorsement", i)?;
-                    }
+                    check_meas(&stateful.0, &stateful.1, "conditional-endorsement", i)?;
                 }
             }
         }
-
-        let triples = TriplesMap {
-            reference_triples: self.reference_triples,
-            endorsed_triples: self.endorsed_triples,
-            identity_triples: self.identity_triples,
-            attest_key_triples: self.attest_key_triples,
-            dependency_triples: self.dependency_triples,
-            membership_triples: self.membership_triples,
-            coswid_triples: self.coswid_triples,
-            conditional_endorsement_series: self.conditional_endorsement_series,
-            conditional_endorsement: self.conditional_endorsement,
-        };
-
-        Ok(ComidTag {
-            language: self.language,
-            tag_identity: TagIdentity {
-                tag_id: self.tag_id,
-                tag_version: self.tag_version,
-            },
-            entities: self.entities,
-            linked_tags: self.linked_tags,
-            triples,
-        })
+        Ok(())
     }
 }
 
