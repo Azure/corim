@@ -256,20 +256,14 @@ impl Expression {
     }
 
     fn numeric_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = expect_array(body)?;
-        if items.len() != 2 {
-            return Err(ExpressionDecodeError::WrongArity(items.len()));
-        }
+        let items = expect_array_n(body, 2)?;
         let op = numeric_op(&items[0])?;
         let value = numeric_value(&items[1])?;
         Ok(Self::Numeric { op, value })
     }
 
     fn set_digest_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = expect_array(body)?;
-        if items.len() != 2 {
-            return Err(ExpressionDecodeError::WrongArity(items.len()));
-        }
+        let items = expect_array_n(body, 2)?;
         let op = set_op(&items[0])?;
         let members = match &items[1] {
             Value::Array(a) => a.clone(),
@@ -279,10 +273,7 @@ impl Expression {
     }
 
     fn set_tstr_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = expect_array(body)?;
-        if items.len() != 2 {
-            return Err(ExpressionDecodeError::WrongArity(items.len()));
-        }
+        let items = expect_array_n(body, 2)?;
         let op = set_op(&items[0])?;
         let members = match &items[1] {
             Value::Array(a) => {
@@ -301,10 +292,7 @@ impl Expression {
     }
 
     fn int_range_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = expect_array(body)?;
-        if items.len() != 2 {
-            return Err(ExpressionDecodeError::WrongArity(items.len()));
-        }
+        let items = expect_array_n(body, 2)?;
         let min = match &items[0] {
             Value::Null => None,
             Value::Integer(n) => Some(*n),
@@ -335,10 +323,7 @@ impl Expression {
     }
 
     fn masked_raw_value_from_body(body: &Value) -> Result<Self, ExpressionDecodeError> {
-        let items = expect_array(body)?;
-        if items.len() != 2 {
-            return Err(ExpressionDecodeError::WrongArity(items.len()));
-        }
+        let items = expect_array_n(body, 2)?;
         let value = match &items[0] {
             Value::Bytes(b) => b.clone(),
             _ => return Err(ExpressionDecodeError::MaskedRawValueNotBytes),
@@ -356,6 +341,16 @@ fn expect_array(body: &Value) -> Result<&Vec<Value>, ExpressionDecodeError> {
         Value::Array(a) => Ok(a),
         _ => Err(ExpressionDecodeError::NotArray),
     }
+}
+
+/// Like [`expect_array`], but also enforces an exact element count,
+/// returning [`ExpressionDecodeError::WrongArity`] on mismatch.
+fn expect_array_n(body: &Value, n: usize) -> Result<&Vec<Value>, ExpressionDecodeError> {
+    let items = expect_array(body)?;
+    if items.len() != n {
+        return Err(ExpressionDecodeError::WrongArity(items.len()));
+    }
+    Ok(items)
 }
 
 fn numeric_op(v: &Value) -> Result<NumericOp, ExpressionDecodeError> {
