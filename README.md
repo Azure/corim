@@ -273,12 +273,15 @@ This differs from `validate -f json`, which prints a validation
 reference examples round-trip `convert` → `generate` byte-identically.
 Signed CoRIMs are out of scope — convert the payload instead.
 
-Two helper binaries also ship with `corim-cli` for generating fixtures and
-worked examples:
+Two worked examples show how to build fixtures directly with the builder
+API (they write the CoRIM to stdout):
 
 ```sh
-corim-gen-sample            # write a minimal unsigned CoRIM fixture
-corim-gen-signed-sample     # write a minimal signed CoRIM fixture
+# minimal unsigned CoRIM fixture
+cargo run -p corim-cli --example gen_sample > sample.corim
+
+# minimal signed CoRIM fixture (COSE_Sign1 with a placeholder signature)
+cargo run -p corim-cli --example gen_signed_sample > signed.corim
 ```
 
 `corim-cli` is a local development tool and is not published to crates.io.

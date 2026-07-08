@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Generate a sample CoRIM CBOR file for testing the CLI.
+//! Example: build a sample unsigned CoRIM with the builder API.
+//!
+//! Writes the CBOR to the path given as the first argument, or to stdout
+//! when none is given. Run with:
+//! `cargo run -p corim-cli --example gen_sample > sample.corim`.
 
 fn main() {
     use corim::builder::{ComidBuilder, CorimBuilder};
