@@ -41,6 +41,8 @@
 
 use serde_json::{Map, Value};
 
+use corim::cbor::value::Value as CborValue;
+
 /// A child value's interpretation: its context, and whether the value is
 /// a homogeneous array of that context (`list`) or a single node.
 #[derive(Clone, Copy)]
@@ -86,7 +88,12 @@ enum Ctx {
     CesRecord,
     CondEndorseTriple,
     StatefulEnvRecord,
-    // --- pass-through (text/int/bytes/type-choice objects) ---
+    Digest,
+    // --- a bare `bstr` leaf: base64 text on input, coerced to CBOR
+    //     bytes by `coerce_bytes` (the core JSON layer cannot express
+    //     bare byte strings, only base64 text).
+    Bytes,
+    // --- pass-through (text/int/type-choice objects) ---
     Leaf,
 }
 
@@ -98,6 +105,9 @@ enum Shape {
     /// A positional array: element `i` uses `slots[i]`; elements beyond
     /// the listed slots pass through as `Leaf`.
     Tuple(&'static [Slot]),
+    /// A bare `bstr` leaf: a base64 string that [`coerce_bytes`] turns
+    /// into CBOR bytes. Treated as a plain leaf during key rewriting.
+    Bytes,
     /// A leaf node: returned unchanged.
     Leaf,
 }
@@ -119,6 +129,23 @@ pub fn to_int_keys(comid: &Value) -> Value {
     convert(comid, Ctx::Comid, Dir::ToInt)
 }
 
+/// Coerce base64 text at bare-`bstr` positions of a decoded CoMID CBOR
+/// value into byte strings.
+///
+/// The core `corim::json` layer maps every JSON string to CBOR text, so
+/// bare `bstr` fields (digest values, `ueid`, `uuid`, `mac-addr`,
+/// `ip-addr`) arrive as `Value::Text(base64)` and fail to deserialize.
+/// This walks the value tree with the same context schema used for key
+/// rewriting and, at each `bstr` position, base64-decodes the text into
+/// `Value::Bytes`. Type-choice byte fields (e.g. tagged `uuid`, `oid`,
+/// `raw-value`) are unaffected — they arrive already tagged.
+///
+/// Call this on the CBOR value produced by `corim::json::json_to_value`
+/// before `corim::cbor::value::from_value::<ComidTag>`.
+pub fn coerce_bytes(comid: &mut CborValue) {
+    coerce(comid, Ctx::Comid);
+}
+
 /// Rewrite a CoMID JSON tree (as emitted by `corim::json::to_json`) from
 /// integer-string keys to prose keys. Inverse of [`to_int_keys`].
 #[cfg(test)]
@@ -128,7 +155,10 @@ pub fn to_prose_keys(comid: &Value) -> Value {
 
 fn convert(v: &Value, ctx: Ctx, dir: Dir) -> Value {
     match shape(ctx) {
-        Shape::Leaf => v.clone(),
+        // `Bytes` leaves carry a base64 string through key rewriting
+        // unchanged; the JSON->CBOR byte coercion happens later in
+        // `coerce_bytes`, which operates on the CBOR value tree.
+        Shape::Leaf | Shape::Bytes => v.clone(),
         Shape::Map(entries) => {
             let obj = match v {
                 Value::Object(o) => o,
@@ -174,6 +204,66 @@ fn convert_slot(v: &Value, slot: Slot, dir: Dir) -> Value {
         }
     }
     convert(v, slot.ctx, dir)
+}
+
+/// Recursively coerce base64 text into bytes at `bstr` positions of a
+/// decoded CoMID CBOR value. Mirrors [`convert`] but operates on the
+/// CBOR value tree (integer keys) and only rewrites `Bytes` leaves.
+fn coerce(v: &mut CborValue, ctx: Ctx) {
+    match shape(ctx) {
+        Shape::Leaf => {}
+        Shape::Bytes => {
+            if let CborValue::Text(s) = v {
+                if let Some(bytes) = base64_decode(s) {
+                    *v = CborValue::Bytes(bytes);
+                }
+            }
+        }
+        Shape::Map(entries) => {
+            if let CborValue::Map(m) = v {
+                for (k, val) in m.iter_mut() {
+                    let CborValue::Integer(ki) = k else { continue };
+                    let Ok(ki) = i64::try_from(*ki) else { continue };
+                    if let Some(slot) = entries
+                        .iter()
+                        .find(|(ek, _, _)| *ek == ki)
+                        .map(|(_, _, s)| *s)
+                    {
+                        coerce_slot(val, slot);
+                    }
+                }
+            }
+        }
+        Shape::Tuple(slots) => {
+            if let CborValue::Array(a) = v {
+                for (i, e) in a.iter_mut().enumerate() {
+                    let slot = slots.get(i).copied().unwrap_or(one(Ctx::Leaf));
+                    coerce_slot(e, slot);
+                }
+            }
+        }
+    }
+}
+
+fn coerce_slot(v: &mut CborValue, slot: Slot) {
+    if slot.list {
+        if let CborValue::Array(items) = v {
+            for e in items.iter_mut() {
+                coerce(e, slot.ctx);
+            }
+            return;
+        }
+    }
+    coerce(v, slot.ctx);
+}
+
+/// Decode standard (padded) base64, matching the encoding emitted by
+/// `corim::json::to_json` for byte strings. Returns `None` on malformed
+/// input, in which case the caller leaves the value as text (and the
+/// downstream decode reports a precise type error).
+fn base64_decode(s: &str) -> Option<Vec<u8>> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD.decode(s).ok()
 }
 
 /// Resolve an incoming object key to its rewritten form and the child
@@ -258,6 +348,9 @@ fn shape(ctx: Ctx) -> Shape {
         Ctx::CesRecord => Shape::Tuple(CES_RECORD),
         // conditional-endorsement = [[stateful-env], [endorsed-triple]]
         Ctx::CondEndorseTriple => Shape::Tuple(COND_ENDORSE),
+        // digest = [alg (int/text), bstr]
+        Ctx::Digest => Shape::Tuple(DIGEST),
+        Ctx::Bytes => Shape::Bytes,
         Ctx::Leaf => Shape::Leaf,
     }
 }
@@ -318,14 +411,14 @@ const MEASUREMENT: &[(i64, &str, Slot)] = &[
 const MVAL: &[(i64, &str, Slot)] = &[
     (0, "version", one(Ctx::Version)),
     (1, "svn", one(Ctx::Leaf)),
-    (2, "digests", many(Ctx::Leaf)),
+    (2, "digests", many(Ctx::Digest)),
     (3, "flags", one(Ctx::Flags)),
     (4, "raw-value", one(Ctx::Leaf)),
-    (6, "mac-addr", one(Ctx::Leaf)),
-    (7, "ip-addr", one(Ctx::Leaf)),
+    (6, "mac-addr", one(Ctx::Bytes)),
+    (7, "ip-addr", one(Ctx::Bytes)),
     (8, "serial-number", one(Ctx::Leaf)),
-    (9, "ueid", one(Ctx::Leaf)),
-    (10, "uuid", one(Ctx::Leaf)),
+    (9, "ueid", one(Ctx::Bytes)),
+    (10, "uuid", one(Ctx::Bytes)),
     (11, "name", one(Ctx::Leaf)),
     (13, "cryptokeys", many(Ctx::Leaf)),
     (14, "integrity-registers", one(Ctx::Leaf)),
@@ -382,6 +475,7 @@ const CES_CONDITION: &[Slot] = &[
 ];
 const CES_RECORD: &[Slot] = &[many(Ctx::Measurement), many(Ctx::Measurement)];
 const COND_ENDORSE: &[Slot] = &[many(Ctx::StatefulEnvRecord), many(Ctx::EndorsedTriple)];
+const DIGEST: &[Slot] = &[one(Ctx::Leaf), one(Ctx::Bytes)];
 
 #[cfg(test)]
 mod tests {
@@ -460,5 +554,68 @@ mod tests {
         // mval.version -> 0, and nested version-map.version -> 0 too.
         let vmap = &mv_ints["4"]["0"][0][1][0]["1"]["0"];
         assert_eq!(vmap["0"], "1.0", "version-map.version -> 0");
+    }
+
+    /// `coerce_bytes` turns base64 text into CBOR bytes at bare-`bstr`
+    /// positions (here a digest value) while leaving the alg integer and
+    /// surrounding structure intact.
+    #[test]
+    fn coerce_bytes_decodes_digest_value() {
+        // Build the int-keyed CoMID and convert to a CBOR value.
+        let prose = json!({
+            "tag-identity": { "id": "c1" },
+            "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "digests": [ [ 7, "3q2+7w==" ] ] } } ] ]
+            ] }
+        });
+        let ints = to_int_keys(&prose);
+        let mut cbor_val = corim::json::json_to_value(&ints);
+        coerce_bytes(&mut cbor_val);
+
+        // Navigate: comid[4 triples][0 ref-triples][0][1 measurements][0]
+        //           [1 value][2 digests][0][1 digest-val]
+        let CborValue::Map(comid) = &cbor_val else {
+            panic!("comid must be a map")
+        };
+        let triples = map_get(comid, 4).expect("triples");
+        let ref_triples = arr_get(triples_key(triples, 0), 0);
+        let measurements = arr_get(ref_triples, 1);
+        let meas0 = arr_get(measurements, 0);
+        let CborValue::Map(meas) = meas0 else {
+            panic!("measurement must be a map")
+        };
+        let value = map_get(meas, 1).expect("mval");
+        let CborValue::Map(mval) = value else {
+            panic!("mval must be a map")
+        };
+        let digests = map_get(mval, 2).expect("digests");
+        let digest0 = arr_get(digests, 0);
+        let digest_val = arr_get(digest0, 1);
+        assert_eq!(
+            digest_val,
+            &CborValue::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+            "digest val must be coerced to bytes"
+        );
+    }
+
+    // -- small helpers for navigating a CBOR value in tests --
+    fn map_get(m: &[(CborValue, CborValue)], key: i64) -> Option<&CborValue> {
+        m.iter().find_map(|(k, v)| match k {
+            CborValue::Integer(n) if *n == key as i128 => Some(v),
+            _ => None,
+        })
+    }
+    fn arr_get(v: &CborValue, i: usize) -> &CborValue {
+        match v {
+            CborValue::Array(a) => &a[i],
+            _ => panic!("expected array"),
+        }
+    }
+    fn triples_key(v: &CborValue, key: i64) -> &CborValue {
+        match v {
+            CborValue::Map(m) => map_get(m, key).expect("triple key"),
+            _ => panic!("expected map"),
+        }
     }
 }

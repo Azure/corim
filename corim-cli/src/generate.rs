@@ -13,9 +13,14 @@
 //!    [`crate::prose`].
 //! 2. Passed through profile mval alias resolution (`"tcbstatus"` ->
 //!    `"-700"`).
-//! 3. Deserialized via `corim::json::from_json` into a `ComidTag` —
-//!    giving the full triples tree for free — then encoded and wrapped
-//!    by `CorimBuilder`.
+//! 3. Converted to a CBOR value via `corim::json::json_to_value`, then
+//!    base64 text at bare-`bstr` positions (digest values, `ueid`,
+//!    `uuid`, `mac-addr`, `ip-addr`) is coerced to CBOR bytes by
+//!    [`crate::prose::coerce_bytes`] — the core JSON layer maps every
+//!    string to text and cannot express bare byte strings.
+//! 4. Deserialized via `corim::cbor::value::from_value` into a
+//!    `ComidTag` — giving the full triples tree for free — then encoded
+//!    and wrapped by `CorimBuilder`.
 //!
 //! Keys may be written either as prose names or as their raw integer
 //! index (the prose pass is idempotent on integer keys), so mixed and
@@ -148,15 +153,19 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
         // 2. Rewrite profile mval aliases ("tcbstatus") to their integer
         //    keys. These are disjoint from the structural keys, so order
         //    only matters in that aliases survive step 1 untouched.
-        // 3. Deserialize the decoded CoMID via the crate's JSON layer.
         let mut resolved = crate::prose::to_int_keys(comid_json);
         if let Some(p) = profile {
             resolve_mval_aliases(&mut resolved, p);
         }
-        let comid_str = serde_json::to_string(&resolved)
-            .map_err(|e| format!("comids[{i}]: re-serialize: {e}"))?;
-        let comid: ComidTag = corim::json::from_json(&comid_str)
-            .map_err(|e| format!("comids[{i}]: from_json: {e}"))?;
+        // 3. Convert JSON -> CBOR value via the core layer, then coerce
+        //    base64 text into bytes at bare-`bstr` positions (digest
+        //    values, ueid, uuid, mac/ip-addr) — the core JSON layer maps
+        //    every string to text and cannot express bare byte strings.
+        // 4. Deserialize the decoded CoMID.
+        let mut cbor_val = corim::json::json_to_value(&resolved);
+        crate::prose::coerce_bytes(&mut cbor_val);
+        let comid: ComidTag = corim::cbor::value::from_value(&cbor_val)
+            .map_err(|e| format!("comids[{i}]: decode: {e}"))?;
         builder = builder
             .add_comid_tag(comid)
             .map_err(|e| format!("comids[{i}]: add_comid_tag: {e}"))?;
