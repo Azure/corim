@@ -187,22 +187,70 @@ library is needed.
 
 ## CLI tool
 
-The `corim-cli` binary validates and inspects both unsigned (tag 501) and
-signed (tag 18) CoRIM documents:
+The `corim-cli` binary validates, inspects, and generates both unsigned
+(tag 501) and signed (tag 18) CoRIM documents. It is organized into
+subcommands:
 
 ```sh
 # Validate an unsigned CoRIM
-corim-cli --skip-expiry myfile.corim
+corim-cli validate --skip-expiry myfile.corim
 
 # Validate a signed CoRIM (auto-detected)
-corim-cli --skip-expiry signed.corim
+corim-cli validate --skip-expiry signed.corim
 
 # JSON output
-corim-cli -f json myfile.corim
+corim-cli validate -f json myfile.corim
 
 # Non-aborting structural diagnose pass — prints issues without rejecting
-corim-cli --diagnose myfile.corim
+corim-cli validate --diagnose myfile.corim
+
+# Generate an unsigned CoRIM from a JSON template
+corim-cli generate template.json -o out.cbor
 ```
+
+### `generate` — build a CoRIM from a JSON template
+
+`generate` builds an **unsigned** CoRIM from a hand-authored JSON
+template. A template has a `corim-id`, an optional `profile`, optional
+CoRIM-level fields (`rim-validity`, `entities`, `dependent-rims`), and
+one or more tag arrays (`comids`, `coswids`, `cotls`). Each tag is
+deserialized into its decoded type (CoMID gets the full triples tree),
+then encoded and wrapped by the builder.
+
+Map keys may be written as **prose names** (`"tag-identity"`,
+`"triples"`, `"vendor"`, `"svn"`, …); the CLI rewrites them to the CBOR
+integer keys the core `json` layer expects using a context-aware state
+machine (it knows, e.g., that `"version"` is key 1 in `tag-identity` but
+key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
+`"4"`, …) are still accepted, and the rewrite is idempotent — so
+prose, integer, and mixed templates all produce identical output.
+Triple records are positional CBOR arrays and stay positional arrays in
+the template (only map keys are named).
+
+`corim-id` and `profile` accept either a plain string (text id / URI) or
+a type-choice object for the other variants — `corim-id` as
+`{ "type": "uuid", "value": "…" }`, `profile` as
+`{ "type": "oid", "value": "<base64>" }`. `rim-validity` is
+`{ "not-before"?: <epoch>, "not-after": <epoch> }` (epoch seconds).
+
+Profile-defined `measurement-values-map` extension keys can be written
+by alias (e.g. `"tcbstatus": "UpToDate"` instead of `"-700": ...`) when
+the template's `profile` field names a profile the CLI was compiled with.
+See [`corim-cli/templates/azure_ndpa.json`](corim-cli/templates/azure_ndpa.json)
+for a worked example (equivalent to the `build_corim_ovl3_tdisp_ndpa`
+example). Signed CoRIM generation is out of scope — sign the output
+separately via `SignedCorimBuilder`.
+
+Byte-string fields are authored as **base64** text (matching the output
+of `corim-cli validate -f json`). Bare `bstr` positions — digest values,
+`ueid`, `uuid`, `mac-addr`, `ip-addr`, and `integrity-registers` digests
+— are decoded to CBOR bytes automatically, as is the `bstr` inside
+byte-bearing type-choice tags the core layer leaves as text
+(`oid`, `cose-key`, `key-thumbprint`, `cert-thumbprint`,
+`cert-path-thumbprint`, `pkix-asn1der-cert`, `masked-raw-value`). All
+three `ovl3_tdisp` reference examples (NDPA, SOCMANA, SFUA) reproduce
+byte-identically from templates. Remaining gaps: signed CoRIMs, and
+type-choice variants the core `json` layer does not round-trip.
 
 Two helper binaries also ship with `corim-cli` for generating fixtures and
 worked examples:

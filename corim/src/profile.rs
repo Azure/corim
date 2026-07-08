@@ -286,6 +286,23 @@ pub trait Profile {
     fn diagnose_mval_entry(&self, _key: i64, _value: &Value) -> Option<String> {
         None
     }
+
+    /// Resolve a human-authored `measurement-values-map` extension alias
+    /// to its integer key for template-driven CoRIM generation.
+    ///
+    /// This is the authoring inverse of [`Profile::diagnose_mval_entry`]:
+    /// a generator (e.g. `corim-cli generate`) calls this for every
+    /// non-core key in a JSON template's `measurement-values-map`, so a
+    /// human can write `"tcbstatus": "UpToDate"` instead of the raw
+    /// integer key `"-700"`. Return `Some(key)` for aliases this profile
+    /// recognises, or `None` to leave the key untouched (the generator
+    /// then treats it as a literal integer-string or a core field).
+    ///
+    /// The value is not transformed — it is carried through verbatim into
+    /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].
+    fn mval_json_alias(&self, _name: &str) -> Option<i64> {
+        None
+    }
 }
 
 /// Type alias for owned, thread-safe boxed profiles stored in a
