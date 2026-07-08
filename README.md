@@ -206,6 +206,9 @@ corim-cli validate --diagnose myfile.corim
 
 # Generate an unsigned CoRIM from a JSON template
 corim-cli generate template.json -o out.cbor
+
+# Convert an unsigned CoRIM back to a JSON template (inverse of generate)
+corim-cli convert myfile.corim -o template.json
 ```
 
 ### `generate` — build a CoRIM from a JSON template
@@ -251,6 +254,24 @@ byte-bearing type-choice tags the core layer leaves as text
 three `ovl3_tdisp` reference examples (NDPA, SOCMANA, SFUA) reproduce
 byte-identically from templates. Remaining gaps: signed CoRIMs, and
 type-choice variants the core `json` layer does not round-trip.
+
+### `convert` — dump a CoRIM back to a JSON template
+
+`convert` is the inverse of `generate`. It decodes a tag-501 unsigned
+CoRIM and emits a **prose-keyed** JSON template (to `-o FILE`, or stdout)
+that feeds straight back into `generate`, reproducing the original bytes:
+
+```sh
+corim-cli convert myfile.corim -o template.json
+corim-cli generate template.json -o roundtrip.corim   # byte-identical
+```
+
+This differs from `validate -f json`, which prints a validation
+*summary* (validity, counts, triple types), not the CoRIM contents. Use
+`convert` when you want the full structure as editable JSON, and `validate
+--edn` for CBOR Extended Diagnostic Notation. All three `ovl3_tdisp`
+reference examples round-trip `convert` → `generate` byte-identically.
+Signed CoRIMs are out of scope — convert the payload instead.
 
 Two helper binaries also ship with `corim-cli` for generating fixtures and
 worked examples:
