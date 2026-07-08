@@ -20,6 +20,13 @@
 # Local-only docs (kept out of the repo)
 /docs/
 
+# Local-only sample data and tools (kept out of the repo)
+/samples/
+/tools/
+
+# Windows "mark of the web" alternate-data-stream files
+*:Zone.Identifier
+
 # Test data / binary artifacts
 *.cbor
 *.cose
