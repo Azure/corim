@@ -187,22 +187,43 @@ library is needed.
 
 ## CLI tool
 
-The `corim-cli` binary validates and inspects both unsigned (tag 501) and
-signed (tag 18) CoRIM documents:
+The `corim-cli` binary validates, inspects, and generates both unsigned
+(tag 501) and signed (tag 18) CoRIM documents. It is organized into
+subcommands:
 
 ```sh
 # Validate an unsigned CoRIM
-corim-cli --skip-expiry myfile.corim
+corim-cli validate --skip-expiry myfile.corim
 
 # Validate a signed CoRIM (auto-detected)
-corim-cli --skip-expiry signed.corim
+corim-cli validate --skip-expiry signed.corim
 
 # JSON output
-corim-cli -f json myfile.corim
+corim-cli validate -f json myfile.corim
 
 # Non-aborting structural diagnose pass — prints issues without rejecting
-corim-cli --diagnose myfile.corim
+corim-cli validate --diagnose myfile.corim
+
+# Generate an unsigned CoRIM from a JSON template
+corim-cli generate template.json -o out.cbor
 ```
+
+### `generate` — build a CoRIM from a JSON template
+
+`generate` builds an **unsigned** CoRIM from a hand-authored JSON
+template. Each entry in the template's `comids` array is deserialized
+into a decoded CoMID (full triples tree) via the crate's `json` layer,
+then encoded and wrapped by the builder. Structural map keys use their
+CBOR integer index as a string (`"1"`, `"4"`, …); keys 31+ and
+type-choices use their JSON names.
+
+Profile-defined `measurement-values-map` extension keys can be written
+by alias (e.g. `"tcbstatus": "UpToDate"` instead of `"-700": ...`) when
+the template's `profile` field names a profile the CLI was compiled with.
+See [`corim-cli/templates/azure_ndpa.json`](corim-cli/templates/azure_ndpa.json)
+for a worked example (equivalent to the `build_corim_ovl3_tdisp_ndpa`
+example). Signed CoRIM generation is out of scope — sign the output
+separately via `SignedCorimBuilder`.
 
 Two helper binaries also ship with `corim-cli` for generating fixtures and
 worked examples:
