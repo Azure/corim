@@ -43,6 +43,14 @@ use serde_json::{Map, Value};
 
 use corim::cbor::value::Value as CborValue;
 
+/// `key-thumbprint` type-choice tag (RFC 9052 / CoRIM §D). Wraps a
+/// digest `[alg, bstr]`.
+const TAG_KEY_THUMBPRINT: u64 = 557;
+/// `cert-thumbprint` type-choice tag. Wraps a digest `[alg, bstr]`.
+const TAG_CERT_THUMBPRINT: u64 = 559;
+/// `cert-path-thumbprint` type-choice tag. Wraps a digest `[alg, bstr]`.
+const TAG_CERT_PATH_THUMBPRINT: u64 = 561;
+
 /// A child value's interpretation: its context, and whether the value is
 /// a homogeneous array of that context (`list`) or a single node.
 #[derive(Clone, Copy)]
@@ -210,6 +218,22 @@ fn convert_slot(v: &Value, slot: Slot, dir: Dir) -> Value {
 /// decoded CoMID CBOR value. Mirrors [`convert`] but operates on the
 /// CBOR value tree (integer keys) and only rewrites `Bytes` leaves.
 fn coerce(v: &mut CborValue, ctx: Ctx) {
+    // Universal: the thumbprint type-choice tags wrap a digest
+    // `[alg, bstr]` wherever they appear (crypto keys in identity /
+    // attest-key / authorized-by slots, key-thumbprint instance ids,
+    // mval `cryptokeys`). The core JSON layer emits them via the
+    // `{ "type": ..., "value": [alg, base64] }` form but does not decode
+    // the inner value, so the `bstr` arrives as text. Handle them here
+    // regardless of schema context.
+    if let CborValue::Tag(t, inner) = v {
+        if matches!(
+            *t,
+            TAG_KEY_THUMBPRINT | TAG_CERT_THUMBPRINT | TAG_CERT_PATH_THUMBPRINT
+        ) {
+            coerce(inner, Ctx::Digest);
+            return;
+        }
+    }
     match shape(ctx) {
         Shape::Leaf => {}
         Shape::Bytes => {
