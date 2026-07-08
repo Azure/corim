@@ -12,6 +12,7 @@ use clap::{Parser, Subcommand};
 mod display;
 mod edn;
 mod generate;
+mod prose;
 
 /// Validate, inspect, and generate CoRIM (Concise Reference Integrity
 /// Manifest) documents.

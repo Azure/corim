@@ -13,9 +13,9 @@ fn template_path() -> String {
     format!("{}/templates/azure_ndpa.json", env!("CARGO_MANIFEST_DIR"))
 }
 
-/// The sample Azure NDPA template generates a valid CoRIM, and the
-/// `tcbstatus` alias resolves to the profile's integer key -700
-/// (CBOR negative int `0x39 0x02 0xbb`).
+/// The sample Azure NDPA template (authored with **prose** keys) generates
+/// a valid CoRIM, and the `tcbstatus` alias resolves to the profile's
+/// integer key -700 (CBOR negative int `0x39 0x02 0xbb`).
 #[test]
 fn generate_azure_ndpa_template_is_valid_and_resolves_alias() {
     let out = std::env::temp_dir().join("corim_cli_generate_ndpa.cbor");
@@ -47,6 +47,67 @@ fn generate_azure_ndpa_template_is_valid_and_resolves_alias() {
     );
 
     let _ = std::fs::remove_file(&out);
+}
+
+/// A prose-keyed template and the equivalent integer-keyed template
+/// produce byte-identical output — the prose pass is a lossless rewrite
+/// and is idempotent on integer keys.
+#[test]
+fn generate_prose_and_integer_templates_match() {
+    let dir = std::env::temp_dir();
+    let prose_t = dir.join("corim_cli_prose.json");
+    let int_t = dir.join("corim_cli_int.json");
+    let prose_out = dir.join("corim_cli_prose.cbor");
+    let int_out = dir.join("corim_cli_int.cbor");
+
+    // Same CoRIM, one authored with prose keys, one with integer keys.
+    std::fs::write(
+        &prose_t,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME", "model": "Widget" } },
+                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &int_t,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "1": { "0": "c1" },
+              "4": { "0": [
+                [ { "0": { "1": "ACME", "2": "Widget" } },
+                  [ { "1": { "1": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    for (t, o) in [(&prose_t, &prose_out), (&int_t, &int_out)] {
+        let status = Command::new(bin())
+            .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+            .status()
+            .expect("run corim-cli generate");
+        assert!(status.success(), "generate exited non-zero for {t:?}");
+    }
+
+    let prose_bytes = std::fs::read(&prose_out).unwrap();
+    let int_bytes = std::fs::read(&int_out).unwrap();
+    assert_eq!(
+        prose_bytes, int_bytes,
+        "prose and integer templates must produce identical CBOR"
+    );
+
+    for f in [&prose_t, &int_t, &prose_out, &int_out] {
+        let _ = std::fs::remove_file(f);
+    }
 }
 
 /// A template without a `comids` array is rejected with a non-zero exit.
