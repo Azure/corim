@@ -148,9 +148,7 @@ enum Shape {
 enum Dir {
     /// prose name -> integer-string key.
     ToInt,
-    /// integer-string key -> prose name. Only exercised by the symmetric
-    /// round-trip tests; the `generate` path uses `ToInt`.
-    #[cfg_attr(not(test), allow(dead_code))]
+    /// integer-string key -> prose name.
     ToProse,
 }
 
@@ -168,6 +166,8 @@ pub enum Root {
     Coswid,
     /// A `concise-tl-tag` (CoTL).
     Cotl,
+    /// A CoRIM `validity-map` (`rim-validity` / `tl-validity`).
+    Validity,
     /// A scalar type-choice (e.g. `corim-id`, `profile`). No prose keys;
     /// only the universal tag-driven byte coercion applies.
     Scalar,
@@ -180,6 +180,7 @@ fn root_ctx(root: Root) -> Ctx {
         Root::Locator => Ctx::Locator,
         Root::Coswid => Ctx::Coswid,
         Root::Cotl => Ctx::Cotl,
+        Root::Validity => Ctx::Validity,
         Root::Scalar => Ctx::Leaf,
     }
 }
@@ -208,11 +209,12 @@ pub fn coerce_bytes(value: &mut CborValue, root: Root) {
     coerce(value, root_ctx(root));
 }
 
-/// Rewrite a CoMID JSON tree (as emitted by `corim::json::to_json`) from
-/// integer-string keys to prose keys. Inverse of [`to_int_keys`].
-#[cfg(test)]
-pub fn to_prose_keys(comid: &Value) -> Value {
-    convert(comid, Ctx::Comid, Dir::ToProse)
+/// Rewrite a JSON tree (as emitted by `corim::json::value_to_json`) from
+/// integer-string keys to prose keys for the given root kind. Inverse of
+/// [`to_int_keys`]; used by the `convert` command to emit
+/// generate-ready templates.
+pub fn to_prose_keys(value: &Value, root: Root) -> Value {
+    convert(value, root_ctx(root), Dir::ToProse)
 }
 
 fn convert(v: &Value, ctx: Ctx, dir: Dir) -> Value {
@@ -693,7 +695,7 @@ mod tests {
         assert_eq!(ints["1"]["0"], "example-ndpa", "id -> 0");
 
         // Round-trip back to prose equals the original.
-        let back = to_prose_keys(&ints);
+        let back = to_prose_keys(&ints, Root::Comid);
         assert_eq!(back, prose, "prose -> int -> prose must be identity");
     }
 

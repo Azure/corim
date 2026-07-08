@@ -9,6 +9,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod convert;
 mod display;
 mod edn;
 mod generate;
@@ -38,6 +39,13 @@ enum Commands {
     /// profile, and CoMID tags (full triples tree), builds the CoRIM
     /// via the builder API, validates it, and writes the CBOR output.
     Generate(generate::GenerateArgs),
+
+    /// Convert an unsigned CoRIM CBOR document to a JSON template.
+    ///
+    /// The inverse of `generate`: decodes a tag-501 CoRIM and emits a
+    /// prose-keyed JSON template that feeds straight back into
+    /// `generate`, reproducing the original bytes.
+    Convert(convert::ConvertArgs),
 }
 
 #[derive(Parser)]
@@ -83,6 +91,7 @@ fn main() {
     match cli.command {
         Commands::Validate(args) => run_validate(args),
         Commands::Generate(args) => generate::run(args),
+        Commands::Convert(args) => convert::run(args),
     }
 }
 
