@@ -22,22 +22,27 @@
 //!
 //! # Scope
 //!
-//! Only **map keys** are named. Triple records are positional CBOR
-//! arrays in the wire format (`reference-triple = [environment,
-//! [measurement]]`), and they stay positional arrays in the template —
-//! but the converter recurses into them with the correct child context
-//! so maps *nested inside* those arrays (environments, measurements,
-//! mval) still get named keys.
+//! Two kinds of node get named:
+//!
+//! - **Map keys** — `measurement-values-map` etc. become
+//!   `{ "svn": ... }` instead of `{ "1": ... }`.
+//! - **Triple records** — positional CBOR arrays in the wire format
+//!   (`reference-triple = [ref-env, ref-claims]`) are emitted as labeled
+//!   objects (`{ "ref-env": ..., "ref-claims": ... }`) using the CDDL
+//!   field names. On the `generate` (prose -> integer) path both the
+//!   labeled-object form and the legacy positional-array form are
+//!   accepted and lowered back to the positional array the wire format
+//!   requires. Digest pairs (`[alg, val]`) stay positional.
 //!
 //! # Symmetry
 //!
 //! The walk is bidirectional: [`to_int_keys`] rewrites prose -> integer
-//! (used by `generate`), and `to_prose_keys` rewrites integer -> prose.
-//! Both share one schema, so a prose template round-trips through the
-//! core crate's `to_json`/`from_json` exactly. Unknown keys (e.g.
-//! profile-specific `measurement-values-map` extensions such as
-//! `tcbstatus`) pass through untouched, so profile alias resolution can
-//! run afterwards.
+//! (used by `generate`), and [`to_prose_keys`] rewrites integer -> prose
+//! (used by `convert`). Both share one schema, so a template round-trips
+//! through the core crate exactly — `convert` -> `generate` reproduces
+//! the original bytes. Unknown keys (e.g. profile-specific
+//! `measurement-values-map` extensions such as `tcbstatus`) pass through
+//! untouched, so profile alias resolution can run afterwards.
 
 use serde_json::{Map, Value};
 
@@ -73,6 +78,32 @@ const fn one(ctx: Ctx) -> Slot {
 
 const fn many(ctx: Ctx) -> Slot {
     Slot { list: true, ctx }
+}
+
+/// A named field in a positional record ([`Shape::Record`]). `optional`
+/// marks a trailing element that may be absent (all optional fields in
+/// the CoRIM CDDL records are trailing).
+#[derive(Clone, Copy)]
+struct Field {
+    name: &'static str,
+    slot: Slot,
+    optional: bool,
+}
+
+const fn field(name: &'static str, slot: Slot) -> Field {
+    Field {
+        name,
+        slot,
+        optional: false,
+    }
+}
+
+const fn opt_field(name: &'static str, slot: Slot) -> Field {
+    Field {
+        name,
+        slot,
+        optional: true,
+    }
 }
 
 /// Every CDDL map or positional record the walker can be positioned at.
@@ -130,8 +161,16 @@ enum Shape {
     /// A CBOR map: `(integer key, prose name, child slot)` entries.
     /// Keys not listed pass through unchanged (recursed as `Leaf`).
     Map(&'static [(i64, &'static str, Slot)]),
-    /// A positional array: element `i` uses `slots[i]`; elements beyond
-    /// the listed slots pass through as `Leaf`.
+    /// A positional array with **named** fields (a CoRIM triple record).
+    /// On the `convert` (integer -> prose) path it is emitted as a
+    /// labeled object; on the `generate` (prose -> integer) path both the
+    /// labeled-object form and the legacy positional-array form are
+    /// accepted and lowered back to a positional array.
+    Record(&'static [Field]),
+    /// A positional array with unnamed elements (e.g. a digest
+    /// `[alg, val]`). Element `i` uses `slots[i]`; elements beyond the
+    /// listed slots pass through as `Leaf`. Stays positional in both
+    /// directions.
     Tuple(&'static [Slot]),
     /// A map with arbitrary keys whose every value is a list of digests
     /// (`integrity-registers`). Keys pass through unchanged.
@@ -260,6 +299,54 @@ fn convert(v: &Value, ctx: Ctx, dir: Dir) -> Value {
                     .collect(),
             )
         }
+        Shape::Record(fields) => match dir {
+            // integer -> prose: emit a labeled object, one entry per
+            // present array element (absent trailing optionals are
+            // simply omitted).
+            Dir::ToProse => {
+                let arr = match v {
+                    Value::Array(a) => a,
+                    // Already a labeled object (idempotent) or unexpected.
+                    _ => return v.clone(),
+                };
+                let mut out = Map::new();
+                for (i, f) in fields.iter().enumerate() {
+                    if let Some(e) = arr.get(i) {
+                        out.insert(f.name.to_string(), convert_slot(e, f.slot, dir));
+                    }
+                }
+                Value::Object(out)
+            }
+            // prose -> integer: accept either the labeled-object form or
+            // the legacy positional-array form; lower both to an array.
+            Dir::ToInt => match v {
+                Value::Object(obj) => {
+                    let mut arr = Vec::new();
+                    for f in fields {
+                        match obj.get(f.name) {
+                            Some(e) => arr.push(convert_slot(e, f.slot, dir)),
+                            // Trailing optional omitted: stop emitting.
+                            None if f.optional => {}
+                            // Required field missing: keep positions
+                            // aligned with a null so the downstream
+                            // decode reports a precise error.
+                            None => arr.push(Value::Null),
+                        }
+                    }
+                    Value::Array(arr)
+                }
+                Value::Array(a) => Value::Array(
+                    a.iter()
+                        .enumerate()
+                        .map(|(i, e)| {
+                            let slot = fields.get(i).map(|f| f.slot).unwrap_or(one(Ctx::Leaf));
+                            convert_slot(e, slot, dir)
+                        })
+                        .collect(),
+                ),
+                _ => v.clone(),
+            },
+        },
     }
 }
 
@@ -346,6 +433,17 @@ fn coerce(v: &mut CborValue, ctx: Ctx) {
             if let CborValue::Array(a) = v {
                 for (i, e) in a.iter_mut().enumerate() {
                     let slot = slots.get(i).copied().unwrap_or(one(Ctx::Leaf));
+                    coerce_slot(e, slot);
+                }
+            }
+        }
+        Shape::Record(fields) => {
+            // By the time `coerce` runs, `to_int_keys` has already lowered
+            // any labeled object to a positional array, so treat a record
+            // like a tuple keyed by field position.
+            if let CborValue::Array(a) = v {
+                for (i, e) in a.iter_mut().enumerate() {
+                    let slot = fields.get(i).map(|f| f.slot).unwrap_or(one(Ctx::Leaf));
                     coerce_slot(e, slot);
                 }
             }
@@ -453,26 +551,30 @@ fn shape(ctx: Ctx) -> Shape {
         Ctx::Entity => Shape::Map(ENTITY),
         Ctx::LinkedTag => Shape::Map(LINKED_TAG),
         Ctx::KeyTripleConditions => Shape::Map(KEY_TRIPLE_CONDITIONS),
-        // -- positional triple records (arrays) --
-        // reference / endorsed / stateful-env = [environment, [measurement]]
-        Ctx::ReferenceTriple | Ctx::EndorsedTriple | Ctx::StatefulEnvRecord => {
-            Shape::Tuple(ENV_AND_MEASUREMENTS)
-        }
-        // identity / attest-key = [environment, [crypto-key], ?conditions]
-        Ctx::IdentityTriple | Ctx::AttestKeyTriple => Shape::Tuple(KEY_TRIPLE),
-        // dependency / membership = [environment, [environment]]
-        Ctx::DomainDependency | Ctx::DomainMembership => Shape::Tuple(ENV_AND_ENVS),
-        // coswid = [environment, [tag-id]]
-        Ctx::CoswidTriple => Shape::Tuple(ENV_AND_LEAVES),
-        // ces = [condition, [record]]
-        Ctx::CesTriple => Shape::Tuple(CES_TRIPLE),
-        // ces-condition = [environment, [claim], ?authorized-by]
-        Ctx::CesCondition => Shape::Tuple(CES_CONDITION),
-        // ces-record = [[selection], [addition]]
-        Ctx::CesRecord => Shape::Tuple(CES_RECORD),
-        // conditional-endorsement = [[stateful-env], [endorsed-triple]]
-        Ctx::CondEndorseTriple => Shape::Tuple(COND_ENDORSE),
-        // digest = [alg (int/text), bstr]
+        // -- positional triple records (named-field arrays) --
+        // reference-triple = [ref-env, ref-claims]
+        Ctx::ReferenceTriple => Shape::Record(REFERENCE_TRIPLE),
+        // endorsed-triple = [condition, endorsement]
+        Ctx::EndorsedTriple => Shape::Record(ENDORSED_TRIPLE),
+        // stateful-environment = [environment, claims-list]
+        Ctx::StatefulEnvRecord => Shape::Record(STATEFUL_ENV),
+        // identity / attest-key = [environment, key-list, ?conditions]
+        Ctx::IdentityTriple | Ctx::AttestKeyTriple => Shape::Record(KEY_TRIPLE),
+        // dependency = [domain-id, trustees]
+        Ctx::DomainDependency => Shape::Record(DOMAIN_DEPENDENCY),
+        // membership = [domain-id, members]
+        Ctx::DomainMembership => Shape::Record(DOMAIN_MEMBERSHIP),
+        // coswid = [environment, tag-ids]
+        Ctx::CoswidTriple => Shape::Record(COSWID_TRIPLE),
+        // ces = [condition, series]
+        Ctx::CesTriple => Shape::Record(CES_TRIPLE),
+        // ces-condition = [environment, claims-list, ?authorized-by]
+        Ctx::CesCondition => Shape::Record(CES_CONDITION),
+        // ces-record = [selection, addition]
+        Ctx::CesRecord => Shape::Record(CES_RECORD),
+        // conditional-endorsement = [conditions, endorsements]
+        Ctx::CondEndorseTriple => Shape::Record(COND_ENDORSE),
+        // digest = [alg (int/text), bstr] — stays positional
         Ctx::Digest => Shape::Tuple(DIGEST),
         Ctx::Bytes => Shape::Bytes,
         // integrity-registers = { id => [digest+] }
@@ -593,24 +695,56 @@ const KEY_TRIPLE_CONDITIONS: &[(i64, &str, Slot)] = &[
     (1, "authorized-by", many(Ctx::Leaf)),
 ];
 
-// --- positional record schemas ---
+// --- positional record schemas (named fields, per CDDL) ---
 
-const ENV_AND_MEASUREMENTS: &[Slot] = &[one(Ctx::Environment), many(Ctx::Measurement)];
-const KEY_TRIPLE: &[Slot] = &[
-    one(Ctx::Environment),
-    many(Ctx::Leaf),
-    one(Ctx::KeyTripleConditions),
+const REFERENCE_TRIPLE: &[Field] = &[
+    field("ref-env", one(Ctx::Environment)),
+    field("ref-claims", many(Ctx::Measurement)),
 ];
-const ENV_AND_ENVS: &[Slot] = &[one(Ctx::Environment), many(Ctx::Environment)];
-const ENV_AND_LEAVES: &[Slot] = &[one(Ctx::Environment), many(Ctx::Leaf)];
-const CES_TRIPLE: &[Slot] = &[one(Ctx::CesCondition), many(Ctx::CesRecord)];
-const CES_CONDITION: &[Slot] = &[
-    one(Ctx::Environment),
-    many(Ctx::Measurement),
-    many(Ctx::Leaf),
+const ENDORSED_TRIPLE: &[Field] = &[
+    field("condition", one(Ctx::Environment)),
+    field("endorsement", many(Ctx::Measurement)),
 ];
-const CES_RECORD: &[Slot] = &[many(Ctx::Measurement), many(Ctx::Measurement)];
-const COND_ENDORSE: &[Slot] = &[many(Ctx::StatefulEnvRecord), many(Ctx::EndorsedTriple)];
+const STATEFUL_ENV: &[Field] = &[
+    field("environment", one(Ctx::Environment)),
+    field("claims-list", many(Ctx::Measurement)),
+];
+const KEY_TRIPLE: &[Field] = &[
+    field("environment", one(Ctx::Environment)),
+    field("key-list", many(Ctx::Leaf)),
+    opt_field("conditions", one(Ctx::KeyTripleConditions)),
+];
+const DOMAIN_DEPENDENCY: &[Field] = &[
+    field("domain-id", one(Ctx::Environment)),
+    field("trustees", many(Ctx::Environment)),
+];
+const DOMAIN_MEMBERSHIP: &[Field] = &[
+    field("domain-id", one(Ctx::Environment)),
+    field("members", many(Ctx::Environment)),
+];
+const COSWID_TRIPLE: &[Field] = &[
+    field("environment", one(Ctx::Environment)),
+    field("tag-ids", many(Ctx::Leaf)),
+];
+const CES_TRIPLE: &[Field] = &[
+    field("condition", one(Ctx::CesCondition)),
+    field("series", many(Ctx::CesRecord)),
+];
+const CES_CONDITION: &[Field] = &[
+    field("environment", one(Ctx::Environment)),
+    field("claims-list", many(Ctx::Measurement)),
+    opt_field("authorized-by", many(Ctx::Leaf)),
+];
+const CES_RECORD: &[Field] = &[
+    field("selection", many(Ctx::Measurement)),
+    field("addition", many(Ctx::Measurement)),
+];
+const COND_ENDORSE: &[Field] = &[
+    field("conditions", many(Ctx::StatefulEnvRecord)),
+    field("endorsements", many(Ctx::EndorsedTriple)),
+];
+
+// digest = [alg, val] — stays positional (unnamed).
 const DIGEST: &[Slot] = &[one(Ctx::Leaf), one(Ctx::Bytes)];
 
 // -- CoRIM-level and CoSWID/CoTL schemas --
@@ -668,22 +802,28 @@ mod tests {
     use serde_json::json;
 
     /// A prose CoMID with a CES triple round-trips to integer keys and
-    /// back to the same prose.
+    /// back to the same prose. The canonical prose form uses **labeled**
+    /// records (`condition`/`series`/`selection`/`addition`).
     #[test]
     fn prose_int_prose_round_trip() {
         let prose = json!({
             "tag-identity": { "id": "example-ndpa" },
             "triples": {
                 "conditional-endorsement-series-triples": [
-                    [
-                        [ { "class": { "vendor": "Microsoft" } }, [] ],
-                        [
-                            [
-                                [ { "key": 20, "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
-                                [ { "value": { "-700": "UpToDate" } } ]
-                            ]
+                    {
+                        "condition": {
+                            "environment": { "class": { "vendor": "Microsoft" } },
+                            "claims-list": []
+                        },
+                        "series": [
+                            {
+                                "selection": [
+                                    { "key": 20, "value": { "svn": { "type": "min-svn", "value": 1 } } }
+                                ],
+                                "addition": [ { "value": { "-700": "UpToDate" } } ]
+                            }
                         ]
-                    ]
+                    }
                 ]
             }
         });
@@ -697,6 +837,49 @@ mod tests {
         // Round-trip back to prose equals the original.
         let back = to_prose_keys(&ints, Root::Comid);
         assert_eq!(back, prose, "prose -> int -> prose must be identity");
+    }
+
+    /// The legacy positional-array record form is still accepted on the
+    /// `to_int_keys` (generate) path and lowers to the same integer tree
+    /// as the labeled form.
+    #[test]
+    fn legacy_positional_records_still_accepted() {
+        let positional = json!({
+            "tag-identity": { "id": "x" },
+            "triples": {
+                "conditional-endorsement-series-triples": [
+                    [
+                        [ { "class": { "vendor": "Microsoft" } }, [] ],
+                        [ [ [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                            [ { "value": { "-700": "UpToDate" } } ] ] ]
+                    ]
+                ]
+            }
+        });
+        let labeled = json!({
+            "tag-identity": { "id": "x" },
+            "triples": {
+                "conditional-endorsement-series-triples": [
+                    {
+                        "condition": {
+                            "environment": { "class": { "vendor": "Microsoft" } },
+                            "claims-list": []
+                        },
+                        "series": [
+                            {
+                                "selection": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                                "addition": [ { "value": { "-700": "UpToDate" } } ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        });
+        assert_eq!(
+            to_int_keys(&positional, Root::Comid),
+            to_int_keys(&labeled, Root::Comid),
+            "positional and labeled forms must lower to the same integer tree"
+        );
     }
 
     /// Unknown keys (profile mval aliases) pass through untouched so the
