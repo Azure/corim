@@ -124,3 +124,52 @@ fn generate_rejects_template_without_comids() {
 
     let _ = std::fs::remove_file(&tmp);
 }
+
+/// A digest reference value can be authored: the digest `val` is a bare
+/// `bstr`, written as base64 text, and coerced to CBOR bytes so the
+/// CoMID deserializes and the exact bytes survive to the wire.
+#[test]
+fn generate_digest_reference_value() {
+    let dir = std::env::temp_dir();
+    let t = dir.join("corim_cli_digest.json");
+    let o = dir.join("corim_cli_digest.cbor");
+
+    // 0x3q2+7w== base64 == deadbeef; alg 7 == SHA-256.
+    std::fs::write(
+        &t,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "digests": [ [ 7, "3q2+7w==" ] ] } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    let status = Command::new(bin())
+        .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+        .status()
+        .expect("run corim-cli generate");
+    assert!(status.success(), "digest generate exited non-zero");
+
+    let bytes = std::fs::read(&o).unwrap();
+    let (_c, comids) =
+        corim::validate::decode_and_validate(&bytes).expect("digest CoRIM must validate");
+    let digests = comids[0].triples.reference_triples.as_ref().unwrap()[0].measurements()[0]
+        .mval
+        .digests
+        .as_ref()
+        .expect("expected a digests field");
+    assert_eq!(
+        digests[0].value(),
+        &[0xde, 0xad, 0xbe, 0xef],
+        "digest bytes"
+    );
+
+    let _ = std::fs::remove_file(&t);
+    let _ = std::fs::remove_file(&o);
+}

@@ -233,6 +233,15 @@ for a worked example (equivalent to the `build_corim_ovl3_tdisp_ndpa`
 example). Signed CoRIM generation is out of scope — sign the output
 separately via `SignedCorimBuilder`.
 
+Byte-string fields are authored as **base64** text (matching the output
+of `corim-cli validate -f json`). Bare `bstr` positions — digest values,
+`ueid`, `uuid`, `mac-addr`, `ip-addr` — are decoded to CBOR bytes
+automatically; tagged byte type-choices (`uuid`, `oid`, `raw-value`) use
+the `{ "type": ..., "value": ... }` form. Known gaps: `integrity-registers`
+byte fields, CoRIM-level fields (`rim-validity`, `entities`,
+`dependent-rims`), non-text `corim-id` / OID `profile`, and CoSWID/CoTL
+tags are not yet authorable via templates.
+
 Two helper binaries also ship with `corim-cli` for generating fixtures and
 worked examples:
 
