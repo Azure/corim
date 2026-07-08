@@ -43,13 +43,21 @@ use serde_json::{Map, Value};
 
 use corim::cbor::value::Value as CborValue;
 
+/// `oid` type-choice tag (RFC 8949 §3.4). Wraps a bare `bstr`.
+const TAG_OID: u64 = 111;
 /// `key-thumbprint` type-choice tag (RFC 9052 / CoRIM §D). Wraps a
 /// digest `[alg, bstr]`.
 const TAG_KEY_THUMBPRINT: u64 = 557;
+/// `cose-key` type-choice tag. Wraps a bare `bstr` (encoded COSE_Key).
+const TAG_COSE_KEY: u64 = 558;
 /// `cert-thumbprint` type-choice tag. Wraps a digest `[alg, bstr]`.
 const TAG_CERT_THUMBPRINT: u64 = 559;
 /// `cert-path-thumbprint` type-choice tag. Wraps a digest `[alg, bstr]`.
 const TAG_CERT_PATH_THUMBPRINT: u64 = 561;
+/// `pkix-asn1der-cert` type-choice tag. Wraps a bare `bstr` (DER cert).
+const TAG_PKIX_ASN1DER_CERT: u64 = 562;
+/// `masked-raw-value` type-choice tag. Wraps `[value: bstr, mask: bstr]`.
+const TAG_MASKED_RAW_VALUE: u64 = 563;
 
 /// A child value's interpretation: its context, and whether the value is
 /// a homogeneous array of that context (`list`) or a single node.
@@ -97,6 +105,18 @@ enum Ctx {
     CondEndorseTriple,
     StatefulEnvRecord,
     Digest,
+    // --- CoRIM-level and CoSWID/CoTL maps and records ---
+    Validity,
+    Locator,
+    Coswid,
+    SwidEntity,
+    SwidLink,
+    Cotl,
+    // integrity-registers: `{ id => [digest+] }` (arbitrary id keys).
+    IntegrityRegisters,
+    // a locator thumbprint: a single digest `[alg, bstr]` or a list of
+    // such digests (disambiguated at coerce time).
+    DigestOrList,
     // --- a bare `bstr` leaf: base64 text on input, coerced to CBOR
     //     bytes by `coerce_bytes` (the core JSON layer cannot express
     //     bare byte strings, only base64 text).
@@ -113,6 +133,9 @@ enum Shape {
     /// A positional array: element `i` uses `slots[i]`; elements beyond
     /// the listed slots pass through as `Leaf`.
     Tuple(&'static [Slot]),
+    /// A map with arbitrary keys whose every value is a list of digests
+    /// (`integrity-registers`). Keys pass through unchanged.
+    DigestListMap,
     /// A bare `bstr` leaf: a base64 string that [`coerce_bytes`] turns
     /// into CBOR bytes. Treated as a plain leaf during key rewriting.
     Bytes,
@@ -131,27 +154,58 @@ enum Dir {
     ToProse,
 }
 
-/// Rewrite a CoMID JSON tree from prose keys to integer-string keys, so
-/// it can be handed to `corim::json::from_json::<ComidTag>`.
-pub fn to_int_keys(comid: &Value) -> Value {
-    convert(comid, Ctx::Comid, Dir::ToInt)
+/// The top-level template value kind a prose walk starts from. Selects
+/// which CDDL root context the converter/coercer begins in.
+#[derive(Clone, Copy)]
+pub enum Root {
+    /// A decoded `concise-mid-tag` (CoMID).
+    Comid,
+    /// A CoRIM `entity-map`.
+    Entity,
+    /// A CoRIM `corim-locator-map` (dependent-rims entry).
+    Locator,
+    /// A `concise-swid-tag` (CoSWID).
+    Coswid,
+    /// A `concise-tl-tag` (CoTL).
+    Cotl,
+    /// A scalar type-choice (e.g. `corim-id`, `profile`). No prose keys;
+    /// only the universal tag-driven byte coercion applies.
+    Scalar,
 }
 
-/// Coerce base64 text at bare-`bstr` positions of a decoded CoMID CBOR
-/// value into byte strings.
+fn root_ctx(root: Root) -> Ctx {
+    match root {
+        Root::Comid => Ctx::Comid,
+        Root::Entity => Ctx::Entity,
+        Root::Locator => Ctx::Locator,
+        Root::Coswid => Ctx::Coswid,
+        Root::Cotl => Ctx::Cotl,
+        Root::Scalar => Ctx::Leaf,
+    }
+}
+
+/// Rewrite a JSON tree from prose keys to integer-string keys for the
+/// given root kind, so it can be handed to the core JSON layer.
+pub fn to_int_keys(value: &Value, root: Root) -> Value {
+    convert(value, root_ctx(root), Dir::ToInt)
+}
+
+/// Coerce base64 text at bare-`bstr` positions of a decoded CBOR value
+/// into byte strings, starting from the given root kind.
 ///
 /// The core `corim::json` layer maps every JSON string to CBOR text, so
 /// bare `bstr` fields (digest values, `ueid`, `uuid`, `mac-addr`,
-/// `ip-addr`) arrive as `Value::Text(base64)` and fail to deserialize.
-/// This walks the value tree with the same context schema used for key
-/// rewriting and, at each `bstr` position, base64-decodes the text into
-/// `Value::Bytes`. Type-choice byte fields (e.g. tagged `uuid`, `oid`,
-/// `raw-value`) are unaffected — they arrive already tagged.
+/// `ip-addr`, integrity-register digests) arrive as `Value::Text(base64)`
+/// and fail to deserialize. This walks the value tree with the same
+/// context schema used for key rewriting and, at each `bstr` position,
+/// base64-decodes the text into `Value::Bytes`. It also decodes the
+/// inner bytes of type-choice tags the core layer leaves as text
+/// (`oid`, `cose-key`, thumbprints, `masked-raw-value`, DER certs).
 ///
 /// Call this on the CBOR value produced by `corim::json::json_to_value`
-/// before `corim::cbor::value::from_value::<ComidTag>`.
-pub fn coerce_bytes(comid: &mut CborValue) {
-    coerce(comid, Ctx::Comid);
+/// before `corim::cbor::value::from_value`.
+pub fn coerce_bytes(value: &mut CborValue, root: Root) {
+    coerce(value, root_ctx(root));
 }
 
 /// Rewrite a CoMID JSON tree (as emitted by `corim::json::to_json`) from
@@ -166,7 +220,9 @@ fn convert(v: &Value, ctx: Ctx, dir: Dir) -> Value {
         // `Bytes` leaves carry a base64 string through key rewriting
         // unchanged; the JSON->CBOR byte coercion happens later in
         // `coerce_bytes`, which operates on the CBOR value tree.
-        Shape::Leaf | Shape::Bytes => v.clone(),
+        // `DigestListMap` has arbitrary (register-id) keys and no prose
+        // to rewrite, so it likewise passes through untouched here.
+        Shape::Leaf | Shape::Bytes | Shape::DigestListMap => v.clone(),
         Shape::Map(entries) => {
             let obj = match v {
                 Value::Object(o) => o,
@@ -218,20 +274,34 @@ fn convert_slot(v: &Value, slot: Slot, dir: Dir) -> Value {
 /// decoded CoMID CBOR value. Mirrors [`convert`] but operates on the
 /// CBOR value tree (integer keys) and only rewrites `Bytes` leaves.
 fn coerce(v: &mut CborValue, ctx: Ctx) {
-    // Universal: the thumbprint type-choice tags wrap a digest
-    // `[alg, bstr]` wherever they appear (crypto keys in identity /
-    // attest-key / authorized-by slots, key-thumbprint instance ids,
-    // mval `cryptokeys`). The core JSON layer emits them via the
-    // `{ "type": ..., "value": [alg, base64] }` form but does not decode
-    // the inner value, so the `bstr` arrives as text. Handle them here
-    // regardless of schema context.
+    // Universal tag-driven coercion. Several type-choice tags wrap byte
+    // strings that the core JSON layer emits as base64 text (via the
+    // `{ "type": ..., "value": ... }` form) but does not decode back to
+    // bytes on input. Handle them here regardless of schema context, so
+    // crypto keys, OIDs, COSE keys, DER certs and masked raw values work
+    // wherever they appear.
     if let CborValue::Tag(t, inner) = v {
-        if matches!(
-            *t,
-            TAG_KEY_THUMBPRINT | TAG_CERT_THUMBPRINT | TAG_CERT_PATH_THUMBPRINT
-        ) {
-            coerce(inner, Ctx::Digest);
-            return;
+        match *t {
+            // Digest-bearing thumbprints: inner is `[alg, bstr]`.
+            TAG_KEY_THUMBPRINT | TAG_CERT_THUMBPRINT | TAG_CERT_PATH_THUMBPRINT => {
+                coerce(inner, Ctx::Digest);
+                return;
+            }
+            // Bare-`bstr`-bearing type-choices: inner is a base64 text.
+            TAG_OID | TAG_COSE_KEY | TAG_PKIX_ASN1DER_CERT => {
+                coerce(inner, Ctx::Bytes);
+                return;
+            }
+            // masked-raw-value: inner is `[value: bstr, mask: bstr]`.
+            TAG_MASKED_RAW_VALUE => {
+                if let CborValue::Array(a) = inner.as_mut() {
+                    for e in a.iter_mut() {
+                        coerce(e, Ctx::Bytes);
+                    }
+                }
+                return;
+            }
+            _ => {}
         }
     }
     match shape(ctx) {
@@ -240,6 +310,18 @@ fn coerce(v: &mut CborValue, ctx: Ctx) {
             if let CborValue::Text(s) = v {
                 if let Some(bytes) = base64_decode(s) {
                     *v = CborValue::Bytes(bytes);
+                }
+            }
+        }
+        Shape::DigestListMap => {
+            // `{ id => [digest+] }`: coerce every digest in every value.
+            if let CborValue::Map(m) = v {
+                for (_k, val) in m.iter_mut() {
+                    if let CborValue::Array(ds) = val {
+                        for d in ds.iter_mut() {
+                            coerce(d, Ctx::Digest);
+                        }
+                    }
                 }
             }
         }
@@ -270,6 +352,22 @@ fn coerce(v: &mut CborValue, ctx: Ctx) {
 }
 
 fn coerce_slot(v: &mut CborValue, slot: Slot) {
+    // A `DigestOrList` slot is a single digest `[alg, bstr]` or a list of
+    // such digests. Disambiguate: if the first element is an integer
+    // (the alg), it is a single digest; otherwise a list.
+    if let Ctx::DigestOrList = slot.ctx {
+        if let CborValue::Array(a) = v {
+            let single = matches!(a.first(), Some(CborValue::Integer(_)));
+            if single {
+                coerce(v, Ctx::Digest);
+            } else {
+                for e in a.iter_mut() {
+                    coerce(e, Ctx::Digest);
+                }
+            }
+        }
+        return;
+    }
     if slot.list {
         if let CborValue::Array(items) = v {
             for e in items.iter_mut() {
@@ -375,6 +473,18 @@ fn shape(ctx: Ctx) -> Shape {
         // digest = [alg (int/text), bstr]
         Ctx::Digest => Shape::Tuple(DIGEST),
         Ctx::Bytes => Shape::Bytes,
+        // integrity-registers = { id => [digest+] }
+        Ctx::IntegrityRegisters => Shape::DigestListMap,
+        // a locator thumbprint: single digest or list of digests.
+        Ctx::DigestOrList => Shape::Leaf,
+        // -- CoRIM-level maps --
+        Ctx::Validity => Shape::Map(VALIDITY),
+        Ctx::Locator => Shape::Map(LOCATOR),
+        // -- CoSWID / CoTL --
+        Ctx::Coswid => Shape::Map(COSWID),
+        Ctx::SwidEntity => Shape::Map(SWID_ENTITY),
+        Ctx::SwidLink => Shape::Map(SWID_LINK),
+        Ctx::Cotl => Shape::Map(COTL),
         Ctx::Leaf => Shape::Leaf,
     }
 }
@@ -445,7 +555,7 @@ const MVAL: &[(i64, &str, Slot)] = &[
     (10, "uuid", one(Ctx::Bytes)),
     (11, "name", one(Ctx::Leaf)),
     (13, "cryptokeys", many(Ctx::Leaf)),
-    (14, "integrity-registers", one(Ctx::Leaf)),
+    (14, "integrity-registers", one(Ctx::IntegrityRegisters)),
     (15, "int-range", one(Ctx::Leaf)),
 ];
 
@@ -501,6 +611,55 @@ const CES_RECORD: &[Slot] = &[many(Ctx::Measurement), many(Ctx::Measurement)];
 const COND_ENDORSE: &[Slot] = &[many(Ctx::StatefulEnvRecord), many(Ctx::EndorsedTriple)];
 const DIGEST: &[Slot] = &[one(Ctx::Leaf), one(Ctx::Bytes)];
 
+// -- CoRIM-level and CoSWID/CoTL schemas --
+
+const VALIDITY: &[(i64, &str, Slot)] = &[
+    (0, "not-before", one(Ctx::Leaf)),
+    (1, "not-after", one(Ctx::Leaf)),
+];
+
+const LOCATOR: &[(i64, &str, Slot)] = &[
+    (0, "href", one(Ctx::Leaf)),
+    (1, "thumbprint", one(Ctx::DigestOrList)),
+];
+
+const COSWID: &[(i64, &str, Slot)] = &[
+    (0, "tag-id", one(Ctx::Leaf)),
+    (1, "software-name", one(Ctx::Leaf)),
+    (2, "entity", many(Ctx::SwidEntity)),
+    (4, "link", many(Ctx::SwidLink)),
+    (8, "corpus", one(Ctx::Leaf)),
+    (9, "patch", one(Ctx::Leaf)),
+    (11, "supplemental", one(Ctx::Leaf)),
+    (12, "tag-version", one(Ctx::Leaf)),
+    (13, "software-version", one(Ctx::Leaf)),
+    (14, "version-scheme", one(Ctx::Leaf)),
+    (15, "lang", one(Ctx::Leaf)),
+];
+
+const SWID_ENTITY: &[(i64, &str, Slot)] = &[
+    (31, "entity-name", one(Ctx::Leaf)),
+    (32, "reg-id", one(Ctx::Leaf)),
+    (33, "role", one(Ctx::Leaf)),
+    (34, "thumbprint", one(Ctx::Digest)),
+];
+
+const SWID_LINK: &[(i64, &str, Slot)] = &[
+    (10, "media", one(Ctx::Leaf)),
+    (37, "artifact", one(Ctx::Leaf)),
+    (38, "href", one(Ctx::Leaf)),
+    (39, "ownership", one(Ctx::Leaf)),
+    (40, "rel", one(Ctx::Leaf)),
+    (41, "media-type", one(Ctx::Leaf)),
+    (42, "use", one(Ctx::Leaf)),
+];
+
+const COTL: &[(i64, &str, Slot)] = &[
+    (0, "tag-identity", one(Ctx::TagIdentity)),
+    (1, "tags-list", many(Ctx::TagIdentity)),
+    (2, "tl-validity", one(Ctx::Validity)),
+];
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,7 +686,7 @@ mod tests {
             }
         });
 
-        let ints = to_int_keys(&prose);
+        let ints = to_int_keys(&prose, Root::Comid);
         // Structural keys became integer strings.
         assert!(ints.get("1").is_some(), "tag-identity -> 1");
         assert!(ints.get("4").is_some(), "triples -> 4");
@@ -550,7 +709,7 @@ mod tests {
                 ]
             }
         });
-        let ints = to_int_keys(&prose);
+        let ints = to_int_keys(&prose, Root::Comid);
         // mval is at [triples][0 ref-triple][1 measurements][0][1 value]
         let mval = &ints["4"]["0"][0][1][0]["1"];
         assert_eq!(
@@ -564,7 +723,7 @@ mod tests {
     #[test]
     fn version_key_is_context_sensitive() {
         let ti = json!({ "tag-identity": { "id": "x", "version": "2" } });
-        let ti_ints = to_int_keys(&ti);
+        let ti_ints = to_int_keys(&ti, Root::Comid);
         assert_eq!(ti_ints["1"]["1"], "2", "tag-identity.version -> 1");
 
         let mv = json!({
@@ -574,7 +733,7 @@ mod tests {
                   [ { "value": { "version": { "version": "1.0", "version-scheme": 1 } } } ] ]
             ] }
         });
-        let mv_ints = to_int_keys(&mv);
+        let mv_ints = to_int_keys(&mv, Root::Comid);
         // mval.version -> 0, and nested version-map.version -> 0 too.
         let vmap = &mv_ints["4"]["0"][0][1][0]["1"]["0"];
         assert_eq!(vmap["0"], "1.0", "version-map.version -> 0");
@@ -593,9 +752,9 @@ mod tests {
                   [ { "value": { "digests": [ [ 7, "3q2+7w==" ] ] } } ] ]
             ] }
         });
-        let ints = to_int_keys(&prose);
+        let ints = to_int_keys(&prose, Root::Comid);
         let mut cbor_val = corim::json::json_to_value(&ints);
-        coerce_bytes(&mut cbor_val);
+        coerce_bytes(&mut cbor_val, Root::Comid);
 
         // Navigate: comid[4 triples][0 ref-triples][0][1 measurements][0]
         //           [1 value][2 digests][0][1 digest-val]

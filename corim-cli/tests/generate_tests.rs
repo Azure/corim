@@ -220,3 +220,135 @@ fn generate_identity_triple_cert_thumbprint() {
     let _ = std::fs::remove_file(&t);
     let _ = std::fs::remove_file(&o);
 }
+
+/// A template exercising the CoRIM-level fields (UUID corim-id, OID
+/// profile, rim-validity, entities, dependent-rims), an
+/// integrity-registers mval, and a CoTL tag builds and validates, with
+/// bytes correctly coerced throughout.
+#[test]
+fn generate_corim_level_fields_and_cotl() {
+    let dir = std::env::temp_dir();
+    let t = dir.join("corim_cli_full.json");
+    let o = dir.join("corim_cli_full.cbor");
+
+    std::fs::write(
+        &t,
+        r#"{
+          "corim-id": { "type": "uuid", "value": "550e8400-e29b-41d4-a716-446655440000" },
+          "profile": { "type": "oid", "value": "BgYrBgEEAQ==" },
+          "rim-validity": { "not-before": 1700000000, "not-after": 1900000000 },
+          "entities": [
+            { "entity-name": "ACME", "reg-id": "https://acme.example", "role": [1] }
+          ],
+          "dependent-rims": [
+            { "href": "https://example.com/rim1", "thumbprint": [7, "3q2+7w=="] }
+          ],
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "integrity-registers": {
+                        "0": [ [7, "3q2+7w=="] ],
+                        "cfg": [ [2, "3q2+7w=="] ] } } } ] ]
+              ] } }
+          ],
+          "cotls": [
+            { "tag-identity": { "id": "tl1" },
+              "tags-list": [ { "id": "c1" } ],
+              "tl-validity": { "not-after": 1900000000 } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    let status = Command::new(bin())
+        .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+        .status()
+        .expect("run corim-cli generate");
+    assert!(status.success(), "full-fields generate exited non-zero");
+
+    let bytes = std::fs::read(&o).unwrap();
+    let (corim, comids) =
+        corim::validate::decode_and_validate(&bytes).expect("full CoRIM must validate");
+
+    // UUID corim-id.
+    assert!(
+        matches!(corim.id, corim::types::corim::CorimId::Uuid(_)),
+        "expected UUID corim-id"
+    );
+    // OID profile.
+    assert!(
+        matches!(
+            corim.profile,
+            Some(corim::types::corim::ProfileChoice::Oid(_))
+        ),
+        "expected OID profile"
+    );
+    // rim-validity present, entities present, dependent-rims present.
+    assert!(corim.rim_validity.is_some(), "expected rim-validity");
+    assert_eq!(corim.entities.as_ref().unwrap().len(), 1, "one entity");
+    assert_eq!(
+        corim.dependent_rims.as_ref().unwrap().len(),
+        1,
+        "one dependent-rim"
+    );
+
+    // integrity-registers digests coerced to bytes.
+    let regs = comids[0].triples.reference_triples.as_ref().unwrap()[0].measurements()[0]
+        .mval
+        .integrity_registers
+        .as_ref()
+        .expect("expected integrity-registers");
+    let any_deadbeef = regs
+        .0
+        .values()
+        .flatten()
+        .any(|d| d.value() == [0xde, 0xad, 0xbe, 0xef]);
+    assert!(any_deadbeef, "integrity-register digest bytes coerced");
+
+    let _ = std::fs::remove_file(&t);
+    let _ = std::fs::remove_file(&o);
+}
+
+/// A CoSWID tag can be authored with prose keys, including an entity
+/// thumbprint digest whose `bstr` is coerced.
+#[test]
+fn generate_coswid_tag() {
+    let dir = std::env::temp_dir();
+    let t = dir.join("corim_cli_coswid.json");
+    let o = dir.join("corim_cli_coswid.cbor");
+
+    // role 1 == tag-creator (required by ConciseSwidTag::valid).
+    std::fs::write(
+        &t,
+        r#"{
+          "corim-id": "id-1",
+          "coswids": [
+            { "tag-id": "swid-1",
+              "software-name": "ACME OS",
+              "tag-version": 0,
+              "entity": [
+                { "entity-name": "ACME", "role": [1],
+                  "thumbprint": [2, "3q2+7w=="] }
+              ] }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    let status = Command::new(bin())
+        .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+        .status()
+        .expect("run corim-cli generate");
+    assert!(status.success(), "coswid generate exited non-zero");
+
+    let bytes = std::fs::read(&o).unwrap();
+    // A CoSWID-only CoRIM has no CoMID, so use a structural tag-501
+    // decode rather than the CoMID-requiring strict validator.
+    let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
+        corim::cbor::decode(&bytes).expect("coswid CoRIM must decode");
+    assert_eq!(tagged.value.tags.len(), 1, "expected one CoSWID tag");
+
+    let _ = std::fs::remove_file(&t);
+    let _ = std::fs::remove_file(&o);
+}
