@@ -26,16 +26,23 @@ name = "corim-gen-signed-sample"
 path = "src/gen_signed_sample.rs"
 
 [dependencies]
-corim = { path = "../corim", version = "0.1.3" }
+corim = { path = "../corim", version = "0.1.3", features = ["json"] }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
+serde = "1"
+serde_json = "1"
+base64 = "0.22"
 
 [features]
 # CLI ships with all first-party CoRIM profiles enabled by default so
 # `--diagnose` labels vendor-defined mval keys by their spec names
-# out of the box. Use `--no-default-features` to disable.
-default = ["intel"]
+# out of the box, and `generate` resolves their mval aliases. Use
+# `--no-default-features` to disable.
+default = ["intel", "azure"]
 # Register the Intel CoRIM profile (draft-cds-rats-intel-corim-profile)
 # in the diagnose registry so `--diagnose` labels Intel tee.* mval keys
 # by their spec names instead of "extension key <N>".
 intel = ["corim/profile-intel"]
+# Register the example Azure profile so `generate` resolves its
+# `tcbstatus` mval alias and `--diagnose` labels it.
+azure = ["corim/profile-azure"]
