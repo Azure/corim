@@ -7,18 +7,40 @@ use std::fs;
 use std::io::{self, Read};
 use std::process;
 
-use clap::Parser;
+use clap::{Parser, Subcommand};
 
 mod display;
 mod edn;
+mod generate;
 
-/// Validate and inspect CoRIM (Concise Reference Integrity Manifest) documents.
-///
-/// Reads a CBOR-encoded CoRIM file (tag-501-wrapped), validates its structure
-/// against draft-ietf-rats-corim-10, and outputs the decoded structure.
+/// Validate, inspect, and generate CoRIM (Concise Reference Integrity
+/// Manifest) documents.
 #[derive(Parser)]
 #[command(name = "corim-cli", version, about)]
 struct Cli {
+    #[command(subcommand)]
+    command: Commands,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Validate and inspect a CoRIM CBOR document.
+    ///
+    /// Reads a CBOR-encoded CoRIM file (tag-501-wrapped), validates its
+    /// structure against draft-ietf-rats-corim-10, and outputs the
+    /// decoded structure.
+    Validate(ValidateArgs),
+
+    /// Generate an unsigned CoRIM CBOR document from a JSON template.
+    ///
+    /// Reads a hand-authored JSON template describing the CoRIM id,
+    /// profile, and CoMID tags (full triples tree), builds the CoRIM
+    /// via the builder API, validates it, and writes the CBOR output.
+    Generate(generate::GenerateArgs),
+}
+
+#[derive(Parser)]
+struct ValidateArgs {
     /// Path to the CoRIM CBOR file. Use "-" or omit for stdin.
     #[arg(value_name = "FILE")]
     file: Option<String>,
@@ -57,6 +79,13 @@ struct Cli {
 fn main() {
     let cli = Cli::parse();
 
+    match cli.command {
+        Commands::Validate(args) => run_validate(args),
+        Commands::Generate(args) => generate::run(args),
+    }
+}
+
+fn run_validate(cli: ValidateArgs) {
     let bytes = match read_input(&cli.file) {
         Ok(b) => b,
         Err(e) => {
