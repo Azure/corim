@@ -105,4 +105,11 @@ impl Profile for AzureProfile {
             None => Some("tcbstatus = <invalid>".into()),
         }
     }
+
+    fn mval_json_alias(&self, name: &str) -> Option<i64> {
+        match name {
+            "tcbstatus" => Some(MVAL_TCBSTATUS),
+            _ => None,
+        }
+    }
 }
