@@ -3,16 +3,16 @@
   "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
   "comids": [
     {
-      "1": {
-        "0": "1.3.6.1.4.1.311.102.5_NDPA"
+      "tag-identity": {
+        "id": "1.3.6.1.4.1.311.102.5_NDPA"
       },
-      "4": {
-        "8": [
+      "triples": {
+        "conditional-endorsement-series-triples": [
           [
             [
               {
-                "0": {
-                  "1": "Microsoft"
+                "class": {
+                  "vendor": "Microsoft"
                 }
               },
               []
@@ -21,9 +21,9 @@
               [
                 [
                   {
-                    "0": 20,
-                    "1": {
-                      "1": {
+                    "key": 20,
+                    "value": {
+                      "svn": {
                         "type": "min-svn",
                         "value": 1
                       }
@@ -32,7 +32,7 @@
                 ],
                 [
                   {
-                    "1": {
+                    "value": {
                       "tcbstatus": "UpToDate"
                     }
                   }

@@ -212,10 +212,18 @@ corim-cli generate template.json -o out.cbor
 
 `generate` builds an **unsigned** CoRIM from a hand-authored JSON
 template. Each entry in the template's `comids` array is deserialized
-into a decoded CoMID (full triples tree) via the crate's `json` layer,
-then encoded and wrapped by the builder. Structural map keys use their
-CBOR integer index as a string (`"1"`, `"4"`, …); keys 31+ and
-type-choices use their JSON names.
+into a decoded CoMID (full triples tree), then encoded and wrapped by
+the builder.
+
+Map keys may be written as **prose names** (`"tag-identity"`,
+`"triples"`, `"vendor"`, `"svn"`, …); the CLI rewrites them to the CBOR
+integer keys the core `json` layer expects using a context-aware state
+machine (it knows, e.g., that `"version"` is key 1 in `tag-identity` but
+key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
+`"4"`, …) are still accepted, and the rewrite is idempotent — so
+prose, integer, and mixed templates all produce identical output.
+Triple records are positional CBOR arrays and stay positional arrays in
+the template (only map keys are named).
 
 Profile-defined `measurement-values-map` extension keys can be written
 by alias (e.g. `"tcbstatus": "UpToDate"` instead of `"-700": ...`) when

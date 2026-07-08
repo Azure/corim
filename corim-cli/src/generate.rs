@@ -5,9 +5,21 @@
 //!
 //! The template is authored against the *decoded* CoMID type (not the
 //! wire-format `corim-map`, whose CoMID tags are opaque bstr-wrapped
-//! CBOR). Each entry in the template's `comids` array is deserialized
-//! via `corim::json::from_json` into a `ComidTag` — giving the full
-//! triples tree for free — then encoded and wrapped by `CorimBuilder`.
+//! CBOR). Each entry in the template's `comids` array is:
+//!
+//! 1. Rewritten from **prose keys** (`"tag-identity"`, `"triples"`,
+//!    `"vendor"`, `"svn"`, ...) to the integer-string keys the core
+//!    crate's JSON layer expects, using the context state machine in
+//!    [`crate::prose`].
+//! 2. Passed through profile mval alias resolution (`"tcbstatus"` ->
+//!    `"-700"`).
+//! 3. Deserialized via `corim::json::from_json` into a `ComidTag` —
+//!    giving the full triples tree for free — then encoded and wrapped
+//!    by `CorimBuilder`.
+//!
+//! Keys may be written either as prose names or as their raw integer
+//! index (the prose pass is idempotent on integer keys), so mixed and
+//! legacy integer-keyed templates still work.
 //!
 //! # Profile-aware mval aliases
 //!
@@ -16,10 +28,8 @@
 //! `"tcbstatus": "UpToDate"` instead of `"-700": "UpToDate"`, the
 //! generator resolves aliases against the profile named by the
 //! template's `profile` field (or `--profile`) using
-//! `Profile::mval_json_alias`.
-//! Alias resolution walks the CoMID JSON tree and rewrites any object
-//! key the profile recognises to its integer-string form before
-//! deserialization.
+//! `Profile::mval_json_alias`. These aliases are disjoint from the
+//! structural prose keys and survive the prose pass untouched.
 //!
 //! # Template shape
 //!
@@ -30,11 +40,19 @@
 //!   "comids": [
 //!     {
 //!       "tag-identity": { "id": "..._NDPA" },
-//!       "triples": { "conditional-endorsement-series": [ /* ... */ ] }
+//!       "triples": {
+//!         "conditional-endorsement-series-triples": [ /* ... */ ]
+//!       }
 //!     }
 //!   ]
 //! }
 //! ```
+//!
+//! Triple records are positional CBOR arrays in the wire format, so they
+//! stay positional arrays in the template; only map keys are named. See
+//! [`corim-cli/templates/azure_ndpa.json`] for a worked example.
+//!
+//! [`corim-cli/templates/azure_ndpa.json`]: ../../templates/azure_ndpa.json
 
 use std::fs;
 use std::path::PathBuf;
@@ -125,9 +143,13 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
     }
 
     for (i, comid_json) in comids_json.iter().enumerate() {
-        // Rewrite profile mval aliases to their integer keys, then
-        // deserialize the decoded CoMID via the crate's JSON layer.
-        let mut resolved = comid_json.clone();
+        // 1. Rewrite prose keys ("tag-identity", "vendor", "svn", ...)
+        //    to integer-string keys using the context state machine.
+        // 2. Rewrite profile mval aliases ("tcbstatus") to their integer
+        //    keys. These are disjoint from the structural keys, so order
+        //    only matters in that aliases survive step 1 untouched.
+        // 3. Deserialize the decoded CoMID via the crate's JSON layer.
+        let mut resolved = crate::prose::to_int_keys(comid_json);
         if let Some(p) = profile {
             resolve_mval_aliases(&mut resolved, p);
         }
