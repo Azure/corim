@@ -236,11 +236,15 @@ separately via `SignedCorimBuilder`.
 Byte-string fields are authored as **base64** text (matching the output
 of `corim-cli validate -f json`). Bare `bstr` positions — digest values,
 `ueid`, `uuid`, `mac-addr`, `ip-addr` — are decoded to CBOR bytes
-automatically; tagged byte type-choices (`uuid`, `oid`, `raw-value`) use
-the `{ "type": ..., "value": ... }` form. Known gaps: `integrity-registers`
-byte fields, CoRIM-level fields (`rim-validity`, `entities`,
-`dependent-rims`), non-text `corim-id` / OID `profile`, and CoSWID/CoTL
-tags are not yet authorable via templates.
+automatically, as are the `bstr` inside digest-bearing thumbprint
+type-choices (`key-thumbprint`, `cert-thumbprint`, `cert-path-thumbprint`).
+Other tagged byte type-choices (`uuid`, `oid`, `raw-value`, `bytes`) use
+the `{ "type": ..., "value": ... }` form. All three `ovl3_tdisp`
+reference examples (NDPA, SOCMANA, SFUA) reproduce byte-identically from
+templates. Known gaps: `integrity-registers` byte fields, CoRIM-level
+fields (`rim-validity`, `entities`, `dependent-rims`), non-text
+`corim-id` / OID `profile`, and CoSWID/CoTL tags are not yet authorable
+via templates.
 
 Two helper binaries also ship with `corim-cli` for generating fixtures and
 worked examples:

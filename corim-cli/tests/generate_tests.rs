@@ -173,3 +173,50 @@ fn generate_digest_reference_value() {
     let _ = std::fs::remove_file(&t);
     let _ = std::fs::remove_file(&o);
 }
+
+/// An identity triple whose key list contains a `cert-thumbprint` crypto
+/// key can be authored: the thumbprint is a digest `[alg, bstr]` nested
+/// inside the tag-559 type-choice, and its base64 `bstr` is coerced to
+/// bytes so the CoMID deserializes. Regression for the ovl3 SFUA example.
+#[test]
+fn generate_identity_triple_cert_thumbprint() {
+    let dir = std::env::temp_dir();
+    let t = dir.join("corim_cli_thumbprint.json");
+    let o = dir.join("corim_cli_thumbprint.cbor");
+
+    // 3q2+7w== base64 == deadbeef; alg 2 == SHA-256.
+    std::fs::write(
+        &t,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "identity-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "type": "cert-thumbprint", "value": [ 2, "3q2+7w==" ] } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    let status = Command::new(bin())
+        .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+        .status()
+        .expect("run corim-cli generate");
+    assert!(status.success(), "cert-thumbprint generate exited non-zero");
+
+    let bytes = std::fs::read(&o).unwrap();
+    let (_c, comids) =
+        corim::validate::decode_and_validate(&bytes).expect("thumbprint CoRIM must validate");
+    let keys = comids[0].triples.identity_triples.as_ref().unwrap()[0].keys();
+    match &keys[0] {
+        corim::types::common::CryptoKey::CertThumbprint(d) => {
+            assert_eq!(d.value(), &[0xde, 0xad, 0xbe, 0xef], "thumbprint bytes");
+        }
+        other => panic!("expected CertThumbprint, got {other:?}"),
+    }
+
+    let _ = std::fs::remove_file(&t);
+    let _ = std::fs::remove_file(&o);
+}
