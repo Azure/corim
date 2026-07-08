@@ -122,6 +122,7 @@ dependencies = [
  "clap",
  "corim",
  "hex",
+ "serde",
  "serde_json",
 ]
 
