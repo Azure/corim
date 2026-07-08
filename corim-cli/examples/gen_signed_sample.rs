@@ -1,7 +1,11 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Generates a sample signed CoRIM document for testing.
+//! Example: build a sample signed CoRIM (COSE_Sign1) with the builder
+//! API and a placeholder signature.
+//!
+//! Writes the CBOR to stdout. Run with:
+//! `cargo run -p corim-cli --example gen_signed_sample > signed.corim`.
 
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::types::common::{MeasuredElement, TagIdChoice};
