@@ -352,3 +352,66 @@ fn generate_coswid_tag() {
     let _ = std::fs::remove_file(&t);
     let _ = std::fs::remove_file(&o);
 }
+
+/// A CES triple authored with **labeled** record fields
+/// (`condition`/`series`/`selection`/`addition`) and the equivalent
+/// legacy positional-array form produce byte-identical output.
+#[test]
+fn generate_labeled_and_positional_records_match() {
+    let dir = std::env::temp_dir();
+    let lt = dir.join("corim_cli_labeled.json");
+    let pt = dir.join("corim_cli_positional.json");
+    let lo = dir.join("corim_cli_labeled.cbor");
+    let po = dir.join("corim_cli_positional.cbor");
+
+    std::fs::write(
+        &lt,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "conditional-endorsement-series-triples": [
+                { "condition": { "environment": { "class": { "vendor": "ACME" } },
+                                 "claims-list": [] },
+                  "series": [
+                    { "selection": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                      "addition":  [ { "value": { "svn": { "type": "svn", "value": 1 } } } ] }
+                  ] }
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &pt,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "conditional-endorsement-series-triples": [
+                [ [ { "class": { "vendor": "ACME" } }, [] ],
+                  [ [ [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                      [ { "value": { "svn": { "type": "svn", "value": 1 } } } ] ] ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    for (t, o) in [(&lt, &lo), (&pt, &po)] {
+        let s = Command::new(bin())
+            .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+            .status()
+            .expect("run generate");
+        assert!(s.success(), "generate failed for {t:?}");
+    }
+    assert_eq!(
+        std::fs::read(&lo).unwrap(),
+        std::fs::read(&po).unwrap(),
+        "labeled and positional records must produce identical CBOR"
+    );
+
+    for f in [&lt, &pt, &lo, &po] {
+        let _ = std::fs::remove_file(f);
+    }
+}

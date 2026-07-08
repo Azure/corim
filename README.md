@@ -227,8 +227,11 @@ machine (it knows, e.g., that `"version"` is key 1 in `tag-identity` but
 key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
 `"4"`, …) are still accepted, and the rewrite is idempotent — so
 prose, integer, and mixed templates all produce identical output.
-Triple records are positional CBOR arrays and stay positional arrays in
-the template (only map keys are named).
+Triple records may be written as **labeled objects** using the CDDL
+field names (e.g. a conditional-endorsement-series triple as
+`{ "condition": { "environment": …, "claims-list": … }, "series": [ {
+"selection": …, "addition": … } ] }`) or as the legacy **positional
+arrays**; both are accepted, and `convert` emits the labeled form.
 
 `corim-id` and `profile` accept either a plain string (text id / URI) or
 a type-choice object for the other variants — `corim-id` as
