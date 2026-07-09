@@ -59,6 +59,48 @@ fn generate_azure_ndpa_template_is_valid_and_resolves_alias() {
     let _ = std::fs::remove_file(&out);
 }
 
+/// Validate text output and diagnose output should render Azure
+/// profile-specific mval key names (tcbstatus) when the profile matches.
+#[test]
+fn validate_and_diagnose_render_azure_mval_key_names() {
+    let out = unique_temp("generate_ndpa_validate", "cbor");
+    let _ = std::fs::remove_file(&out);
+
+    let status = Command::new(bin())
+        .args(["generate", &template_path(), "-o", out.to_str().unwrap()])
+        .status()
+        .expect("run corim-cli generate");
+    assert!(status.success(), "generate exited non-zero");
+
+    let validate_out = Command::new(bin())
+        .args(["validate", out.to_str().unwrap()])
+        .output()
+        .expect("run corim-cli validate");
+    assert!(validate_out.status.success(), "validate exited non-zero");
+    let validate_stdout = String::from_utf8_lossy(&validate_out.stdout);
+    assert!(
+        validate_stdout.contains("tcbstatus"),
+        "expected validate output to include Azure key name, got: {validate_stdout}"
+    );
+
+    let diagnose_out = Command::new(bin())
+        .args(["validate", out.to_str().unwrap(), "--diagnose"])
+        .output()
+        .expect("run corim-cli validate --diagnose");
+    assert!(
+        diagnose_out.status.success(),
+        "validate --diagnose exited non-zero"
+    );
+    let diagnose_stdout = String::from_utf8_lossy(&diagnose_out.stdout);
+    assert!(
+        diagnose_stdout.contains("matched registered profile")
+            && diagnose_stdout.contains("azure-profile"),
+        "expected diagnose output to confirm Azure profile registry match, got: {diagnose_stdout}"
+    );
+
+    let _ = std::fs::remove_file(&out);
+}
+
 /// A prose-keyed template and the equivalent integer-keyed template
 /// produce byte-identical output — the prose pass is a lossless rewrite
 /// and is idempotent on integer keys.
