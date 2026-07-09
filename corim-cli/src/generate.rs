@@ -68,6 +68,14 @@
 //! both are accepted. See [`corim-cli/templates/azure_ndpa.json`] for a
 //! worked example.
 //!
+//! # Comments
+//!
+//! Any object may carry a `$comment` (or `//`) key; these are stripped
+//! before processing and never reach the CBOR output. The template stays
+//! valid standard JSON, so any JSON tool accepts it. Comments can
+//! annotate objects (the root, a CoMID, a triple record, an
+//! environment, ...) but not bare array elements or scalars.
+//!
 //! [`corim-cli/templates/azure_ndpa.json`]: ../../templates/azure_ndpa.json
 
 use std::fs;
@@ -118,8 +126,12 @@ pub fn run(args: GenerateArgs) {
 fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
     let template_str = fs::read_to_string(&args.template)
         .map_err(|e| format!("reading template {}: {e}", args.template))?;
-    let template: serde_json::Value =
+    let mut template: serde_json::Value =
         serde_json::from_str(&template_str).map_err(|e| format!("parsing template JSON: {e}"))?;
+
+    // Strip authoring comments before any structural processing so they
+    // never reach the CBOR output (see `strip_comments`).
+    strip_comments(&mut template);
 
     let obj = template
         .as_object()
@@ -291,6 +303,44 @@ fn decode_scalar<T: serde::de::DeserializeOwned>(json: &serde_json::Value) -> Re
     let mut cbor_val = corim::json::json_to_value(json);
     crate::prose::coerce_bytes(&mut cbor_val, Root::Scalar);
     corim::cbor::value::from_value(&cbor_val)
+}
+
+/// Object keys treated as authoring comments and stripped before the
+/// template is processed. `$comment` follows the JSON Schema convention;
+/// `//` mirrors the familiar line-comment sigil. Both carry arbitrary
+/// values (string, array, object) so multi-line notes are possible.
+const COMMENT_KEYS: [&str; 2] = ["$comment", "//"];
+
+/// Recursively remove comment keys ([`COMMENT_KEYS`]) from every object
+/// in the template.
+///
+/// Comments are kept as valid standard JSON (they are ordinary
+/// string-valued keys), so the template still parses with any JSON tool.
+/// Stripping them here — before prose rewriting, alias resolution, and
+/// CBOR encoding — guarantees they never reach the output and the
+/// `convert -> generate` round trip stays byte-identical (`convert`
+/// never emits them).
+///
+/// Comments can annotate any JSON object (the root, a CoMID, a triple
+/// record, an environment, an mval, ...). They cannot annotate bare
+/// array elements or scalars, which have no place for a key.
+fn strip_comments(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for key in COMMENT_KEYS {
+                map.remove(key);
+            }
+            for v in map.values_mut() {
+                strip_comments(v);
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for v in items.iter_mut() {
+                strip_comments(v);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Recursively rewrite object keys that the profile recognises as
