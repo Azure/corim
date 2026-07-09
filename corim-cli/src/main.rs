@@ -15,6 +15,16 @@ mod edn;
 mod generate;
 mod prose;
 
+fn build_registry() -> corim::profile::ProfileRegistry {
+    #[allow(unused_mut)]
+    let mut registry = corim::profile::ProfileRegistry::new();
+    #[cfg(feature = "intel")]
+    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
+    #[cfg(feature = "azure")]
+    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
+    registry
+}
+
 /// Validate, inspect, and generate CoRIM (Concise Reference Integrity
 /// Manifest) documents.
 #[derive(Parser)]
@@ -131,17 +141,9 @@ fn run_validate(cli: ValidateArgs) {
     // Note: --diagnose runs on the *original* bytes so the report can
     // explicitly call out legacy `#6.500` / `#6.502` outer wrappers.
     if cli.diagnose {
-        // CLI has no profile registry of its own; pass an empty registry
-        // so the walker treats every mval extension key with the generic
-        // "extension key {N}" label. Applications embedding the diagnose
-        // module can build a registry and pass it directly.
-        //
-        // When built with `--features intel`, register the Intel profile
-        // so Intel tee.* mval keys are labelled by their spec names.
-        #[allow(unused_mut)]
-        let mut registry = corim::profile::ProfileRegistry::new();
-        #[cfg(feature = "intel")]
-        registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
+        // Register all first-party profiles enabled for this CLI build
+        // so diagnose can label profile-defined mval keys by name.
+        let registry = build_registry();
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
@@ -209,6 +211,8 @@ fn run_validate(cli: ValidateArgs) {
     };
 
     let corim = corim.unwrap(); // safe: HeaderOnly case already exited above
+    let registry = build_registry();
+    let profile_for_render = corim.profile.as_ref().and_then(|pc| registry.get(pc));
 
     // Step 2: Structural validation
     let mut warnings: Vec<String> = Vec::new();
@@ -324,6 +328,7 @@ decoded via compat::decode_comid_from_tcg_bstr",
                 cotl_count,
                 unknown_count,
                 &signed_info,
+                profile_for_render,
             );
         }
     }
@@ -568,6 +573,7 @@ fn print_text_output(
     cotl_count: u32,
     unknown_count: u32,
     signed_info: &Option<SignedInfo>,
+    profile: Option<&(dyn corim::profile::Profile + Send + Sync)>,
 ) {
     // Validation result
     if errors.is_empty() {
@@ -610,7 +616,7 @@ fn print_text_output(
     // Each CoMID
     for (i, comid) in comids.iter().enumerate() {
         println!("\n  ─── CoMID [{}] ───", i);
-        display::print_comid(comid, "    ", show_raw);
+        display::print_comid(comid, "    ", show_raw, profile);
     }
 
     println!();
