@@ -159,12 +159,12 @@ fn convert_rejects_signed_corim() {
 /// (Azure: -700 -> tcbstatus).
 #[test]
 fn convert_emits_azure_mval_alias_name() {
-        let dir = std::env::temp_dir();
-        let src_t = dir.join("corim_cli_conv_azure_alias_src.json");
-        let src_c = dir.join("corim_cli_conv_azure_alias_src.cbor");
-        let back_t = dir.join("corim_cli_conv_azure_alias_back.json");
+    let dir = std::env::temp_dir();
+    let src_t = dir.join("corim_cli_conv_azure_alias_src.json");
+    let src_c = dir.join("corim_cli_conv_azure_alias_src.cbor");
+    let back_t = dir.join("corim_cli_conv_azure_alias_back.json");
 
-        let template = r#"{
+    let template = r#"{
             "corim-id": "id-azure-1",
             "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
             "comids": [
@@ -182,36 +182,41 @@ fn convert_emits_azure_mval_alias_name() {
             ]
         }"#;
 
-        std::fs::write(&src_t, template).unwrap();
+    std::fs::write(&src_t, template).unwrap();
 
-        let s = Command::new(bin())
-                .args([
-                        "generate",
-                        src_t.to_str().unwrap(),
-                        "-o",
-                        src_c.to_str().unwrap(),
-                ])
-                .status()
-                .expect("generate src");
-        assert!(s.success(), "azure alias test: generate src failed");
+    let s = Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            src_c.to_str().unwrap(),
+        ])
+        .status()
+        .expect("generate src");
+    assert!(s.success(), "azure alias test: generate src failed");
 
-        let s = Command::new(bin())
-                .args(["convert", src_c.to_str().unwrap(), "-o", back_t.to_str().unwrap()])
-                .status()
-                .expect("convert");
-        assert!(s.success(), "azure alias test: convert failed");
+    let s = Command::new(bin())
+        .args([
+            "convert",
+            src_c.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap(),
+        ])
+        .status()
+        .expect("convert");
+    assert!(s.success(), "azure alias test: convert failed");
 
-        let back = std::fs::read_to_string(&back_t).unwrap();
-        assert!(
-                back.contains("\"tcbstatus\": \"UpToDate\""),
-                "expected tcbstatus alias in output JSON, got: {back}"
-        );
-        assert!(
-                !back.contains("\"-700\": \"UpToDate\""),
-                "did not expect raw -700 key in output JSON, got: {back}"
-        );
+    let back = std::fs::read_to_string(&back_t).unwrap();
+    assert!(
+        back.contains("\"tcbstatus\": \"UpToDate\""),
+        "expected tcbstatus alias in output JSON, got: {back}"
+    );
+    assert!(
+        !back.contains("\"-700\": \"UpToDate\""),
+        "did not expect raw -700 key in output JSON, got: {back}"
+    );
 
-        for f in [&src_t, &src_c, &back_t] {
-                let _ = std::fs::remove_file(f);
-        }
+    for f in [&src_t, &src_c, &back_t] {
+        let _ = std::fs::remove_file(f);
+    }
 }
