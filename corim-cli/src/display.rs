@@ -4,6 +4,7 @@
 //! Pretty-printing helpers for CoRIM/CoMID structures.
 
 use corim::cbor::value::Value;
+use corim::profile::Profile;
 use corim::types::comid::ComidTag;
 use corim::types::common::*;
 use corim::types::corim::*;
@@ -61,7 +62,12 @@ pub fn print_corim(corim: &CorimMap, show_raw: bool) {
 
 // ── CoMID ────────────────────────────────────────────────────────────────
 
-pub fn print_comid(comid: &ComidTag, indent: &str, _show_raw: bool) {
+pub fn print_comid(
+    comid: &ComidTag,
+    indent: &str,
+    _show_raw: bool,
+    profile: Option<&(dyn Profile + Send + Sync)>,
+) {
     println!(
         "{}tag-id: {}",
         indent,
@@ -91,12 +97,16 @@ pub fn print_comid(comid: &ComidTag, indent: &str, _show_raw: bool) {
         }
     }
 
-    print_triples(&comid.triples, indent);
+    print_triples(&comid.triples, indent, profile);
 }
 
 // ── Triples ──────────────────────────────────────────────────────────────
 
-fn print_triples(triples: &TriplesMap, indent: &str) {
+fn print_triples(
+    triples: &TriplesMap,
+    indent: &str,
+    profile: Option<&(dyn Profile + Send + Sync)>,
+) {
     println!("{}triples:", indent);
     let ti = format!("{}  ", indent);
 
@@ -107,7 +117,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
             print_env(&t.0, &format!("{}    ", ti));
             println!("{}    measurements: ({} entries)", ti, t.1.len());
             for m in &t.1 {
-                print_measurement(m, &format!("{}      ", ti));
+                print_measurement(m, &format!("{}      ", ti), profile);
             }
         }
     }
@@ -119,7 +129,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
             print_env(&t.0, &format!("{}    ", ti));
             println!("{}    endorsements: ({} entries)", ti, t.1.len());
             for m in &t.1 {
-                print_measurement(m, &format!("{}      ", ti));
+                print_measurement(m, &format!("{}      ", ti), profile);
             }
         }
     }
@@ -193,7 +203,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
                     cond.claims_list.len()
                 );
                 for m in &cond.claims_list {
-                    print_measurement(m, &format!("{}      ", ti));
+                    print_measurement(m, &format!("{}      ", ti), profile);
                 }
             }
             if let Some(ref auth) = cond.authorized_by {
@@ -211,11 +221,11 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
                     sr.selection().len()
                 );
                 for m in sr.selection() {
-                    print_measurement(m, &format!("{}        ", ti));
+                    print_measurement(m, &format!("{}        ", ti), profile);
                 }
                 println!("{}        addition: ({} meas)", ti, sr.addition().len());
                 for m in sr.addition() {
-                    print_measurement(m, &format!("{}          ", ti));
+                    print_measurement(m, &format!("{}          ", ti), profile);
                 }
             }
         }
@@ -235,7 +245,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
                 if !sr.1.is_empty() {
                     println!("{}      claims-list: ({} entries)", ti, sr.1.len());
                     for m in &sr.1 {
-                        print_measurement(m, &format!("{}        ", ti));
+                        print_measurement(m, &format!("{}        ", ti), profile);
                     }
                 }
             }
@@ -245,7 +255,7 @@ fn print_triples(triples: &TriplesMap, indent: &str) {
                 print_env(&et.0, &format!("{}        ", ti));
                 println!("{}        measurements: ({} entries)", ti, et.1.len());
                 for m in &et.1 {
-                    print_measurement(m, &format!("{}          ", ti));
+                    print_measurement(m, &format!("{}          ", ti), profile);
                 }
             }
         }
@@ -288,7 +298,11 @@ fn print_class(class: &ClassMap, indent: &str) {
 
 // ── Measurement ──────────────────────────────────────────────────────────
 
-fn print_measurement(m: &MeasurementMap, indent: &str) {
+fn print_measurement(
+    m: &MeasurementMap,
+    indent: &str,
+    profile: Option<&(dyn Profile + Send + Sync)>,
+) {
     if let Some(ref mkey) = m.mkey {
         println!("{}mkey: {}", indent, measured_element_str(mkey));
     }
@@ -420,6 +434,12 @@ fn print_measurement(m: &MeasurementMap, indent: &str) {
             mv.extra_entries.len()
         );
         for (k, v) in &mv.extra_entries {
+            if let Some(p) = profile {
+                if let Some(name) = p.mval_json_name(*k) {
+                    println!("{}  [{} ({})] {}", mi, name, k, value_summary(v));
+                    continue;
+                }
+            }
             println!("{}  [{}] {}", mi, k, value_summary(v));
         }
     }
