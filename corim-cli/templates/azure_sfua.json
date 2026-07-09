@@ -1,0 +1,224 @@
+{
+  "$comment": [
+    "Azure SFUA endorsement — equivalent to the build_corim_ovl3_tdisp_ndpa example. '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "corim-id is <ovl3-oid-value>_{SFUA|SOCMANA|NDPA}_<yyyymmdd of CoRIM generation>"
+  ],
+  "corim-id": "1.3.6.1.4.1.311.102.5_SFUA_20260705",
+  "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+  "comids": [
+    {
+      "tag-identity": {
+        "$comment": "The tag-identity id is <ovl3-oid-value>_{SFUA|SOCMANA|NDPA}",
+        "id": "1.3.6.1.4.1.311.102.5_SFUA",
+        "version": 1
+      },
+      "triples": {
+        "identity-triples": [
+          {
+            "environment": {
+              "class": {
+                "vendor": "Microsoft"
+              }
+            },
+            "key-list": [
+              {
+                "$comment": "SPDM Root Cert Thumbprint",
+                "type": "cert-thumbprint",
+                "value": [
+                  2,
+                  "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
+                ]
+              },
+              {
+                "$comment": "SPDM Intermediate Cert Thumbprint",
+                "type": "cert-thumbprint",
+                "value": [
+                  2,
+                  "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
+                ]
+              }
+            ]
+          }
+        ],
+        "conditional-endorsement-series-triples": [
+          {
+            "$comment": "SPDM Certificates DevIK DICE TCBInfo",
+            "condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft",
+                  "layer": 0
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBDZXJ0aWZpY2F0ZXM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "selection": [
+                  {
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 0
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "$comment": "SPDM Certificates DevAK DICE TCBInfo",
+            "condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft",
+                  "layer": 1
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBDZXJ0aWZpY2F0ZXM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "selection": [
+                  {
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 0
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "$comment": "SPDM Measurements",
+            "condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft"
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBNZWFzdXJlbWVudHM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "selection": [
+                  {
+                    "$comment": "PLM read-only memory",
+                    "key": 1,
+                    "value": {
+                      "digests": [
+                        [
+                          7,
+                          "S1bPoH+usqtX3pIeSpfWVRRLVGRw66qrb3HA21GN31tKX7KPsq0bSTQmRCTrHlqG"
+                        ]
+                      ]
+                    }
+                  },
+                  {
+                    "$comment": "FUSE",
+                    "key": 8,
+                    "value": {
+                      "digests": [
+                        [
+                          7,
+                          "S1bPoH+usqtX3pIeSpfWVRRLVGRw66qrb3HA21GN31tKX7KPsq0bSTQmRCTrHlqG"
+                        ]
+                      ]
+                    }
+                  },
+                  {
+                    "$comment": "PLM FW SVN",
+                    "key": 15,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "SEC FW SVN",
+                    "key": 16,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "NMC  FW SVN",
+                    "key": 17,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "CMC FW SVN",
+                    "key": 18,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "PLM Debug State",
+                    "key": 254,
+                    "value": {
+                      "raw-value": {
+                        "type": "bytes",
+                        "value": "cmF3dmFsdWUKcmF3dmFsdWUK"
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
