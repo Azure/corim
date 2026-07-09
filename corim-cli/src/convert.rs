@@ -35,6 +35,7 @@ use clap::Parser;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 
+use corim::profile::{Profile, ProfileRegistry};
 use corim::types::comid::ComidTag;
 use corim::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use corim::types::coswid::ConciseSwidTag;
@@ -88,8 +89,14 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
         ));
     }
     let corim = tagged.value;
+    let registry = build_registry();
+    let profile: Option<&(dyn Profile + Send + Sync)> =
+        corim.profile.as_ref().and_then(|pc| registry.get(pc));
 
-    let template = build_template(&corim)?;
+    let mut template = build_template(&corim)?;
+    if let Some(p) = profile {
+        apply_mval_alias_names(&mut template, p);
+    }
     let json = serde_json::to_string_pretty(&template)
         .map_err(|e| format!("serializing template: {e}"))?;
 
@@ -190,6 +197,53 @@ fn typed_to_prose<T: Serialize>(value: &T, root: Root) -> Result<JsonValue, Stri
     let cbor_val = corim::cbor::value::to_value(value)?;
     let json_val = corim::json::value_to_json(&cbor_val);
     Ok(crate::prose::to_prose_keys(&json_val, root))
+}
+
+/// Recursively rewrite profile-defined integer `measurement-values-map`
+/// extension keys to their human-friendly JSON aliases during `convert`
+/// output (e.g. `"-700"` -> `"tcbstatus"` for Azure).
+fn apply_mval_alias_names(value: &mut JsonValue, profile: &(dyn Profile + Send + Sync)) {
+    match value {
+        JsonValue::Object(map) => {
+            let renames: Vec<(String, &'static str)> = map
+                .keys()
+                .filter_map(|k| {
+                    k.parse::<i64>()
+                        .ok()
+                        .and_then(|n| profile.mval_json_name(n).map(|name| (k.clone(), name)))
+                })
+                .collect();
+
+            for (old_key, alias) in renames {
+                if map.contains_key(alias) {
+                    continue;
+                }
+                if let Some(v) = map.remove(&old_key) {
+                    map.insert(alias.to_string(), v);
+                }
+            }
+
+            for v in map.values_mut() {
+                apply_mval_alias_names(v, profile);
+            }
+        }
+        JsonValue::Array(items) => {
+            for v in items.iter_mut() {
+                apply_mval_alias_names(v, profile);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn build_registry() -> ProfileRegistry {
+    #[allow(unused_mut)]
+    let mut registry = ProfileRegistry::new();
+    #[cfg(feature = "intel")]
+    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
+    #[cfg(feature = "azure")]
+    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
+    registry
 }
 
 /// Read input from a file path, or from stdin when the path is `None` or
