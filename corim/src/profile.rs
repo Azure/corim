@@ -303,6 +303,20 @@ pub trait Profile {
     fn mval_json_alias(&self, _name: &str) -> Option<i64> {
         None
     }
+
+    /// Resolve a profile-defined integer `measurement-values-map`
+    /// extension key to its human-authored JSON alias for template
+    /// emission.
+    ///
+    /// This is the inverse of [`Profile::mval_json_alias`]: a converter
+    /// (e.g. `corim-cli convert`) calls this for numeric extension keys
+    /// so profile-aware templates can emit friendly names like
+    /// `"tcbstatus"` instead of raw integer strings such as `"-700"`.
+    /// Return `Some(alias)` for keys this profile recognizes, or `None`
+    /// to keep the numeric key as-is.
+    fn mval_json_name(&self, _key: i64) -> Option<&'static str> {
+        None
+    }
 }
 
 /// Type alias for owned, thread-safe boxed profiles stored in a

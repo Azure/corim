@@ -112,4 +112,11 @@ impl Profile for AzureProfile {
             _ => None,
         }
     }
+
+    fn mval_json_name(&self, key: i64) -> Option<&'static str> {
+        match key {
+            MVAL_TCBSTATUS => Some("tcbstatus"),
+            _ => None,
+        }
+    }
 }
