@@ -13,6 +13,16 @@ fn template_path() -> String {
     format!("{}/templates/azure_ndpa.json", env!("CARGO_MANIFEST_DIR"))
 }
 
+/// A unique temp path (`corim_cli_<stem>_<pid>_<n>.<ext>`) so tests
+/// running in parallel — or re-runs that left files behind — never
+/// collide on a fixed filename.
+fn unique_temp(stem: &str, ext: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("corim_cli_{stem}_{}_{n}.{ext}", std::process::id()))
+}
+
 /// The sample Azure NDPA template (authored with **prose** keys) generates
 /// a valid CoRIM, and the `tcbstatus` alias resolves to the profile's
 /// integer key -700 (CBOR negative int `0x39 0x02 0xbb`).
@@ -413,5 +423,112 @@ fn generate_labeled_and_positional_records_match() {
 
     for f in [&lt, &pt, &lo, &po] {
         let _ = std::fs::remove_file(f);
+    }
+}
+
+/// `$comment` and `//` keys are stripped: a commented template and the
+/// same template without comments produce byte-identical CBOR, and no
+/// comment text leaks into the output.
+#[test]
+fn generate_strips_comments() {
+    let ct = unique_temp("commented", "json");
+    let ut = unique_temp("uncommented", "json");
+    let co = unique_temp("commented", "cbor");
+    let uo = unique_temp("uncommented", "cbor");
+
+    std::fs::write(
+        &ct,
+        r#"{
+          "$comment": "top-level note",
+          "corim-id": "id-1",
+          "comids": [
+            { "//": "the CoMID",
+              "tag-identity": { "id": "c1" },
+              "triples": {
+                "$comment": ["multiline", "note"],
+                "reference-triples": [
+                  { "$comment": "ACME reference values",
+                    "ref-env": { "class": { "vendor": "ACME" } },
+                    "ref-claims": [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] }
+                ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &ut,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                { "ref-env": { "class": { "vendor": "ACME" } },
+                  "ref-claims": [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] }
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    for (t, o) in [(&ct, &co), (&ut, &uo)] {
+        let s = Command::new(bin())
+            .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+            .status()
+            .expect("run generate");
+        assert!(s.success(), "generate failed for {t:?}");
+    }
+
+    let cbytes = std::fs::read(&co).unwrap();
+    assert_eq!(
+        cbytes,
+        std::fs::read(&uo).unwrap(),
+        "commented and uncommented templates must produce identical CBOR"
+    );
+
+    // No comment text survived into the CBOR. Decode the document and
+    // collect every CBOR text string (descending into the bstr-wrapped
+    // CoMID tags), then assert none equals a comment value — this avoids
+    // false positives from scanning raw bytes.
+    let decoded: corim::cbor::value::Value =
+        corim::cbor::decode(&cbytes).expect("generated CoRIM must decode");
+    let mut texts = Vec::new();
+    collect_cbor_text(&decoded, &mut texts);
+    for note in [
+        "top-level note",
+        "the CoMID",
+        "multiline",
+        "note",
+        "ACME reference values",
+    ] {
+        assert!(
+            !texts.iter().any(|t| t == note),
+            "comment text {note:?} leaked into the CBOR output"
+        );
+    }
+
+    for f in [&ct, &ut, &co, &uo] {
+        let _ = std::fs::remove_file(f);
+    }
+}
+
+/// Recursively collect every CBOR text string in a value, descending
+/// into byte strings that themselves parse as CBOR (e.g. the
+/// bstr-wrapped CoMID / CoSWID / CoTL tags).
+fn collect_cbor_text(v: &corim::cbor::value::Value, out: &mut Vec<String>) {
+    use corim::cbor::value::Value;
+    match v {
+        Value::Text(s) => out.push(s.clone()),
+        Value::Array(a) => a.iter().for_each(|e| collect_cbor_text(e, out)),
+        Value::Map(m) => m.iter().for_each(|(k, val)| {
+            collect_cbor_text(k, out);
+            collect_cbor_text(val, out);
+        }),
+        Value::Tag(_, inner) => collect_cbor_text(inner, out),
+        Value::Bytes(b) => {
+            if let Ok(inner) = corim::cbor::decode::<Value>(b) {
+                collect_cbor_text(&inner, out);
+            }
+        }
+        _ => {}
     }
 }

@@ -239,6 +239,12 @@ a type-choice object for the other variants — `corim-id` as
 `{ "type": "oid", "value": "<base64>" }`. `rim-validity` is
 `{ "not-before"?: <epoch>, "not-after": <epoch> }` (epoch seconds).
 
+Any object may carry a `$comment` (or `//`) key as an authoring note;
+these are stripped before encoding and never reach the CBOR output. The
+template stays valid standard JSON, so any JSON tool accepts it.
+Comments can annotate objects (the root, a CoMID, a triple record, an
+environment, …) but not bare array elements or scalars.
+
 Profile-defined `measurement-values-map` extension keys can be written
 by alias (e.g. `"tcbstatus": "UpToDate"` instead of `"-700": ...`) when
 the template's `profile` field names a profile the CLI was compiled with.
