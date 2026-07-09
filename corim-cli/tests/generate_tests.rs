@@ -415,3 +415,73 @@ fn generate_labeled_and_positional_records_match() {
         let _ = std::fs::remove_file(f);
     }
 }
+
+/// `$comment` and `//` keys are stripped: a commented template and the
+/// same template without comments produce byte-identical CBOR, and no
+/// comment text leaks into the output.
+#[test]
+fn generate_strips_comments() {
+    let dir = std::env::temp_dir();
+    let ct = dir.join("corim_cli_commented.json");
+    let ut = dir.join("corim_cli_uncommented.json");
+    let co = dir.join("corim_cli_commented.cbor");
+    let uo = dir.join("corim_cli_uncommented.cbor");
+
+    std::fs::write(
+        &ct,
+        r#"{
+          "$comment": "top-level note",
+          "corim-id": "id-1",
+          "comids": [
+            { "//": "the CoMID",
+              "tag-identity": { "id": "c1" },
+              "triples": {
+                "$comment": ["multi", "line"],
+                "reference-triples": [
+                  { "$comment": "ACME reference values",
+                    "ref-env": { "class": { "vendor": "ACME" } },
+                    "ref-claims": [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] }
+                ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        &ut,
+        r#"{
+          "corim-id": "id-1",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                { "ref-env": { "class": { "vendor": "ACME" } },
+                  "ref-claims": [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] }
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    for (t, o) in [(&ct, &co), (&ut, &uo)] {
+        let s = Command::new(bin())
+            .args(["generate", t.to_str().unwrap(), "-o", o.to_str().unwrap()])
+            .status()
+            .expect("run generate");
+        assert!(s.success(), "generate failed for {t:?}");
+    }
+
+    let cbytes = std::fs::read(&co).unwrap();
+    assert_eq!(
+        cbytes,
+        std::fs::read(&uo).unwrap(),
+        "commented and uncommented templates must produce identical CBOR"
+    );
+    // No comment text survived into the CBOR.
+    assert!(
+        !cbytes.windows(4).any(|w| w == b"note") && !cbytes.windows(4).any(|w| w == b"line"),
+        "comment text must not appear in the output"
+    );
+
+    for f in [&ct, &ut, &co, &uo] {
+        let _ = std::fs::remove_file(f);
+    }
+}
