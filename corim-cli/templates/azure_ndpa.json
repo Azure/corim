@@ -1,4 +1,5 @@
 {
+  "$comment": "Azure NDPA endorsement — equivalent to the build_corim_ovl3_tdisp_ndpa example. '$comment' keys are stripped by 'generate' and never reach the CBOR.",
   "corim-id": "1.3.6.1.4.1.311.102.5_NDPA_20260705",
   "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
   "comids": [
