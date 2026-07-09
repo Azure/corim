@@ -8,18 +8,18 @@
       },
       "triples": {
         "conditional-endorsement-series-triples": [
-          [
-            [
-              {
+          {
+            "condition": {
+              "environment": {
                 "class": {
                   "vendor": "Microsoft"
                 }
               },
-              []
-            ],
-            [
-              [
-                [
+              "claims-list": []
+            },
+            "series": [
+              {
+                "selection": [
                   {
                     "key": 20,
                     "value": {
@@ -30,16 +30,16 @@
                     }
                   }
                 ],
-                [
+                "addition": [
                   {
                     "value": {
                       "tcbstatus": "UpToDate"
                     }
                   }
                 ]
-              ]
+              }
             ]
-          ]
+          }
         ]
       }
     }
