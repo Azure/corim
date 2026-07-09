@@ -62,10 +62,11 @@
 //!
 //! `corim-id`, `profile`, `rim-validity`, `entities`, and
 //! `dependent-rims` are optional except `corim-id`; at least one of
-//! `comids` / `coswids` / `cotls` must be present. Triple records are
-//! positional CBOR arrays in the wire format, so they stay positional
-//! arrays in the template; only map keys are named. See
-//! [`corim-cli/templates/azure_ndpa.json`] for a worked example.
+//! `comids` / `coswids` / `cotls` must be present. Triple records may be
+//! authored as **labeled objects** (`{ "condition": ..., "series": ... }`,
+//! using the CDDL field names) or as the legacy **positional arrays**;
+//! both are accepted. See [`corim-cli/templates/azure_ndpa.json`] for a
+//! worked example.
 //!
 //! [`corim-cli/templates/azure_ndpa.json`]: ../../templates/azure_ndpa.json
 

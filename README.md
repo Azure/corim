@@ -206,6 +206,9 @@ corim-cli validate --diagnose myfile.corim
 
 # Generate an unsigned CoRIM from a JSON template
 corim-cli generate template.json -o out.cbor
+
+# Convert an unsigned CoRIM back to a JSON template (inverse of generate)
+corim-cli convert myfile.corim -o template.json
 ```
 
 ### `generate` — build a CoRIM from a JSON template
@@ -224,8 +227,11 @@ machine (it knows, e.g., that `"version"` is key 1 in `tag-identity` but
 key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
 `"4"`, …) are still accepted, and the rewrite is idempotent — so
 prose, integer, and mixed templates all produce identical output.
-Triple records are positional CBOR arrays and stay positional arrays in
-the template (only map keys are named).
+Triple records may be written as **labeled objects** using the CDDL
+field names (e.g. a conditional-endorsement-series triple as
+`{ "condition": { "environment": …, "claims-list": … }, "series": [ {
+"selection": …, "addition": … } ] }`) or as the legacy **positional
+arrays**; both are accepted, and `convert` emits the labeled form.
 
 `corim-id` and `profile` accept either a plain string (text id / URI) or
 a type-choice object for the other variants — `corim-id` as
@@ -252,12 +258,33 @@ three `ovl3_tdisp` reference examples (NDPA, SOCMANA, SFUA) reproduce
 byte-identically from templates. Remaining gaps: signed CoRIMs, and
 type-choice variants the core `json` layer does not round-trip.
 
-Two helper binaries also ship with `corim-cli` for generating fixtures and
-worked examples:
+### `convert` — dump a CoRIM back to a JSON template
+
+`convert` is the inverse of `generate`. It decodes a tag-501 unsigned
+CoRIM and emits a **prose-keyed** JSON template (to `-o FILE`, or stdout)
+that feeds straight back into `generate`, reproducing the original bytes:
 
 ```sh
-corim-gen-sample            # write a minimal unsigned CoRIM fixture
-corim-gen-signed-sample     # write a minimal signed CoRIM fixture
+corim-cli convert myfile.corim -o template.json
+corim-cli generate template.json -o roundtrip.corim   # byte-identical
+```
+
+This differs from `validate -f json`, which prints a validation
+*summary* (validity, counts, triple types), not the CoRIM contents. Use
+`convert` when you want the full structure as editable JSON, and `validate
+--edn` for CBOR Extended Diagnostic Notation. All three `ovl3_tdisp`
+reference examples round-trip `convert` → `generate` byte-identically.
+Signed CoRIMs are out of scope — convert the payload instead.
+
+Two worked examples show how to build fixtures directly with the builder
+API (they write the CoRIM to stdout):
+
+```sh
+# minimal unsigned CoRIM fixture
+cargo run -p corim-cli --example gen_sample > sample.corim
+
+# minimal signed CoRIM fixture (COSE_Sign1 with a placeholder signature)
+cargo run -p corim-cli --example gen_signed_sample > signed.corim
 ```
 
 `corim-cli` is a local development tool and is not published to crates.io.
