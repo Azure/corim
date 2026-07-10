@@ -17,6 +17,9 @@
 # Rust specific
 **/*.rs.bk
 
+# Local-only docs (kept out of the repo)
+/docs/
+
 # Test data / binary artifacts
 *.cbor
 *.cose
