@@ -24,22 +24,22 @@
               {
                 "$comment": [
                   "SPDM Root Cert Thumbprint",
-                  "2: SHA-256 truncated 128-bit thumbprint, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
+                  "1: SHA-256, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
                 ],
                 "type": "cert-thumbprint",
                 "value": [
-                  2,
+                  1,
                   "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
                 ]
               },
               {
                 "$comment": [
                   "SPDM Intermediate Cert Thumbprint",
-                  "2: SHA-256 truncated 128-bit thumbprint, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
+                  "1: SHA-256, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
                 ],
                 "type": "cert-thumbprint",
                 "value": [
-                  2,
+                  1,
                   "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
                 ]
               }
