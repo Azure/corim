@@ -35,7 +35,7 @@
               {
                 "$comment": [
                   "SPDM Intermediate Cert Thumbprint",
-                  "1: SHA-256, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
+                  "1: SHA-256, Source: https://www.iana.org/assignments/named-information"
                 ],
                 "type": "cert-thumbprint",
                 "value": [
