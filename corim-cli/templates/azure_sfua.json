@@ -22,18 +22,24 @@
             },
             "key-list": [
               {
-                "$comment": "SPDM Root Cert Thumbprint",
+                "$comment": [
+                  "SPDM Root Cert Thumbprint",
+                  "1: SHA-256, Source: https://www.iana.org/assignments/named-information"
+                ],
                 "type": "cert-thumbprint",
                 "value": [
-                  2,
+                  1,
                   "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
                 ]
               },
               {
-                "$comment": "SPDM Intermediate Cert Thumbprint",
+                "$comment": [
+                  "SPDM Intermediate Cert Thumbprint",
+                  "1: SHA-256, Source: https://www.iana.org/assignments/named-information"
+                ],
                 "type": "cert-thumbprint",
                 "value": [
-                  2,
+                  1,
                   "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
                 ]
               }
@@ -133,7 +139,10 @@
               {
                 "selection": [
                   {
-                    "$comment": "PLM read-only memory",
+                    "$comment": [
+                      "PLM read-only memory",
+                      "7: SHA-384, Source: https://www.iana.org/assignments/named-information"
+                    ],
                     "key": 1,
                     "value": {
                       "digests": [
@@ -145,7 +154,10 @@
                     }
                   },
                   {
-                    "$comment": "FUSE",
+                    "$comment": [
+                      "FUSE",
+                      "7: SHA-384, Source: https://www.iana.org/assignments/named-information"
+                    ],
                     "key": 8,
                     "value": {
                       "digests": [

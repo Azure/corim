@@ -102,7 +102,7 @@ fn sha384_digest(bytes: Vec<u8>) -> corim::types::measurement::Digest {
 #[cfg(feature = "profile-azure")]
 fn sha256_digest(bytes: Vec<u8>) -> corim::types::measurement::Digest {
     use corim::types::measurement::{Digest, DigestAlg};
-    Digest(DigestAlg::Int(2), bytes)
+    Digest(DigestAlg::Int(1), bytes)
 }
 
 #[cfg(feature = "profile-azure")]
@@ -219,11 +219,12 @@ fn main() {
         addition.clone(),
     );
 
-    let thumbprint = sha256_digest(vec![
+    let thumbprint_bytes: [u8; 32] = [
         0x44, 0xaa, 0x33, 0x6a, 0xf4, 0xcb, 0x14, 0xa8, 0x79, 0x43, 0x2e, 0x53, 0xdd, 0x65, 0x71,
         0xc7, 0xfa, 0x9b, 0xcc, 0xaf, 0xb7, 0x5f, 0x48, 0x82, 0x59, 0x26, 0x2d, 0x6e, 0xa3, 0xa4,
         0xd9, 0x1b,
-    ]);
+    ];
+    let thumbprint = sha256_digest(thumbprint_bytes.to_vec());
     let id_keys = vec![
         CryptoKey::CertThumbprint(thumbprint.clone()),
         CryptoKey::CertThumbprint(thumbprint),
