@@ -141,7 +141,7 @@
                   {
                     "$comment": [
                       "PLM read-only memory",
-                      "7: SHA-384, Source: https://www.iana.org/assignments/hash-function-text-names/hash-function-text-names.xhtml"
+                      "7: SHA-384, Source: https://www.iana.org/assignments/named-information"
                     ],
                     "key": 1,
                     "value": {
