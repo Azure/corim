@@ -1365,12 +1365,13 @@ fn inspect_triples_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
         let path = format!("{}.{}", base_path, key);
 
         match key {
-            TRIPLES_KEY_REFERENCE
-            | TRIPLES_KEY_ENDORSED
-            | TRIPLES_KEY_IDENTITY
-            | TRIPLES_KEY_ATTEST_KEY => {
+            TRIPLES_KEY_REFERENCE | TRIPLES_KEY_ENDORSED => {
                 // [+ (environment-map, [+ measurement-map])]
                 inspect_env_measurements_triples(ins, &path, v, triple_kind_label(key));
+            }
+            TRIPLES_KEY_IDENTITY | TRIPLES_KEY_ATTEST_KEY => {
+                // [+ (environment-map, [+ $crypto-key-type-choice], ? conditions)]
+                inspect_env_keylist_triples(ins, &path, v, triple_kind_label(key));
             }
             TRIPLES_KEY_DEPENDENCY | TRIPLES_KEY_MEMBERSHIP => {
                 // [+ (environment-map, [+ environment-map])] — no measurements
@@ -1507,6 +1508,105 @@ fn inspect_env_measurements_triples(
                     value_kind(&other)
                 ),
             ),
+        }
+    }
+}
+
+/// Walk a triple type whose CDDL shape is
+/// `[+ (environment-map, [+ $crypto-key-type-choice], ? conditions)]`
+/// (identity, attest-key). The second element is a non-empty key-list, not
+/// a measurement list, and an optional third element carries conditions.
+fn inspect_env_keylist_triples(ins: &mut Inspector<'_>, base_path: &str, v: Value, kind: &str) {
+    let arr = match v {
+        Value::Array(a) => a,
+        other => {
+            ins.err(
+                base_path,
+                format!(
+                    "{} must be a non-empty array of triple-records, found {}",
+                    kind,
+                    value_kind(&other)
+                ),
+            );
+            return;
+        }
+    };
+    if arr.is_empty() {
+        ins.err(base_path, format!("{} array is empty", kind));
+        return;
+    }
+
+    for (i, triple) in arr.into_iter().enumerate() {
+        let tpath = format!("{}[{}]", base_path, i);
+        let mut record = match triple {
+            Value::Array(a) => a,
+            other => {
+                ins.err(
+                    tpath,
+                    format!(
+                        "{} record must be a [env, [+ key], ? conditions] array, found {}",
+                        kind,
+                        value_kind(&other)
+                    ),
+                );
+                continue;
+            }
+        };
+        if record.len() < 2 || record.len() > 3 {
+            ins.err(
+                tpath.clone(),
+                format!(
+                    "{} record must have 2 or 3 elements [env, [+ key], ? conditions], found {}",
+                    kind,
+                    record.len()
+                ),
+            );
+            continue;
+        }
+
+        // Optional third element (conditions map).
+        let conditions = if record.len() == 3 {
+            Some(record.remove(2))
+        } else {
+            None
+        };
+        // record now holds exactly [env, key-list].
+        let keys = record.remove(1);
+        let env = record.remove(0);
+
+        inspect_environment_map(ins, &format!("{}.env", tpath), env);
+
+        let keys_path = format!("{}.keys", tpath);
+        match keys {
+            Value::Array(ks) => {
+                if ks.is_empty() {
+                    ins.err(keys_path, "key-list is empty");
+                }
+                // $crypto-key-type-choice entries are tagged/text values;
+                // matching the shallow validation used elsewhere in the
+                // walker, we only check the outer list shape.
+            }
+            other => ins.err(
+                keys_path,
+                format!(
+                    "key-list must be array of $crypto-key-type-choice, found {}",
+                    value_kind(&other)
+                ),
+            ),
+        }
+
+        if let Some(conds) = conditions {
+            match conds {
+                Value::Map(m) if m.is_empty() => ins.err(
+                    format!("{}.conditions", tpath),
+                    "conditions must be a non-empty map".to_string(),
+                ),
+                Value::Map(_) => {}
+                other => ins.err(
+                    format!("{}.conditions", tpath),
+                    format!("conditions must be a map, found {}", value_kind(&other)),
+                ),
+            }
         }
     }
 }
