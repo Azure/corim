@@ -9,7 +9,8 @@
     {
       "tag-identity": {
         "$comment": "The tag-identity id is <ovl3-oid-value>_{SFUA|SOCMANA|NDPA}",
-        "id": "1.3.6.1.4.1.311.102.5_SOCMANA"
+        "id": "1.3.6.1.4.1.311.102.5_SOCMANA",
+        "version": 1
       },
       "triples": {
         "conditional-endorsement-series-triples": [
