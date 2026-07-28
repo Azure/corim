@@ -127,11 +127,11 @@ enum Ctx {
     EndorsedTriple,
     IdentityTriple,
     AttestKeyTriple,
-    DomainDependency,
+    TrustDependency,
     DomainMembership,
     CoswidTriple,
     CesTriple,
-    CesCondition,
+    CesCommonCondition,
     CesRecord,
     CondEndorseTriple,
     StatefulEnvRecord,
@@ -561,7 +561,7 @@ fn shape(ctx: Ctx) -> Shape {
         // identity / attest-key = [environment, key-list, ?conditions]
         Ctx::IdentityTriple | Ctx::AttestKeyTriple => Shape::Record(KEY_TRIPLE),
         // dependency = [domain-id, trustees]
-        Ctx::DomainDependency => Shape::Record(DOMAIN_DEPENDENCY),
+        Ctx::TrustDependency => Shape::Record(TRUST_DEPENDENCY),
         // membership = [domain-id, members]
         Ctx::DomainMembership => Shape::Record(DOMAIN_MEMBERSHIP),
         // coswid = [environment, tag-ids]
@@ -569,8 +569,8 @@ fn shape(ctx: Ctx) -> Shape {
         // ces = [condition, series]
         Ctx::CesTriple => Shape::Record(CES_TRIPLE),
         // ces-condition = [environment, claims-list, ?authorized-by]
-        Ctx::CesCondition => Shape::Record(CES_CONDITION),
-        // ces-record = [selection, addition]
+        Ctx::CesCommonCondition => Shape::Record(CES_COMMON_CONDITION),
+        // ces-record = [condition, addition]
         Ctx::CesRecord => Shape::Record(CES_RECORD),
         // conditional-endorsement = [conditions, endorsements]
         Ctx::CondEndorseTriple => Shape::Record(COND_ENDORSE),
@@ -611,7 +611,7 @@ const TRIPLES: &[(i64, &str, Slot)] = &[
     (1, "endorsed-triples", many(Ctx::EndorsedTriple)),
     (2, "identity-triples", many(Ctx::IdentityTriple)),
     (3, "attest-key-triples", many(Ctx::AttestKeyTriple)),
-    (4, "dependency-triples", many(Ctx::DomainDependency)),
+    (4, "dependency-triples", many(Ctx::TrustDependency)),
     (5, "membership-triples", many(Ctx::DomainMembership)),
     (6, "coswid-triples", many(Ctx::CoswidTriple)),
     (
@@ -714,7 +714,7 @@ const KEY_TRIPLE: &[Field] = &[
     field("key-list", many(Ctx::Leaf)),
     opt_field("conditions", one(Ctx::KeyTripleConditions)),
 ];
-const DOMAIN_DEPENDENCY: &[Field] = &[
+const TRUST_DEPENDENCY: &[Field] = &[
     field("domain-id", one(Ctx::Environment)),
     field("trustees", many(Ctx::Environment)),
 ];
@@ -727,16 +727,16 @@ const COSWID_TRIPLE: &[Field] = &[
     field("tag-ids", many(Ctx::Leaf)),
 ];
 const CES_TRIPLE: &[Field] = &[
-    field("condition", one(Ctx::CesCondition)),
+    field("common-condition", one(Ctx::CesCommonCondition)),
     field("series", many(Ctx::CesRecord)),
 ];
-const CES_CONDITION: &[Field] = &[
+const CES_COMMON_CONDITION: &[Field] = &[
     field("environment", one(Ctx::Environment)),
     field("claims-list", many(Ctx::Measurement)),
     opt_field("authorized-by", many(Ctx::Leaf)),
 ];
 const CES_RECORD: &[Field] = &[
-    field("selection", many(Ctx::Measurement)),
+    field("condition", many(Ctx::Measurement)),
     field("addition", many(Ctx::Measurement)),
 ];
 const COND_ENDORSE: &[Field] = &[
@@ -803,7 +803,7 @@ mod tests {
 
     /// A prose CoMID with a CES triple round-trips to integer keys and
     /// back to the same prose. The canonical prose form uses **labeled**
-    /// records (`condition`/`series`/`selection`/`addition`).
+    /// records (`common-condition`/`series`/`condition`/`addition`).
     #[test]
     fn prose_int_prose_round_trip() {
         let prose = json!({
@@ -811,13 +811,13 @@ mod tests {
             "triples": {
                 "conditional-endorsement-series-triples": [
                     {
-                        "condition": {
+                        "common-condition": {
                             "environment": { "class": { "vendor": "Microsoft" } },
                             "claims-list": []
                         },
                         "series": [
                             {
-                                "selection": [
+                                "condition": [
                                     { "key": 20, "value": { "svn": { "type": "min-svn", "value": 1 } } }
                                 ],
                                 "addition": [ { "value": { "-700": "UpToDate" } } ]
@@ -861,13 +861,13 @@ mod tests {
             "triples": {
                 "conditional-endorsement-series-triples": [
                     {
-                        "condition": {
+                        "common-condition": {
                             "environment": { "class": { "vendor": "Microsoft" } },
                             "claims-list": []
                         },
                         "series": [
                             {
-                                "selection": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                                "condition": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
                                 "addition": [ { "value": { "-700": "UpToDate" } } ]
                             }
                         ]

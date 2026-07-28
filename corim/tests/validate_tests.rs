@@ -280,12 +280,12 @@ fn identity_triple_no_keys_is_invalid() {
 }
 
 // ===========================================================================
-// DomainDependencyTriple validation
+// TrustDependencyTriple validation
 // ===========================================================================
 
 #[test]
 fn domain_dependency_valid() {
-    let t = DomainDependencyTriple::new(
+    let t = TrustDependencyTriple::new(
         EnvironmentMap {
             class: None,
             instance: Some(InstanceIdChoice::Uuid([0xAA; 16])),
@@ -302,7 +302,7 @@ fn domain_dependency_valid() {
 
 #[test]
 fn domain_dependency_empty_domain_id_is_invalid() {
-    let t = DomainDependencyTriple::new(
+    let t = TrustDependencyTriple::new(
         EnvironmentMap {
             class: None,
             instance: None,
@@ -316,7 +316,7 @@ fn domain_dependency_empty_domain_id_is_invalid() {
 
 #[test]
 fn domain_dependency_no_trustees_is_invalid() {
-    let t = DomainDependencyTriple::new(EnvironmentMap::for_class("X", "Y"), vec![]);
+    let t = TrustDependencyTriple::new(EnvironmentMap::for_class("X", "Y"), vec![]);
     let err = t.valid().unwrap_err();
     assert!(err.contains("at least one trustee"), "got: {err}");
 }
@@ -324,7 +324,7 @@ fn domain_dependency_no_trustees_is_invalid() {
 #[test]
 fn domain_dependency_self_reference_is_invalid() {
     let env = EnvironmentMap::for_class("ACME", "Widget");
-    let t = DomainDependencyTriple::new(env.clone(), vec![env]);
+    let t = TrustDependencyTriple::new(env.clone(), vec![env]);
     let err = t.valid().unwrap_err();
     assert!(
         err.contains("domain-id must not appear in trustees"),
@@ -778,7 +778,7 @@ fn domain_membership_invalid_member_env() {
 
 #[test]
 fn domain_dependency_invalid_trustee_env() {
-    let t = DomainDependencyTriple::new(
+    let t = TrustDependencyTriple::new(
         EnvironmentMap::for_class("X", "Y"),
         vec![EnvironmentMap {
             class: None,
@@ -934,7 +934,7 @@ fn triples_map_validates_dependency_triples() {
         endorsed_triples: None,
         identity_triples: None,
         attest_key_triples: None,
-        dependency_triples: Some(vec![DomainDependencyTriple::new(
+        dependency_triples: Some(vec![TrustDependencyTriple::new(
             empty_env(),
             vec![EnvironmentMap::for_class("X", "Y")],
         )]),
@@ -1176,7 +1176,7 @@ fn match_reference_evidence_lacks_svn() {
 #[test]
 fn apply_endorsement_series_no_env_match() {
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: EnvironmentMap::for_class("ACME", "Widget"),
             claims_list: vec![],
             authorized_by: None,
@@ -1206,7 +1206,7 @@ fn apply_endorsement_series_no_env_match() {
 fn apply_endorsement_series_no_selection_match() {
     let env = EnvironmentMap::for_class("V", "M");
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![],
             authorized_by: None,
@@ -1266,7 +1266,7 @@ fn appraisal_context_records_endorsement_phase_entries() {
         authorized_by: None,
     }];
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![],
             authorized_by: None,
@@ -1287,12 +1287,12 @@ fn appraisal_context_records_endorsement_phase_entries() {
 }
 
 // ===========================================================================
-// CesCondition + triple accessors (round-trip & getters)
+// CesCommonCondition + triple accessors (round-trip & getters)
 // ===========================================================================
 
 #[test]
 fn ces_condition_round_trip_with_authorized_by() {
-    let cond = CesCondition {
+    let cond = CesCommonCondition {
         environment: EnvironmentMap::for_class("V", "M"),
         claims_list: vec![MeasurementMap {
             mkey: None,
@@ -1305,20 +1305,20 @@ fn ces_condition_round_trip_with_authorized_by() {
         authorized_by: Some(vec![CryptoKey::PkixBase64Key("key".into())]),
     };
     let bytes = corim::cbor::encode(&cond).unwrap();
-    let decoded: CesCondition = corim::cbor::decode(&bytes).unwrap();
+    let decoded: CesCommonCondition = corim::cbor::decode(&bytes).unwrap();
     assert!(decoded.authorized_by.is_some());
     assert_eq!(decoded.claims_list.len(), 1);
 }
 
 #[test]
 fn ces_condition_round_trip_without_authorized_by() {
-    let cond = CesCondition {
+    let cond = CesCommonCondition {
         environment: EnvironmentMap::for_class("V", "M"),
         claims_list: vec![],
         authorized_by: None,
     };
     let bytes = corim::cbor::encode(&cond).unwrap();
-    let decoded: CesCondition = corim::cbor::decode(&bytes).unwrap();
+    let decoded: CesCommonCondition = corim::cbor::decode(&bytes).unwrap();
     assert!(decoded.authorized_by.is_none());
 }
 
@@ -1334,16 +1334,16 @@ fn ces_triple_accessor_methods() {
         authorized_by: None,
     }];
     let record = ConditionalSeriesRecord::new(meas.clone(), meas.clone());
-    assert_eq!(record.selection().len(), 1);
+    assert_eq!(record.condition().len(), 1);
     assert_eq!(record.addition().len(), 1);
 
-    let cond = CesCondition {
+    let cond = CesCommonCondition {
         environment: env.clone(),
         claims_list: vec![],
         authorized_by: None,
     };
     let ces = ConditionalEndorsementSeriesTriple::new(cond, vec![record]);
-    assert_eq!(ces.condition().environment, env);
+    assert_eq!(ces.common_condition().environment, env);
     assert_eq!(ces.series().len(), 1);
 }
 
@@ -1406,7 +1406,7 @@ fn attest_key_triple_accessor_methods() {
 
 #[test]
 fn domain_dependency_accessor_methods() {
-    let t = DomainDependencyTriple::new(
+    let t = TrustDependencyTriple::new(
         EnvironmentMap::for_class("V", "M"),
         vec![EnvironmentMap::for_class("A", "B")],
     );

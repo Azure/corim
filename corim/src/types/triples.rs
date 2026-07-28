@@ -40,7 +40,7 @@ pub struct TriplesMap {
     pub attest_key_triples: Option<Vec<AttestKeyTriple>>,
     /// `dependency-triples` (key 4).
     #[cbor(key = 4, optional)]
-    pub dependency_triples: Option<Vec<DomainDependencyTriple>>,
+    pub dependency_triples: Option<Vec<TrustDependencyTriple>>,
     /// `membership-triples` (key 5).
     #[cbor(key = 5, optional)]
     pub membership_triples: Option<Vec<DomainMembershipTriple>>,
@@ -201,17 +201,17 @@ impl AttestKeyTriple {
 }
 
 // ---------------------------------------------------------------------------
-// domain-dependency-triple-record
+// trust-dependency-triple-record
 // ---------------------------------------------------------------------------
 
-/// `domain-dependency-triple-record` — trust dependencies between domains.
+/// `trust-dependency-triple-record` — trust dependencies between domains.
 ///
 /// CDDL: `[domain-id: domain-type, trustees: [+ domain-type]]`
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct DomainDependencyTriple(pub EnvironmentMap, pub Vec<EnvironmentMap>);
+pub struct TrustDependencyTriple(pub EnvironmentMap, pub Vec<EnvironmentMap>);
 
-impl DomainDependencyTriple {
-    /// Create a new domain dependency triple.
+impl TrustDependencyTriple {
+    /// Create a new trust dependency triple.
     pub fn new(domain_id: EnvironmentMap, trustees: Vec<EnvironmentMap>) -> Self {
         Self(domain_id, trustees)
     }
@@ -279,18 +279,18 @@ impl CoswidTriple {
 // conditional-endorsement-series
 // ---------------------------------------------------------------------------
 
-/// Condition block for conditional-endorsement-series triples.
+/// Common-condition block for conditional-endorsement-series triples.
 ///
 /// CDDL (this is a CBOR **array**, not a map):
 /// ```text
-/// condition: [
+/// common-condition: [
 ///   environment: environment-map,
 ///   claims-list: [* measurement-map],
 ///   ? authorized-by: [+ $crypto-key-type-choice],
 /// ]
 /// ```
 #[derive(Clone, Debug, PartialEq)]
-pub struct CesCondition {
+pub struct CesCommonCondition {
     /// The target environment.
     pub environment: EnvironmentMap,
     /// Measurement conditions (may be empty).
@@ -299,8 +299,8 @@ pub struct CesCondition {
     pub authorized_by: Option<Vec<CryptoKey>>,
 }
 
-// Custom Serialize/Deserialize for CesCondition — it is a CBOR array [env, claims, ?auth]
-impl Serialize for CesCondition {
+// Custom Serialize/Deserialize for CesCommonCondition — it is a CBOR array [env, claims, ?auth]
+impl Serialize for CesCommonCondition {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeSeq;
         let len = if self.authorized_by.is_some() { 3 } else { 2 };
@@ -314,11 +314,11 @@ impl Serialize for CesCondition {
     }
 }
 
-impl<'de> Deserialize<'de> for CesCondition {
+impl<'de> Deserialize<'de> for CesCommonCondition {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         struct CesCondVisitor;
         impl<'de> serde::de::Visitor<'de> for CesCondVisitor {
-            type Value = CesCondition;
+            type Value = CesCommonCondition;
             fn expecting(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
                 f.write_str("a CBOR array [environment, claims-list, ?authorized-by]")
             }
@@ -333,7 +333,7 @@ impl<'de> Deserialize<'de> for CesCondition {
                     .next_element()?
                     .ok_or_else(|| serde::de::Error::invalid_length(1, &self))?;
                 let authorized_by: Option<Vec<CryptoKey>> = seq.next_element()?;
-                Ok(CesCondition {
+                Ok(CesCommonCondition {
                     environment,
                     claims_list,
                     authorized_by,
@@ -346,15 +346,18 @@ impl<'de> Deserialize<'de> for CesCondition {
 
 /// `conditional-endorsement-series-triple-record`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ConditionalEndorsementSeriesTriple(pub CesCondition, pub Vec<ConditionalSeriesRecord>);
+pub struct ConditionalEndorsementSeriesTriple(
+    pub CesCommonCondition,
+    pub Vec<ConditionalSeriesRecord>,
+);
 
 impl ConditionalEndorsementSeriesTriple {
     /// Create a new CES triple.
-    pub fn new(condition: CesCondition, series: Vec<ConditionalSeriesRecord>) -> Self {
-        Self(condition, series)
+    pub fn new(common_condition: CesCommonCondition, series: Vec<ConditionalSeriesRecord>) -> Self {
+        Self(common_condition, series)
     }
-    /// Get the condition.
-    pub fn condition(&self) -> &CesCondition {
+    /// Get the common condition.
+    pub fn common_condition(&self) -> &CesCommonCondition {
         &self.0
     }
     /// Get the series records.
@@ -363,17 +366,17 @@ impl ConditionalEndorsementSeriesTriple {
     }
 }
 
-/// `conditional-series-record = [selection: [+ measurement-map], addition: [+ measurement-map]]`.
+/// `conditional-series-record = [condition: [+ measurement-map], addition: [+ measurement-map]]`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ConditionalSeriesRecord(pub Vec<MeasurementMap>, pub Vec<MeasurementMap>);
 
 impl ConditionalSeriesRecord {
     /// Create a new conditional series record.
-    pub fn new(selection: Vec<MeasurementMap>, addition: Vec<MeasurementMap>) -> Self {
-        Self(selection, addition)
+    pub fn new(condition: Vec<MeasurementMap>, addition: Vec<MeasurementMap>) -> Self {
+        Self(condition, addition)
     }
-    /// Get the selection criteria.
-    pub fn selection(&self) -> &[MeasurementMap] {
+    /// Get the condition criteria.
+    pub fn condition(&self) -> &[MeasurementMap] {
         &self.0
     }
     /// Get the addition values.
@@ -456,7 +459,7 @@ impl Validate for TriplesMap {
         if let Some(ref triples) = self.dependency_triples {
             for (i, t) in triples.iter().enumerate() {
                 t.valid()
-                    .map_err(|e| format!("dependency triple at index {i}: {e}"))?;
+                    .map_err(|e| format!("trust-dependency triple at index {i}: {e}"))?;
             }
         }
         if let Some(ref triples) = self.membership_triples {
@@ -525,7 +528,7 @@ impl Validate for AttestKeyTriple {
     }
 }
 
-impl Validate for DomainDependencyTriple {
+impl Validate for TrustDependencyTriple {
     fn valid(&self) -> Result<(), String> {
         self.0.valid().map_err(|e| format!("domain-id: {e}"))?;
         if self.1.is_empty() {

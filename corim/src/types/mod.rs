@@ -41,8 +41,8 @@ pub use self::signed::{
     ProtectedCorimHeaderMapBuilder, SignedCorimBuilder,
 };
 pub use self::triples::{
-    AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,
-    ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainDependencyTriple,
-    DomainMembershipTriple, EndorsedTriple, IdentityTriple, KeyTripleConditions, ReferenceTriple,
-    StatefulEnvironmentRecord, TriplesMap,
+    AttestKeyTriple, CesCommonCondition, ConditionalEndorsementSeriesTriple,
+    ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainMembershipTriple,
+    EndorsedTriple, IdentityTriple, KeyTripleConditions, ReferenceTriple,
+    StatefulEnvironmentRecord, TriplesMap, TrustDependencyTriple,
 };

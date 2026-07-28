@@ -882,12 +882,12 @@ fn attest_key_triple_without_conditions() {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // §5.1.11.1 — domain-membership-triple-record
-// §5.1.11.2 — domain-dependency-triple-record
+// §5.1.11.2 — trust-dependency-triple-record
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[test]
 fn domain_dependency() {
-    round_trip(&DomainDependencyTriple::new(make_env(), vec![make_env()]));
+    round_trip(&TrustDependencyTriple::new(make_env(), vec![make_env()]));
 }
 
 #[test]
@@ -944,7 +944,7 @@ fn conditional_endorsement_triple() {
 
 #[test]
 fn ces_condition_without_authorized_by() {
-    round_trip(&CesCondition {
+    round_trip(&CesCommonCondition {
         environment: make_env(),
         claims_list: vec![make_meas("fw")],
         authorized_by: None,
@@ -953,7 +953,7 @@ fn ces_condition_without_authorized_by() {
 
 #[test]
 fn ces_condition_with_authorized_by() {
-    round_trip(&CesCondition {
+    round_trip(&CesCommonCondition {
         environment: make_env(),
         claims_list: Vec::new(),
         authorized_by: Some(vec![CryptoKey::Bytes(vec![0xAA, 0xBB])]),
@@ -962,7 +962,7 @@ fn ces_condition_with_authorized_by() {
 
 #[test]
 fn ces_condition_empty_claims() {
-    round_trip(&CesCondition {
+    round_trip(&CesCommonCondition {
         environment: make_env(),
         claims_list: Vec::new(),
         authorized_by: None,
@@ -972,7 +972,7 @@ fn ces_condition_empty_claims() {
 #[test]
 fn conditional_series_record() {
     round_trip(&ConditionalSeriesRecord::new(
-        vec![make_meas("selection")],
+        vec![make_meas("condition")],
         vec![make_meas("addition")],
     ));
 }
@@ -980,7 +980,7 @@ fn conditional_series_record() {
 #[test]
 fn conditional_endorsement_series_triple() {
     round_trip(&ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: make_env(),
             claims_list: vec![make_meas("fw")],
             authorized_by: None,
@@ -1021,7 +1021,7 @@ fn triples_map_all_nine_types() {
             vec![CryptoKey::Bytes(vec![2])],
             None,
         )]),
-        dependency_triples: Some(vec![DomainDependencyTriple::new(
+        dependency_triples: Some(vec![TrustDependencyTriple::new(
             env.clone(),
             vec![env.clone()],
         )]),
@@ -1034,7 +1034,7 @@ fn triples_map_all_nine_types() {
             vec![TagIdChoice::Text("t".into())],
         )]),
         conditional_endorsement_series: Some(vec![ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,
@@ -1294,7 +1294,7 @@ fn end_to_end_build_encode_decode_validate() {
             None,
         ))
         .add_conditional_endorsement_series(ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,

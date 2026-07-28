@@ -4,7 +4,7 @@
 //! Builder API for CoRIM and CoMID generation.
 //!
 //! Provides a fluent interface for constructing CoRIM and CoMID structures
-//! per draft-ietf-rats-corim-10.
+//! per draft-ietf-rats-corim-11.
 //!
 //! # Cross-triple anchoring (opt-in)
 //!
@@ -20,8 +20,8 @@
 //!    conditional-endorsement-series, conditional-endorsement, or endorsed
 //!    triple must structurally equal some reference-triple env in the same
 //!    CoMID. Mismatch produces [`BuilderError::UnanchoredConditionEnv`].
-//! 2. **Measurement anchoring.** Every selection-side measurement (a CES
-//!    `claims_list`, a CES series-record `selection`, or a CE
+//! 2. **Measurement anchoring.** Every condition-side measurement (a CES
+//!    `claims_list`, a CES series-record `condition`, or a CE
 //!    `stateful-environment-record` measurement) must structurally equal
 //!    some measurement in a reference triple **for the same env**.
 //!    Mismatch produces [`BuilderError::UnanchoredConditionMeasurement`].
@@ -165,10 +165,10 @@ use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::MeasurementMap;
 use crate::types::tags::TAG_CORIM;
 use crate::types::triples::{
-    AttestKeyTriple, CesCondition, ConditionalEndorsementSeriesTriple,
-    ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainDependencyTriple,
-    DomainMembershipTriple, EndorsedTriple, IdentityTriple, KeyTripleConditions, ReferenceTriple,
-    StatefulEnvironmentRecord, TriplesMap,
+    AttestKeyTriple, CesCommonCondition, ConditionalEndorsementSeriesTriple,
+    ConditionalEndorsementTriple, ConditionalSeriesRecord, CoswidTriple, DomainMembershipTriple,
+    EndorsedTriple, IdentityTriple, KeyTripleConditions, ReferenceTriple,
+    StatefulEnvironmentRecord, TriplesMap, TrustDependencyTriple,
 };
 use crate::Validate;
 use core::sync::atomic::{AtomicUsize, Ordering};
@@ -254,7 +254,7 @@ pub struct ComidBuilder {
     endorsed_triples: Option<Vec<EndorsedTriple>>,
     identity_triples: Option<Vec<IdentityTriple>>,
     attest_key_triples: Option<Vec<AttestKeyTriple>>,
-    dependency_triples: Option<Vec<DomainDependencyTriple>>,
+    dependency_triples: Option<Vec<TrustDependencyTriple>>,
     membership_triples: Option<Vec<DomainMembershipTriple>>,
     coswid_triples: Option<Vec<CoswidTriple>>,
     conditional_endorsement_series: Option<Vec<ConditionalEndorsementSeriesTriple>>,
@@ -327,8 +327,8 @@ impl ComidBuilder {
     ///    conditional-endorsement, or endorsed triple must structurally
     ///    equal some reference-triple environment in the same CoMID;
     ///    otherwise `build()` returns [`BuilderError::UnanchoredConditionEnv`].
-    /// 2. Every selection-side measurement (CES `claims_list`, CES series
-    ///    `selection`, or CE `stateful-environment-record` measurement)
+    /// 2. Every condition-side measurement (CES `claims_list`, CES series
+    ///    `condition`, or CE `stateful-environment-record` measurement)
     ///    must structurally equal some measurement in a reference triple
     ///    for the *same* env; otherwise `build()` returns
     ///    [`BuilderError::UnanchoredConditionMeasurement`]. Endorsement
@@ -420,7 +420,7 @@ impl ComidBuilder {
         self
     }
 
-    /// Add a domain dependency triple by env-spec. Trustees are also env-specs;
+    /// Add a trust dependency triple by env-spec. Trustees are also env-specs;
     /// pass `vec![env_a.into(), env_b_ref.into()]` to mix inline envs and refs.
     pub fn add_dependency_triple_for(
         mut self,
@@ -453,7 +453,7 @@ impl ComidBuilder {
 
     /// Add a conditional-endorsement-series triple by env-spec.
     ///
-    /// The arguments correspond to the fields of [`CesCondition`] plus the
+    /// The arguments correspond to the fields of [`CesCommonCondition`] plus the
     /// `series` list. The condition env may be an [`EnvironmentMap`] or an
     /// [`EnvRef`]; refs are resolved at [`build`](Self::build) time exactly
     /// like the other `_for` methods.
@@ -576,8 +576,8 @@ impl ComidBuilder {
         self
     }
 
-    /// Add a domain dependency triple (§5.1.11.2).
-    pub fn add_dependency_triple(mut self, triple: DomainDependencyTriple) -> Self {
+    /// Add a trust dependency triple (§5.1.11.2).
+    pub fn add_dependency_triple(mut self, triple: TrustDependencyTriple) -> Self {
         self.dependency_triples
             .get_or_insert_with(Vec::new)
             .push(triple);
@@ -696,7 +696,7 @@ impl ComidBuilder {
             }
             self.dependency_triples
                 .get_or_insert_with(Vec::new)
-                .push(DomainDependencyTriple::new(domain, trustees));
+                .push(TrustDependencyTriple::new(domain, trustees));
         }
         for (domain_spec, members_spec) in core::mem::take(&mut self.pending_membership) {
             let domain = self.resolve(domain_spec)?;
@@ -720,7 +720,7 @@ impl ComidBuilder {
             self.conditional_endorsement_series
                 .get_or_insert_with(Vec::new)
                 .push(ConditionalEndorsementSeriesTriple::new(
-                    CesCondition {
+                    CesCommonCondition {
                         environment,
                         claims_list,
                         authorized_by,
@@ -789,8 +789,8 @@ impl ComidBuilder {
     /// Reference-triple envs are the only anchor set; identity/attest-key/
     /// dependency/membership/coswid envs are not considered anchors.
     ///
-    /// The lint also extends to selection-side measurements: a CES
-    /// `claims_list`, a CES series-record selection, or a CE stateful-
+    /// The lint also extends to condition-side measurements: a CES
+    /// `claims_list`, a CES series-record condition, or a CE stateful-
     /// environment-record measurement must structurally equal some
     /// measurement in a reference triple for the *same* env (S2 pool).
     /// Endorsement and addition lists are not anchored.
@@ -858,7 +858,7 @@ impl ComidBuilder {
                     check_meas(
                         &t.0.environment,
                         &series.0,
-                        "conditional-endorsement-series-selection",
+                        "conditional-endorsement-series-condition",
                         i,
                     )?;
                 }

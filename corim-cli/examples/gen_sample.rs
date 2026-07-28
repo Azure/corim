@@ -14,8 +14,8 @@ fn main() {
     use corim::types::environment::{ClassMap, EnvironmentMap};
     use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
     use corim::types::triples::{
-        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, EndorsedTriple,
-        ReferenceTriple,
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+        EndorsedTriple, ReferenceTriple,
     };
 
     let env = EnvironmentMap {
@@ -52,7 +52,7 @@ fn main() {
     };
 
     let ces_triple = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: Vec::new(),
             authorized_by: None,

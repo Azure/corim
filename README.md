@@ -229,8 +229,8 @@ key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
 prose, integer, and mixed templates all produce identical output.
 Triple records may be written as **labeled objects** using the CDDL
 field names (e.g. a conditional-endorsement-series triple as
-`{ "condition": { "environment": …, "claims-list": … }, "series": [ {
-"selection": …, "addition": … } ] }`) or as the legacy **positional
+`{ "common-condition": { "environment": …, "claims-list": … }, "series": [ {
+"condition": …, "addition": … } ] }`) or as the legacy **positional
 arrays**; both are accepted, and `convert` emits the labeled form.
 
 `corim-id` and `profile` accept either a plain string (text id / URI) or
