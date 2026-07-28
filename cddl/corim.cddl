@@ -12,7 +12,7 @@ corim-entity-map = entity-map<$corim-role-type-choice, $$corim-\
 $corim-id-type-choice /= tstr / uuid-type
 corim-locator-map = {
   &(href: 0) => uri / [+ uri],
-  ? &(thumbprint: 1) => eatmc.digest / [eatmc.digest],
+  ? &(thumbprint: 1) => eatmc.digest / [+ eatmc.digest],
 }
 corim-map = {
   &(id: 0) => $corim-id-type-choice,
@@ -191,6 +191,7 @@ flags-map = non-empty<{
     ? &(is-immutable: 7) => bool,
     ? &(is-tcb: 8) => bool,
     ? &(is-confidentiality-protected: 9) => bool,
+    ? &(is-runtime-updatable: 10) => bool,
     * $$flags-map-extension,
 }>
 $group-id-type-choice /= tagged-uuid-type / tagged-bytes
