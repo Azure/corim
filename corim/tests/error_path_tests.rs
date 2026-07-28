@@ -221,7 +221,7 @@ fn builder_attest_key_triple_empty_keys() {
 fn builder_dependency_triple_empty_trustees() {
     use corim::builder::ComidBuilder;
     let result = ComidBuilder::new(TagIdChoice::Text("t".into()))
-        .add_dependency_triple(DomainDependencyTriple::new(make_env(), vec![]))
+        .add_dependency_triple(TrustDependencyTriple::new(make_env(), vec![]))
         .build();
     assert!(result.is_err());
     assert!(format!("{}", result.unwrap_err()).contains("trustees"));

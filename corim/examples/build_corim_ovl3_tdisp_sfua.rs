@@ -80,11 +80,11 @@ fn make_ces(
     addition: corim::types::measurement::MeasurementMap,
 ) -> corim::types::triples::ConditionalEndorsementSeriesTriple {
     use corim::types::triples::{
-        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
     };
 
     ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env,
             claims_list: vec![],
             authorized_by: None,
@@ -257,7 +257,7 @@ fn main() {
             .conditional_endorsement_series
             .as_ref()
             .unwrap()[0]
-            .condition()
+            .common_condition()
             .environment
             .clone(),
         measurements: vec![MeasurementMap {

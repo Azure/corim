@@ -633,7 +633,7 @@ fn coswid_triple_invalid_env() {
 #[test]
 fn ces_triple_invalid_condition_env() {
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: EnvironmentMap {
                 class: None,
                 instance: None,
@@ -732,7 +732,7 @@ fn validate_coswid_decode_failure_opaque() {
 fn validate_series_inconsistent_mkeys() {
     let env = EnvironmentMap::for_class("V", "M");
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![],
             authorized_by: None,
@@ -827,7 +827,7 @@ fn builder_comid_attest_key_triple_empty_keys_via_builder() {
 #[test]
 fn builder_comid_dependency_triple_empty_trustees_via_builder() {
     let result = corim::builder::ComidBuilder::new(TagIdChoice::Text("t".into()))
-        .add_dependency_triple(DomainDependencyTriple::new(
+        .add_dependency_triple(TrustDependencyTriple::new(
             EnvironmentMap::for_class("V", "M"),
             vec![], // empty trustees
         ))

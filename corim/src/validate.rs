@@ -1,7 +1,10 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Validation and appraisal logic per draft-ietf-rats-corim-10 §9.
+//! Validation and appraisal logic per draft-ietf-rats-corim-11 (the
+//! Reference Verifier, §8; formerly §9 in draft-10). The detailed
+//! `§9.x` citations below still reference draft-10's verifier numbering
+//! and are pending remap to draft-11's restructured §8.
 //!
 //! Covers reference value matching (Phase 3) and conditional-endorsement-series
 //! application (Phase 4).
@@ -397,7 +400,7 @@ pub struct EndorsedClaim {
 ///
 /// Per §9.3.4.3:
 /// 1. Match condition environment against provided evidence
-/// 2. Iterate series in order — first `selection` match wins
+/// 2. Iterate series in order — first `condition` match wins
 /// 3. Apply the corresponding `addition` as endorsed values
 pub fn apply_endorsement_series(
     ces_triples: &[ConditionalEndorsementSeriesTriple],
@@ -413,7 +416,7 @@ pub fn apply_endorsement_series(
 
 /// Like [`apply_endorsement_series`] but consults a profile's
 /// [`Profile::match_measurement`] hook when comparing each series
-/// `selection` entry against evidence. Per-pair semantics are identical
+/// `condition` entry against evidence. Per-pair semantics are identical
 /// to those of [`match_reference_values_with_profile`].
 ///
 /// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
@@ -427,7 +430,7 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     let mut endorsed = Vec::new();
 
     for triple in ces_triples {
-        let condition = triple.condition();
+        let condition = triple.common_condition();
 
         let matching_evidence: Vec<_> = evidence
             .iter()
@@ -466,7 +469,7 @@ fn validate_series_mkeys(series: &[ConditionalSeriesRecord]) -> Result<(), Valid
 
     let collect_mkeys = |record: &ConditionalSeriesRecord| -> Vec<String> {
         let mut keys: Vec<String> = record
-            .selection()
+            .condition()
             .iter()
             .map(|m| format!("{:?}", m.mkey))
             .collect();
@@ -487,7 +490,7 @@ fn validate_series_mkeys(series: &[ConditionalSeriesRecord]) -> Result<(), Valid
 
 /// Find the first matching series entry and return its addition.
 ///
-/// When `profile` is `Some`, each `selection` entry is compared via
+/// When `profile` is `Some`, each `condition` entry is compared via
 /// [`measurement_matches_with_profile`]; otherwise the default
 /// [`measurement_matches`] is used.
 fn find_matching_series<P: ?Sized + Profile>(
@@ -497,7 +500,7 @@ fn find_matching_series<P: ?Sized + Profile>(
     ctx: &MatchContext,
 ) -> Option<Vec<MeasurementMap>> {
     for record in series {
-        let all_match = record.selection().iter().all(|sel| match profile {
+        let all_match = record.condition().iter().all(|sel| match profile {
             Some(_) => measurement_matches_with_profile(sel, evidence_measurements, profile, ctx),
             None => measurement_matches(sel, evidence_measurements),
         });

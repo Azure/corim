@@ -15,7 +15,7 @@
       "triples": {
         "conditional-endorsement-series-triples": [
           {
-            "condition": {
+            "common-condition": {
               "environment": {
                 "class": {
                   "vendor": "Microsoft"
@@ -25,7 +25,7 @@
             },
             "series": [
               {
-                "selection": [
+                "condition": [
                   {
                     "$comment": "PL Image SVN",
                     "key": 20,

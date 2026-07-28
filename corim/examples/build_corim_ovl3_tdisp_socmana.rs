@@ -73,14 +73,14 @@ fn main() {
     use corim::types::corim::{CorimId, ProfileChoice};
     use corim::types::measurement::{MeasurementMap, MeasurementValuesMap, SvnChoice};
     use corim::types::triples::{
-        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
     };
     use corim::validate::{
         apply_endorsement_series_with_profile, decode_and_validate_at, EvidenceClaim,
     };
 
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: make_env(),
             claims_list: vec![],
             authorized_by: None,
@@ -116,7 +116,7 @@ fn main() {
             .conditional_endorsement_series
             .as_ref()
             .unwrap()[0]
-            .condition()
+            .common_condition()
             .environment
             .clone(),
         measurements: vec![MeasurementMap {
