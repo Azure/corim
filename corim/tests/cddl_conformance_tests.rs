@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Comprehensive CDDL conformance tests for draft-ietf-rats-corim-10.
+//! Comprehensive CDDL conformance tests for draft-ietf-rats-corim-11.
 //!
 //! Systematically verifies every CDDL production: round-trip encoding,
 //! correct CBOR tags, non-empty constraints, all type-choice variants,

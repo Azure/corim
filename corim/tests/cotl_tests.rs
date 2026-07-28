@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Tests for CoTL (Concise Tag List) — §6.1 of draft-ietf-rats-corim-10.
+//! Tests for CoTL (Concise Tag List) — §6.1 of draft-ietf-rats-corim-11.
 
 use corim::builder::{ComidBuilder, CorimBuilder, CotlBuilder};
 use corim::cbor;

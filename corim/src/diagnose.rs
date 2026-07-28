@@ -20,7 +20,7 @@
 //! structural problem they recognize, with a path expression, the expected
 //! shape, and what was actually found.
 //!
-//! Coverage (current scope, draft-ietf-rats-corim-10):
+//! Coverage (current scope, draft-ietf-rats-corim-11):
 //!
 //! - Top-level envelope: tag `#6.18` (signed) or tag `#6.501` (unsigned)
 //! - `COSE_Sign1-corim` 4-element array (`protected`, `unprotected`, `payload`,
@@ -324,7 +324,7 @@ pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
                 format!(
                     "found legacy outer tag #6.{} — dropped from IETF draft-10 (PR #337, Jan 2025); \
 still emitted by the TCG Endorsement spec and some real-world producers (e.g. NVIDIA). \
-The library accepts these on decode; encode always uses draft-10 tags.",
+The library accepts these on decode; encode always uses draft-11 tags.",
                     outer_tag
                 ),
             );
@@ -844,7 +844,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
         ins.err_hint(
             "$.protected",
             "missing both content-type (key 3, inline mode) and payload_preimage_content_type (key 259, hash-envelope mode)",
-            "draft-ietf-rats-corim-10 §4.2.1 requires exactly one of these",
+            "draft-ietf-rats-corim-11 §4.2.1 requires exactly one of these",
         );
     } else if inline_mode && hash_envelope_mode {
         ins.warn(
@@ -856,7 +856,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
         ins.err_hint(
             "$.protected",
             "meta-group violation: at least one of corim-meta (key 8) or CWT-Claims (key 15) must be present",
-            "draft-ietf-rats-corim-10 §4.2.1 meta-group: ((corim-meta-identity, ?cwt-claims-identity) // cwt-claims-identity)",
+            "draft-ietf-rats-corim-11 §4.2.1 meta-group: ((corim-meta-identity, ?cwt-claims-identity) // cwt-claims-identity)",
         );
     }
 }
