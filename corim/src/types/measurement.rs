@@ -242,6 +242,9 @@ pub struct FlagsMap {
     /// `is-confidentiality-protected` (key 9).
     #[cbor(key = 9, optional)]
     pub is_confidentiality_protected: Option<bool>,
+    /// `is-runtime-updatable` (key 10).
+    #[cbor(key = 10, optional)]
+    pub is_runtime_updatable: Option<bool>,
 }
 
 // ---------------------------------------------------------------------------

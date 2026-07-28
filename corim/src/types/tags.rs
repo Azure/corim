@@ -313,6 +313,8 @@ pub const FLAG_KEY_IS_IMMUTABLE: i64 = 7;
 pub const FLAG_KEY_IS_TCB: i64 = 8;
 /// `flags-map` key: `is-confidentiality-protected` (index 9).
 pub const FLAG_KEY_IS_CONFIDENTIALITY_PROTECTED: i64 = 9;
+/// `flags-map` key: `is-runtime-updatable` (index 10).
+pub const FLAG_KEY_IS_RUNTIME_UPDATABLE: i64 = 10;
 
 // ===========================================================================
 // Triples Map keys (§12.8 — "CoMID Triples Map" registry)

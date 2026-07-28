@@ -483,6 +483,7 @@ fn flags_map_all_fields() {
         is_immutable: Some(true),
         is_tcb: Some(true),
         is_confidentiality_protected: Some(false),
+        is_runtime_updatable: Some(true),
     });
 }
 
@@ -499,6 +500,7 @@ fn flags_map_single_field() {
         is_immutable: None,
         is_tcb: None,
         is_confidentiality_protected: None,
+        is_runtime_updatable: None,
     });
 }
 
@@ -515,6 +517,7 @@ fn flags_map_non_empty_enforced() {
         is_immutable: None,
         is_tcb: None,
         is_confidentiality_protected: None,
+        is_runtime_updatable: None,
     };
     assert!(
         cbor::encode(&f).is_err(),
@@ -762,6 +765,7 @@ fn measurement_values_map_all_14_fields() {
             is_immutable: None,
             is_tcb: Some(true),
             is_confidentiality_protected: None,
+            is_runtime_updatable: None,
         }),
         raw_value: Some(RawValueChoice::Bytes(vec![0xDE, 0xAD])),
         mac_addr: Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])),
