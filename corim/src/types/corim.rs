@@ -279,7 +279,7 @@ impl<'de> Deserialize<'de> for ConciseTagChoice {
 /// ```text
 /// corim-locator-map = {
 ///   &(href: 0) => uri / [+ uri],
-///   ? &(thumbprint: 1) => eatmc.digest / [eatmc.digest],
+///   ? &(thumbprint: 1) => eatmc.digest / [+ eatmc.digest],
 /// }
 /// ```
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]

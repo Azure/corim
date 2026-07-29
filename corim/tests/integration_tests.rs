@@ -170,7 +170,8 @@ mod builder_tests {
     use corim::types::environment::{ClassMap, EnvironmentMap};
     use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
     use corim::types::triples::{
-        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+        ReferenceTriple,
     };
 
     fn make_env() -> EnvironmentMap {
@@ -235,7 +236,7 @@ mod builder_tests {
         let meas = make_ref_measurement("firmware", vec![0xAA; 48]);
 
         let ces_triple = ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,
@@ -323,7 +324,8 @@ mod validation_tests {
     use corim::types::environment::{ClassMap, EnvironmentMap};
     use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
     use corim::types::triples::{
-        CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+        ReferenceTriple,
     };
     use corim::validate::{
         apply_endorsement_series, match_reference_values, svn_matches, AppraisalContext,
@@ -358,7 +360,7 @@ mod validation_tests {
     fn make_test_comid() -> corim::types::comid::ComidTag {
         let env = make_env();
         let ces_triple = ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,
@@ -502,7 +504,7 @@ mod validation_tests {
         let env = make_env();
 
         let ces = vec![ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,
@@ -554,7 +556,7 @@ mod validation_tests {
         )];
 
         let ces = vec![ConditionalEndorsementSeriesTriple::new(
-            CesCondition {
+            CesCommonCondition {
                 environment: env.clone(),
                 claims_list: Vec::new(),
                 authorized_by: None,
@@ -644,10 +646,10 @@ mod typed_triple_tests {
 
     #[test]
     fn domain_dependency_triple_round_trip() {
-        let triple = DomainDependencyTriple::new(make_env(), vec![make_env()]);
+        let triple = TrustDependencyTriple::new(make_env(), vec![make_env()]);
 
         let bytes = cbor::encode(&triple).unwrap();
-        let decoded: DomainDependencyTriple = cbor::decode(&bytes).unwrap();
+        let decoded: TrustDependencyTriple = cbor::decode(&bytes).unwrap();
         assert_eq!(decoded.0, triple.0);
         assert_eq!(decoded.1.len(), 1);
     }
@@ -696,7 +698,7 @@ mod typed_triple_tests {
                 vec![CryptoKey::Bytes(vec![1, 2, 3])],
                 None,
             )]),
-            dependency_triples: Some(vec![DomainDependencyTriple::new(
+            dependency_triples: Some(vec![TrustDependencyTriple::new(
                 env.clone(),
                 vec![env.clone()],
             )]),

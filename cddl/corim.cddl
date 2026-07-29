@@ -12,7 +12,7 @@ corim-entity-map = entity-map<$corim-role-type-choice, $$corim-\
 $corim-id-type-choice /= tstr / uuid-type
 corim-locator-map = {
   &(href: 0) => uri / [+ uri],
-  ? &(thumbprint: 1) => eatmc.digest / [eatmc.digest],
+  ? &(thumbprint: 1) => eatmc.digest / [+ eatmc.digest],
 }
 corim-map = {
   &(id: 0) => $corim-id-type-choice,
@@ -113,7 +113,7 @@ comid-entity-map = entity-map<$comid-role-type-choice, $$comid-\
 $comid-role-type-choice /= &(tag-creator: 0) / &(creator: 1) / &(\
                                                        maintainer: 2)
 conditional-endorsement-series-triple-record = [
-  condition: [
+  common-condition: [
         environment: environment-map,
         claims-list: [* measurement-map],
         ? authorized-by: [+ $crypto-key-type-choice],
@@ -121,7 +121,7 @@ conditional-endorsement-series-triple-record = [
   series: [+ conditional-series-record],
 ]
 conditional-series-record = [
-  selection: [+ measurement-map],
+  condition: [+ measurement-map],
   addition: [+ measurement-map],
 ]
 COSE_Key = {
@@ -151,7 +151,7 @@ tagged-cose-key-type = #6.558(COSE_Key)
 tagged-cert-thumbprint-type = #6.559(eatmc.digest)
 tagged-cert-path-thumbprint-type = #6.561(eatmc.digest)
 tagged-pkix-asn1der-cert-type = #6.562(bstr)
-domain-dependency-triple-record = [
+trust-dependency-triple-record = [
   domain-id: domain-type,
   trustees: [+ domain-type],
 ]
@@ -191,6 +191,7 @@ flags-map = non-empty<{
     ? &(is-immutable: 7) => bool,
     ? &(is-tcb: 8) => bool,
     ? &(is-confidentiality-protected: 9) => bool,
+    ? &(is-runtime-updatable: 10) => bool,
     * $$flags-map-extension,
 }>
 $group-id-type-choice /= tagged-uuid-type / tagged-bytes
@@ -286,7 +287,7 @@ triples-map = non-empty<{
     ? &(endorsed-triples: 1) => [+ endorsed-triple-record],
     ? &(identity-triples: 2) => [+ identity-triple-record],
     ? &(attest-key-triples: 3) => [+ attest-key-triple-record],
-    ? &(dependency-triples: 4) => [+ domain-dependency-triple-record\
+    ? &(dependency-triples: 4) => [+ trust-dependency-triple-record\
                                                                    ],
     ? &(membership-triples: 5) => [+ domain-membership-triple-record\
                                                                    ],

@@ -4,15 +4,15 @@
 //! RFC-defined constants for CoRIM / CoMID / CoTL.
 //!
 //! All numeric values in this module come directly from
-//! [draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html)
+//! [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
 //! and its referenced specifications. They are organized by category to match
-//! the IANA registries defined in §12 of the draft.
+//! the IANA registries defined in §11 of the draft.
 //!
 //! Using named constants instead of inline literals makes the code easier to
 //! audit against the specification and reduces the risk of transcription errors.
 
 // ===========================================================================
-// CBOR tags (§12.2 — "CBOR Tags" registry)
+// CBOR tags (§11.2 — "CBOR Tags" registry)
 // ===========================================================================
 
 /// CBOR epoch-based date/time tag (RFC 8949 §3.4.2).
@@ -109,7 +109,7 @@ pub const TAG_MASKED_RAW_VALUE: u64 = 563;
 pub const TAG_INT_RANGE: u64 = 564;
 
 // ===========================================================================
-// CoRIM Map keys (§12.3 — "CoRIM Map" registry)
+// CoRIM Map keys (§11.3 — "CoRIM Map" registry)
 // ===========================================================================
 
 /// `corim-map` key: `id` (index 0).
@@ -126,7 +126,7 @@ pub const CORIM_KEY_RIM_VALIDITY: i64 = 4;
 pub const CORIM_KEY_ENTITIES: i64 = 5;
 
 // ===========================================================================
-// CoRIM Entity / Signer Map keys (§12.4, §12.5)
+// CoRIM Entity / Signer Map keys (§11.4, §11.5)
 // ===========================================================================
 
 /// `entity-map` key: `entity-name` (index 0).
@@ -147,7 +147,7 @@ pub const META_KEY_SIGNER: i64 = 0;
 pub const META_KEY_SIGNATURE_VALIDITY: i64 = 1;
 
 // ===========================================================================
-// CoRIM role values (§12.4)
+// CoRIM role values (§11.4)
 // ===========================================================================
 
 /// `$corim-role-type-choice`: `manifest-creator` (1).
@@ -156,7 +156,7 @@ pub const CORIM_ROLE_MANIFEST_CREATOR: i64 = 1;
 pub const CORIM_ROLE_MANIFEST_SIGNER: i64 = 2;
 
 // ===========================================================================
-// CoMID Map keys (§12.6 — "CoMID Map" registry)
+// CoMID Map keys (§11.6 — "CoMID Map" registry)
 // ===========================================================================
 
 /// `concise-mid-tag` key: `language` (index 0).
@@ -171,7 +171,7 @@ pub const COMID_KEY_LINKED_TAGS: i64 = 3;
 pub const COMID_KEY_TRIPLES: i64 = 4;
 
 // ===========================================================================
-// CoMID role values (§12.7)
+// CoMID role values (§11.7)
 // ===========================================================================
 
 /// `$comid-role-type-choice`: `tag-creator` (0).
@@ -255,7 +255,7 @@ pub const MEAS_KEY_MVAL: i64 = 1;
 pub const MEAS_KEY_AUTHORIZED_BY: i64 = 2;
 
 // ===========================================================================
-// Measurement Values Map keys (§12.9 — "CoMID Measurement Values Map")
+// Measurement Values Map keys (§11.9 — "CoMID Measurement Values Map")
 // ===========================================================================
 
 /// `measurement-values-map` key: `version` (index 0).
@@ -290,7 +290,7 @@ pub const MVAL_KEY_INTEGRITY_REGISTERS: i64 = 14;
 pub const MVAL_KEY_INT_RANGE: i64 = 15;
 
 // ===========================================================================
-// Flags Map keys (§12.10 — "CoMID Flags Map" registry)
+// Flags Map keys (§11.10 — "CoMID Flags Map" registry)
 // ===========================================================================
 
 /// `flags-map` key: `is-configured` (index 0).
@@ -313,9 +313,11 @@ pub const FLAG_KEY_IS_IMMUTABLE: i64 = 7;
 pub const FLAG_KEY_IS_TCB: i64 = 8;
 /// `flags-map` key: `is-confidentiality-protected` (index 9).
 pub const FLAG_KEY_IS_CONFIDENTIALITY_PROTECTED: i64 = 9;
+/// `flags-map` key: `is-runtime-updatable` (index 10).
+pub const FLAG_KEY_IS_RUNTIME_UPDATABLE: i64 = 10;
 
 // ===========================================================================
-// Triples Map keys (§12.8 — "CoMID Triples Map" registry)
+// Triples Map keys (§11.8 — "CoMID Triples Map" registry)
 // ===========================================================================
 
 /// `triples-map` key: `reference-triples` (index 0).
@@ -362,7 +364,7 @@ pub const VERSION_SCHEME_DECIMAL: i64 = 4;
 pub const VERSION_SCHEME_SEMVER: i64 = 16384;
 
 // ===========================================================================
-// CoTL Map keys (§12.11)
+// CoTL Map keys (§11.11)
 // ===========================================================================
 
 /// `concise-tl-tag` key: `tag-identity` (index 0).
@@ -429,7 +431,7 @@ pub const KEY_TRIPLE_COND_MKEY: i64 = 0;
 pub const KEY_TRIPLE_COND_AUTHORIZED_BY: i64 = 1;
 
 // ===========================================================================
-// Media type string (§12.12)
+// Media type string (§11.12)
 // ===========================================================================
 
 /// CoRIM CBOR media type: `application/rim+cbor`.

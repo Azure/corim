@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Protected COSE_Sign1 header for signed CoRIMs (draft-ietf-rats-corim-10
+//! Protected COSE_Sign1 header for signed CoRIMs (draft-ietf-rats-corim-11
 //! §4.2.1).
 //!
 //! Models the decoded contents of the `protected` `bstr` element of a
@@ -36,7 +36,7 @@ use crate::cbor::value::Value;
 use crate::Validate;
 
 // ===================================================================
-// COSE Header Label Constants (RFC 9052 / draft-ietf-rats-corim-10 §4.2)
+// COSE Header Label Constants (RFC 9052 / draft-ietf-rats-corim-11 §4.2)
 // ===================================================================
 
 /// COSE header: `alg` (key 1) — Algorithm identifier.

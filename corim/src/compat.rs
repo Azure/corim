@@ -6,7 +6,7 @@
 //! This module contains relaxations applied **before** strict decoding so
 //! that real-world CoRIM files that were produced against early drafts or
 //! the TCG Endorsement spec can still be parsed. None of these helpers
-//! affect encoding — encoding always emits draft-ietf-rats-corim-10
+//! affect encoding — encoding always emits draft-ietf-rats-corim-11
 //! wire format.
 //!
 //! See the README "Decode interop relaxations" section for the complete
@@ -21,7 +21,7 @@ use core::borrow::Borrow;
 
 /// Strip legacy outer CBOR tags (`#6.500`, `#6.502`) that some producers
 /// (notably the TCG Endorsement spec and NVIDIA firmware CoRIMs) wrap
-/// around an otherwise-compliant draft-10 CoRIM.
+/// around an otherwise-compliant draft-11 CoRIM.
 ///
 /// Behavior:
 ///
@@ -143,7 +143,7 @@ fn starts_with_legacy_tag(bytes: &[u8]) -> bool {
 /// Wrap a bare CBOR map in a synthetic `#6.501` tag if it is not already
 /// tagged, allowing downstream strict decode to treat both shapes uniformly.
 ///
-/// **Background.** Draft-ietf-rats-corim-10 §4.2 says the COSE_Sign1 payload
+/// **Background.** Draft-ietf-rats-corim-11 §4.2 says the COSE_Sign1 payload
 /// is `bstr .cbor tagged-unsigned-corim-map`, where
 /// `tagged-unsigned-corim-map = #6.501(unsigned-corim-map)`. Some real-world
 /// producers — including NVIDIA NIC firmware CoRIMs and other TCG-style

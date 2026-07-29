@@ -406,7 +406,7 @@ fn generate_coswid_tag() {
 }
 
 /// A CES triple authored with **labeled** record fields
-/// (`condition`/`series`/`selection`/`addition`) and the equivalent
+/// (`common-condition`/`series`/`condition`/`addition`) and the equivalent
 /// legacy positional-array form produce byte-identical output.
 #[test]
 fn generate_labeled_and_positional_records_match() {
@@ -423,10 +423,10 @@ fn generate_labeled_and_positional_records_match() {
           "comids": [
             { "tag-identity": { "id": "c1" },
               "triples": { "conditional-endorsement-series-triples": [
-                { "condition": { "environment": { "class": { "vendor": "ACME" } },
+                { "common-condition": { "environment": { "class": { "vendor": "ACME" } },
                                  "claims-list": [] },
                   "series": [
-                    { "selection": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
+                    { "condition": [ { "value": { "svn": { "type": "min-svn", "value": 1 } } } ],
                       "addition":  [ { "value": { "svn": { "type": "svn", "value": 1 } } } ] }
                   ] }
               ] } }

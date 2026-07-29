@@ -137,7 +137,7 @@ fn comid_builder_conditional_endorsement_series() {
         authorized_by: None,
     }];
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env,
             claims_list: vec![],
             authorized_by: None,
@@ -199,7 +199,7 @@ fn one_measurement(svn: u64) -> MeasurementMap {
 
 fn one_ces(env: EnvironmentMap) -> ConditionalEndorsementSeriesTriple {
     ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env,
             claims_list: vec![],
             authorized_by: None,
@@ -359,7 +359,7 @@ fn comid_builder_strict_links_rejects_unanchored_ces_claims_list_measurement() {
     // Reference triple anchors `firmware` on this env, but the CES
     // condition selects on `bootloader` — typo / forgotten reference.
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![meas_with_mkey("bootloader", 1)],
             authorized_by: None,
@@ -394,15 +394,15 @@ fn comid_builder_strict_links_rejects_unanchored_ces_claims_list_measurement() {
 }
 
 #[test]
-fn comid_builder_strict_links_rejects_unanchored_ces_selection_measurement() {
+fn comid_builder_strict_links_rejects_unanchored_ces_condition_measurement() {
     use corim::error::BuilderError;
 
     let env = EnvironmentMap::for_class("V", "M");
     // claims_list is anchored (empty is fine, or matches), but the series
-    // record's *selection* references an mkey not present in any reference
+    // record's *condition* references an mkey not present in any reference
     // triple for this env.
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![],
             authorized_by: None,
@@ -428,7 +428,7 @@ fn comid_builder_strict_links_rejects_unanchored_ces_selection_measurement() {
             triple_index,
             measurement_index,
         }) => {
-            assert_eq!(triple_kind, "conditional-endorsement-series-selection");
+            assert_eq!(triple_kind, "conditional-endorsement-series-condition");
             assert_eq!(triple_index, 0);
             assert_eq!(measurement_index, 0);
         }
@@ -442,7 +442,7 @@ fn comid_builder_strict_links_accepts_matching_ces_measurements() {
     let m = meas_with_mkey("firmware", 1);
 
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![m.clone()],
             authorized_by: None,
@@ -471,7 +471,7 @@ fn comid_builder_strict_links_accepts_empty_ces_claims_list() {
     let m = meas_with_mkey("firmware", 1);
 
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![],
             authorized_by: None,
@@ -540,7 +540,7 @@ fn comid_builder_strict_links_anchor_pool_is_same_env_only() {
     let fw_b = meas_with_mkey("fw_b", 1);
 
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env_b.clone(),
             claims_list: vec![fw_a.clone()],
             authorized_by: None,
@@ -576,7 +576,7 @@ fn comid_builder_default_accepts_unanchored_measurement() {
     // Without strict_links, the lint must not fire even on obvious mismatches.
     let env = EnvironmentMap::for_class("V", "M");
     let ces = ConditionalEndorsementSeriesTriple::new(
-        CesCondition {
+        CesCommonCondition {
             environment: env.clone(),
             claims_list: vec![meas_with_mkey("missing", 1)],
             authorized_by: None,

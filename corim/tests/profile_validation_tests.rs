@@ -11,7 +11,8 @@ use corim::types::corim::ProfileChoice;
 use corim::types::environment::EnvironmentMap;
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap};
 use corim::types::triples::{
-    CesCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
+    CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+    ReferenceTriple,
 };
 use corim::validate::{
     apply_endorsement_series, apply_endorsement_series_with_profile, match_reference_values,
@@ -260,7 +261,7 @@ fn build_series_triple(
     selection_byte: u8,
     addition_byte: u8,
 ) -> ConditionalEndorsementSeriesTriple {
-    let condition = CesCondition {
+    let condition = CesCommonCondition {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         claims_list: Vec::new(),
         authorized_by: None,

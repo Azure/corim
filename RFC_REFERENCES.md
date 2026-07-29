@@ -48,7 +48,7 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §5.1.9 | Identity triples | ✅ Full | `types/triples.rs` → `IdentityTriple` |
 | §5.1.10 | Attest-key triples | ✅ Full | `types/triples.rs` → `AttestKeyTriple` |
 | §5.1.11.1 | Domain membership triples | ✅ Full | `types/triples.rs` → `DomainMembershipTriple` |
-| §5.1.11.2 | Domain dependency triples | ✅ Full | `types/triples.rs` → `DomainDependencyTriple` |
+| §5.1.11.2 | Trust dependency triples | ✅ Full | `types/triples.rs` → `TrustDependencyTriple` |
 | §5.1.12 | CoSWID triples | ✅ Full | `types/triples.rs` → `CoswidTriple` |
 | §6 | `concise-tl-tag` (CoTL) | ✅ Full | `types/corim.rs` → `ConciseTlTag` |
 | §6.1 | CoTL validity checks | ✅ Full | `validate.rs` → `validate_cotl` |

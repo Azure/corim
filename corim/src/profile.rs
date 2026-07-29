@@ -4,7 +4,7 @@
 //! Profile extension framework for CoRIM.
 //!
 //! CoRIM is intentionally extensible via the `corim-map.profile` field
-//! (§4.1.4 of draft-ietf-rats-corim-10) — a URI or OID that names a
+//! (§4.1.4 of draft-ietf-rats-corim-11) — a URI or OID that names a
 //! profile defining additional measurement-values keys, expression
 //! tags, appraisal semantics, and media-type discriminators. Examples
 //! include the in-progress Intel profile

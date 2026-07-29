@@ -193,8 +193,8 @@ fn print_triples(
             v.len()
         );
         for (i, t) in v.iter().enumerate() {
-            let cond = t.condition();
-            println!("{}  [{}] condition:", ti, i);
+            let cond = t.common_condition();
+            println!("{}  [{}] common-condition:", ti, i);
             print_env(&cond.environment, &format!("{}    ", ti));
             if !cond.claims_list.is_empty() {
                 println!(
@@ -215,12 +215,12 @@ fn print_triples(
             println!("{}    series: ({} entries)", ti, t.series().len());
             for (j, sr) in t.series().iter().enumerate() {
                 println!(
-                    "{}      [{}] selection: ({} meas)",
+                    "{}      [{}] condition: ({} meas)",
                     ti,
                     j,
-                    sr.selection().len()
+                    sr.condition().len()
                 );
-                for m in sr.selection() {
+                for m in sr.condition() {
                     print_measurement(m, &format!("{}        ", ti), profile);
                 }
                 println!("{}        addition: ({} meas)", ti, sr.addition().len());
@@ -496,6 +496,9 @@ fn print_flags(flags: &FlagsMap, indent: &str) {
     }
     if let Some(v) = flags.is_confidentiality_protected {
         parts.push(format!("confidentiality-protected={}", v));
+    }
+    if let Some(v) = flags.is_runtime_updatable {
+        parts.push(format!("runtime-updatable={}", v));
     }
     if !parts.is_empty() {
         println!("{}flags: {{{}}}", indent, parts.join(", "));
