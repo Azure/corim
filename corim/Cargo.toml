@@ -34,6 +34,9 @@ json = ["std", "serde_json"]
 profile-intel = []
 # Example first-party Azure profile with strict `tcbstatus` enum matching.
 profile-azure = []
+# First-party Arm PSA profile: the `psa-cert-num` (key 100)
+# measurement-values-map extension from draft-ietf-rats-corim-11.
+profile-psa = []
 
 [dependencies]
 corim-macros.workspace = true

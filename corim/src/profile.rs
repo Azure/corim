@@ -28,6 +28,8 @@
 //! | Feature           | Module                                        | Spec                                    |
 //! |-------------------|-----------------------------------------------|-----------------------------------------|
 //! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-03` |
+//! | `profile-azure`   | `azure` (feature-gated)                       | Azure `tcbstatus` example extension     |
+//! | `profile-psa`     | `psa` (feature-gated)                         | Arm PSA `psa-cert-num` (draft-corim-11) |
 //!
 //! Third-party profiles are first-class — the [`Profile`](crate::profile::Profile) trait is
 //! public and stable, and out-of-tree crates may publish their own
@@ -173,6 +175,15 @@ pub mod intel;
 #[cfg(feature = "profile-azure")]
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-azure")))]
 pub mod azure;
+
+/// First-party Arm PSA profile (`tag:arm.com,2025:psa#1.0.0`) that
+/// defines the `psa-cert-num` (key 100) measurement-values-map
+/// extension from draft-ietf-rats-corim-11.
+///
+/// Gated on the `profile-psa` Cargo feature.
+#[cfg(feature = "profile-psa")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-psa")))]
+pub mod psa;
 
 // ---------------------------------------------------------------------------
 // MatchContext
