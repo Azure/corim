@@ -30,7 +30,7 @@ base64 = "0.22"
 # `--diagnose` labels vendor-defined mval keys by their spec names
 # out of the box, and `generate` resolves their mval aliases. Use
 # `--no-default-features` to disable.
-default = ["intel", "azure"]
+default = ["intel", "azure", "psa"]
 # Register the Intel CoRIM profile (draft-cds-rats-intel-corim-profile)
 # in the diagnose registry so `--diagnose` labels Intel tee.* mval keys
 # by their spec names instead of "extension key <N>".
@@ -38,3 +38,6 @@ intel = ["corim/profile-intel"]
 # Register the example Azure profile so `generate` resolves its
 # `tcbstatus` mval alias and `--diagnose` labels it.
 azure = ["corim/profile-azure"]
+# Register the Arm PSA profile so `generate` resolves its `psa-cert-num`
+# mval alias and `--diagnose` labels it.
+psa = ["corim/profile-psa"]
