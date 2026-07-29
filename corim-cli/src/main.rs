@@ -22,6 +22,8 @@ fn build_registry() -> corim::profile::ProfileRegistry {
     registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
     #[cfg(feature = "azure")]
     registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
+    #[cfg(feature = "psa")]
+    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
     registry
 }
 
