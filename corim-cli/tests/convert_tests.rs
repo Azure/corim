@@ -10,6 +10,16 @@ fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_corim-cli")
 }
 
+/// A unique temp path (`corim_cli_<stem>_<pid>_<n>.<ext>`) so tests
+/// running in parallel — or re-runs that left files behind — never
+/// collide on a fixed filename.
+fn unique_temp(stem: &str, ext: &str) -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static N: AtomicU64 = AtomicU64::new(0);
+    let n = N.fetch_add(1, Ordering::Relaxed);
+    std::env::temp_dir().join(format!("corim_cli_{stem}_{}_{n}.{ext}", std::process::id()))
+}
+
 /// Generate a CoRIM from a template, convert it back to a template, then
 /// generate again — the two CBOR outputs must be byte-identical.
 fn assert_round_trip(name: &str, template: &str) {
@@ -225,10 +235,9 @@ fn convert_emits_azure_mval_alias_name() {
 /// (PSA: 100 -> psa-cert-num).
 #[test]
 fn convert_emits_psa_mval_alias_name() {
-    let dir = std::env::temp_dir();
-    let src_t = dir.join("corim_cli_conv_psa_alias_src.json");
-    let src_c = dir.join("corim_cli_conv_psa_alias_src.cbor");
-    let back_t = dir.join("corim_cli_conv_psa_alias_back.json");
+    let src_t = unique_temp("conv_psa_alias_src", "json");
+    let src_c = unique_temp("conv_psa_alias_src", "cbor");
+    let back_t = unique_temp("conv_psa_alias_back", "json");
 
     let template = r#"{
             "corim-id": "id-psa-1",
