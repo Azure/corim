@@ -4,7 +4,7 @@
 //! CoRIM (Concise Reference Integrity Manifest) — Rust library.
 //!
 //! This crate provides Rust types for the CoRIM/CoMID CDDL schema
-//! ([draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html)),
+//! ([draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)),
 //! CBOR encoding/decoding (via a swappable backend), a builder API for
 //! constructing CoRIM and CoMID structures, and validation per the spec.
 //!
@@ -73,7 +73,7 @@
 //!
 //! # Compliance notes
 //!
-//! This crate implements CoRIM per draft-ietf-rats-corim-10.
+//! This crate implements CoRIM per draft-ietf-rats-corim-11.
 //!
 //! ## Tag coverage
 //!

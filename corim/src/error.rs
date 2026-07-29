@@ -83,8 +83,8 @@ pub enum BuilderError {
         index: usize,
     },
 
-    /// A selection-side measurement on a conditional triple (a CES
-    /// `claims_list`, a CES series `selection`, or a CE
+    /// A condition-side measurement on a conditional triple (a CES
+    /// `claims_list`, a CES series `condition`, or a CE
     /// `stateful-environment-record` measurement list) does not
     /// structurally equal any measurement in a reference triple **for
     /// the same env**.
@@ -100,8 +100,8 @@ pub enum BuilderError {
     UnanchoredConditionMeasurement {
         /// Which triple list / sub-list the offending entry came from.
         /// One of: `"conditional-endorsement-series"` (the CES
-        /// `claims_list`), `"conditional-endorsement-series-selection"`
-        /// (a series record's `selection`), or
+        /// `claims_list`), `"conditional-endorsement-series-condition"`
+        /// (a series record's `condition`), or
         /// `"conditional-endorsement"` (a CE stateful-environment-record
         /// measurement).
         triple_kind: &'static str,

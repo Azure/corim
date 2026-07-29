@@ -1,7 +1,7 @@
 # corim
 
 **Concise Reference Integrity Manifest (CoRIM)** — Rust implementation of
-[draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html).
+[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
 
 CBOR-native Rust types for the CoRIM / CoMID CDDL schema, a builder API,
 validation/appraisal logic, and signed CoRIM (COSE_Sign1) support for
@@ -32,7 +32,7 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Decode-only; encoders always emit draft-10 wire format.
+  firmware). Decode-only; encoders always emit draft-11 wire format.
 
 [`Profile`]: https://docs.rs/corim/latest/corim/profile/trait.Profile.html
 [`ProfileRegistry`]: https://docs.rs/corim/latest/corim/profile/struct.ProfileRegistry.html

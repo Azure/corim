@@ -71,7 +71,7 @@ fn nvidia_cx7_diagnose_warns_about_legacy_tag() {
 
 #[test]
 fn builder_never_emits_legacy_tags() {
-    // Mitigation: encode side must always use draft-10 tags (#6.501 for
+    // Mitigation: encode side must always use draft-11 tags (#6.501 for
     // unsigned, #6.18 for signed). This guards against accidentally
     // emitting #6.500 / #6.502.
     use corim::builder::{ComidBuilder, CorimBuilder};
@@ -113,7 +113,7 @@ fn builder_never_emits_legacy_tags() {
     assert_eq!(
         &bytes[..3],
         &[0xD9, 0x01, 0xF5],
-        "builder must emit #6.501 (draft-10), not #6.500 / #6.502"
+        "builder must emit #6.501 (draft-11), not #6.500 / #6.502"
     );
     // Sanity: not 500 (0xD9 0x01 0xF4) and not 502 (0xD9 0x01 0xF6).
     assert_ne!(&bytes[..3], &[0xD9, 0x01, 0xF4]);

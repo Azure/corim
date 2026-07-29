@@ -63,7 +63,7 @@
 //! `corim-id`, `profile`, `rim-validity`, `entities`, and
 //! `dependent-rims` are optional except `corim-id`; at least one of
 //! `comids` / `coswids` / `cotls` must be present. Triple records may be
-//! authored as **labeled objects** (`{ "condition": ..., "series": ... }`,
+//! authored as **labeled objects** (`{ "common-condition": ..., "series": ... }`,
 //! using the CDDL field names) or as the legacy **positional arrays**;
 //! both are accepted. See [`corim-cli/templates/azure_ndpa.json`] for a
 //! worked example.
