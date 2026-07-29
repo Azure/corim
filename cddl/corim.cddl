@@ -251,6 +251,9 @@ measurement-values-map = non-empty<{
     ? &(int-range: 15) => int-range-type-choice,
     * $$measurement-values-map-extension,
 }>
+; Arm PSA profile (tag:arm.com,2025:psa#1.0.0) measurement-values extension.
+$$measurement-values-map-extension //= (&(psa-cert-num: 100) => psa-cert-num-type)
+psa-cert-num-type = text .regexp "[0-9]{13} - [0-9]{5}"
 non-empty<M> = M .and ({+ any => any})
 oid-type = bytes
 tagged-oid-type = #6.111(oid-type)
