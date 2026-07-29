@@ -220,3 +220,69 @@ fn convert_emits_azure_mval_alias_name() {
         let _ = std::fs::remove_file(f);
     }
 }
+
+/// Convert uses profile-aware alias names for mval extension keys
+/// (PSA: 100 -> psa-cert-num).
+#[test]
+fn convert_emits_psa_mval_alias_name() {
+    let dir = std::env::temp_dir();
+    let src_t = dir.join("corim_cli_conv_psa_alias_src.json");
+    let src_c = dir.join("corim_cli_conv_psa_alias_src.cbor");
+    let back_t = dir.join("corim_cli_conv_psa_alias_back.json");
+
+    let template = r#"{
+            "corim-id": "id-psa-1",
+            "profile": "tag:arm.com,2025:psa#1.0.0",
+            "comids": [
+                {
+                    "tag-identity": { "id": "c1" },
+                    "triples": {
+                        "reference-triples": [
+                            [
+                                { "class": { "vendor": "Arm" } },
+                                [ { "value": { "100": "1234567890123 - 12345" } } ]
+                            ]
+                        ]
+                    }
+                }
+            ]
+        }"#;
+
+    std::fs::write(&src_t, template).unwrap();
+
+    let s = Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            src_c.to_str().unwrap(),
+        ])
+        .status()
+        .expect("generate src");
+    assert!(s.success(), "psa alias test: generate src failed");
+
+    let s = Command::new(bin())
+        .args([
+            "convert",
+            src_c.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap(),
+        ])
+        .status()
+        .expect("convert");
+    assert!(s.success(), "psa alias test: convert failed");
+
+    let back = std::fs::read_to_string(&back_t).unwrap();
+    assert!(
+        back.contains("\"psa-cert-num\": \"1234567890123 - 12345\""),
+        "expected psa-cert-num alias in output JSON, got: {back}"
+    );
+    assert!(
+        !back.contains("\"100\":"),
+        "did not expect raw 100 key in output JSON, got: {back}"
+    );
+
+    for f in [&src_t, &src_c, &back_t] {
+        let _ = std::fs::remove_file(f);
+    }
+}
