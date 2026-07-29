@@ -194,7 +194,7 @@ fn print_triples(
         );
         for (i, t) in v.iter().enumerate() {
             let cond = t.common_condition();
-            println!("{}  [{}] condition:", ti, i);
+            println!("{}  [{}] common-condition:", ti, i);
             print_env(&cond.environment, &format!("{}    ", ti));
             if !cond.claims_list.is_empty() {
                 println!(
@@ -215,7 +215,7 @@ fn print_triples(
             println!("{}    series: ({} entries)", ti, t.series().len());
             for (j, sr) in t.series().iter().enumerate() {
                 println!(
-                    "{}      [{}] selection: ({} meas)",
+                    "{}      [{}] condition: ({} meas)",
                     ti,
                     j,
                     sr.condition().len()
