@@ -8,6 +8,17 @@ versions.
 
 ## [Unreleased]
 
+### Added (profile-psa feature)
+
+- **Arm PSA CoRIM profile** under the new `profile-psa` feature —
+  `corim::profile::psa` with `PsaProfile`, implementing the
+  `psa-cert-num` (`measurement-values-map` key 100) extension from
+  draft-ietf-rats-corim-11 (profile URI `tag:arm.com,2025:psa#1.0.0`).
+  Provides format validation (`is_valid_cert_num`), `--diagnose`
+  labelling, JSON template aliasing, and exact-match appraisal. The
+  `psa-cert-num-type` regexp constraint is added to the bundled
+  `cddl/corim.cddl`.
+
 ## [0.1.3] — 2026-06-10
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.1.3, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.3
