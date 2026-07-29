@@ -2,12 +2,11 @@
 // Licensed under the MIT License.
 
 //! Validation and appraisal logic per draft-ietf-rats-corim-11 (the
-//! Reference Verifier, §8; formerly §9 in draft-10). The detailed
-//! `§9.x` citations below still reference draft-10's verifier numbering
-//! and are pending remap to draft-11's restructured §8.
+//! Reference Verifier, §8; formerly §9 in draft-10). Section references
+//! below point at draft-11's restructured §8.2 (The CoRIM Processor).
 //!
-//! Covers reference value matching (Phase 3) and conditional-endorsement-series
-//! application (Phase 4).
+//! Covers reference value matching (Phase 3, §8.2.4.2) and
+//! conditional-endorsement-series application (Phase 4, §8.2.4.3.2).
 
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
@@ -29,7 +28,7 @@ use crate::types::triples::{
 use crate::Validate;
 
 // ---------------------------------------------------------------------------
-// Phase 1: Input validation (§9.2)
+// Phase 1: Input validation (§8.2.3)
 // ---------------------------------------------------------------------------
 
 /// Maximum allowed CoRIM payload size (16 MiB).
@@ -245,7 +244,7 @@ fn decode_and_validate_full_impl(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 3: Reference value matching (§9.3.3)
+// Phase 3: Reference value matching (§8.2.4.2)
 // ---------------------------------------------------------------------------
 
 /// A claim that has been corroborated by reference value matching.
@@ -260,7 +259,7 @@ pub struct CorroboratedClaim {
 /// Match reference values against evidence digests.
 ///
 /// For each `ReferenceTriple`, compares the environment and digests per
-/// §9.4.2 (environment) and §9.4.6.1.3 (digests):
+/// §8.2.4.4.1 (environment) and §8.2.4.4.5.4 (digests):
 /// - Absent condition field = wildcard
 /// - All common algorithms must agree
 pub fn match_reference_values(
@@ -384,7 +383,7 @@ fn measurement_matches_with_profile<P: ?Sized + Profile>(
 }
 
 // ---------------------------------------------------------------------------
-// Phase 4: Conditional endorsement series (§9.3.4.3)
+// Phase 4: Conditional endorsement series (§8.2.4.3.2)
 // ---------------------------------------------------------------------------
 
 /// An endorsed claim produced by conditional endorsement series matching.
@@ -398,7 +397,7 @@ pub struct EndorsedClaim {
 
 /// Apply conditional-endorsement-series triples to produce endorsed claims.
 ///
-/// Per §9.3.4.3:
+/// Per §8.2.4.3.2:
 /// 1. Match condition environment against provided evidence
 /// 2. Iterate series in order — first `condition` match wins
 /// 3. Apply the corresponding `addition` as endorsed values
@@ -513,7 +512,7 @@ fn find_matching_series<P: ?Sized + Profile>(
 }
 
 // ---------------------------------------------------------------------------
-// SVN comparison (§9.4.6.1.2)
+// SVN comparison (§8.2.4.4.5.3)
 // ---------------------------------------------------------------------------
 
 /// Compare an SVN value against evidence.
@@ -528,10 +527,10 @@ pub fn svn_matches(reference: &SvnChoice, evidence_svn: u64) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Comparison helpers (§9.4)
+// Comparison helpers (§8.2.4.4)
 // ---------------------------------------------------------------------------
 
-/// Compare two environments per §9.4.2.
+/// Compare two environments per §8.2.4.4.1.
 ///
 /// Absent fields in the condition are wildcards.
 fn environment_matches(condition: &EnvironmentMap, target: &EnvironmentMap) -> bool {
@@ -582,13 +581,13 @@ fn class_matches(
 
 /// Check if a reference measurement matches any evidence measurement.
 ///
-/// Matching is per §9.4.6: compares `mkey`, and then for each field in
+/// Matching is per §8.2.4.4.5: compares `mkey`, and then for each field in
 /// `measurement-values-map`, if the reference specifies the field, the
 /// evidence must also have it and the values must match.
 ///
 /// Covered codepoints:
-/// - `digests` (key 2) — §9.4.6.1.3, per-algorithm comparison
-/// - `svn` (key 1) — §9.4.6.1.2, exact or minimum
+/// - `digests` (key 2) — §8.2.4.4.5.4, per-algorithm comparison
+/// - `svn` (key 1) — §8.2.4.4.5.3, exact or minimum
 /// - `version` (key 0) — exact match
 /// - `flags` (key 3) — exact match
 /// - `raw-value` (key 4) — exact match
@@ -629,7 +628,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
         }
     }
 
-    // Match digests if present in reference (§9.4.6.1.3)
+    // Match digests if present in reference (§8.2.4.4.5.4)
     if let Some(ref ref_digests) = reference.mval.digests {
         if let Some(ref ev_digests) = ev_meas.mval.digests {
             if !digests_match(ref_digests, ev_digests) {
@@ -640,7 +639,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
         }
     }
 
-    // Match SVN if present in reference (§9.4.6.1.2)
+    // Match SVN if present in reference (§8.2.4.4.5.3)
     if let Some(ref ref_svn) = reference.mval.svn {
         if let Some(ref ev_svn) = ev_meas.mval.svn {
             let ev_val = match ev_svn {
@@ -741,7 +740,7 @@ pub fn core_fields_match(reference: &MeasurementMap, evidence: &MeasurementMap) 
     single_measurement_matches(reference, evidence)
 }
 
-/// Compare digest lists per §9.4.6.1.3.
+/// Compare digest lists per §8.2.4.4.5.4.
 fn digests_match(reference: &[Digest], evidence: &[Digest]) -> bool {
     let mut has_common = false;
 
