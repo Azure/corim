@@ -137,6 +137,27 @@ to code points listed in the Removed / Renamed columns above; v07
 already dropped `tee.instance-id` (-77), `tee.epoch` (-90), the
 `mask-eq` operator, and the set-of-set operators.
 
+### draft-ietf-rats-corim-11 — Arm PSA Profile (`psa-cert-num`)
+
+| | |
+|-|-|
+| **Status** | Internet-Draft |
+| **Profile URI** | `tag:arm.com,2025:psa#1.0.0` |
+| **Feature gate** | `corim/profile-psa` (opt-in) |
+| **Rust module** | `corim::profile::psa` |
+
+The base CoRIM CDDL (draft-11 Appendix A) defines a single PSA
+`measurement-values-map` extension. The full PSA endorsements profile is
+specified separately in `I-D.fdb-rats-psa-endorsements` and reuses base
+CoRIM features (string measured-element identifiers), adding no further
+wire elements beyond `psa-cert-num`.
+
+| Section | Topic | Status | Rust Item |
+|---------|-------|--------|-----------|
+| App. A | `psa-cert-num` (key 100) + `psa-cert-num-type` regexp | ✅ Full | `psa::MVAL_PSA_CERT_NUM`, `psa::is_valid_cert_num` |
+| §8.2.6 | Profile identifier URI | ✅ Full | `psa::PSA_PROFILE_URI`, `PsaProfile::identifier` |
+| §8.2.6 | Diagnose labelling / JSON alias / exact-match appraisal | ✅ Full | `PsaProfile::{diagnose_mval_entry, mval_json_alias, match_measurement}` |
+
 ---
 
 ## CBOR Encoding
