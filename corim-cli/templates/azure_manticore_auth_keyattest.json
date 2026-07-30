@@ -35,7 +35,7 @@
                                     "integrity-registers": {
                                         "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
                                         "FW": [
-                                            [7, "3q2+7w=="]
+                                            [7, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
                                         ]
                                     }
                                 }
