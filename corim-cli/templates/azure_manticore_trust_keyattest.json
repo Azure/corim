@@ -15,7 +15,7 @@
             "triples": {
                 "conditional-endorsement-series-triples": [
                     {
-                        "condition": {
+                        "common-condition": {
                             "environment": {
                                 "class": {
                                     "layer": 0
@@ -34,7 +34,7 @@
                         },
                         "series": [
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "version": {
@@ -53,7 +53,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "version": {
@@ -72,7 +72,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "svn": {
@@ -91,7 +91,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "svn": {
@@ -112,7 +112,7 @@
                         ]
                     },
                     {
-                        "condition": {
+                        "common-condition": {
                             "environment": {
                                 "class": {
                                     "layer": 1
@@ -131,7 +131,7 @@
                         },
                         "series": [
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "version": {
@@ -150,7 +150,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "version": {
@@ -169,7 +169,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "svn": {
@@ -188,7 +188,7 @@
                                 ]
                             },
                             {
-                                "selection": [
+                                "condition": [
                                     {
                                         "value": {
                                             "svn": {
