@@ -1,0 +1,100 @@
+{
+  "$comment": [
+    "Azure Manticore Authenticity Endorsement for Key Attestation (non-TDISP). '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "Azure profile is optional and may be omitted for this CoRIM",
+    "corim-id is 'Manticore_KeyAttest_'<version>"
+  ],
+  "corim-id": "Manticore_KeyAttest_1.1.1",
+  "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+  "comids": [
+    {
+      "tag-identity": {
+        "$comment": "The tag-identity id is Manticore OID",
+        "id": "109dd698-107a-f0a9-e095-7addb1a59873",
+        "version": 1
+      },
+            "triples": {
+                "reference-triples": [
+                    [
+                        {
+                            "class": {
+                                "layer": 0
+                            }
+                        },
+                        [
+                            {
+                                "value": {
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "integrity-registers": {
+                                        "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                        "FW": [
+                                            [7, "3q2+7w=="]
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    ],
+                    [
+                        {
+                            "class": {
+                                "layer": 1
+                            }
+                        },
+                        [
+                            {
+                                "value": {
+                                    "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "digests": [
+                                        [7, "3q2+7w=="]
+                                    ],
+                                    "integrity-registers": {
+                                        "RoT": [
+                                            [7, "3q2+7w=="]
+                                        ]
+                                    }
+                                }
+                            },
+                            {
+                                "value": {
+                                    "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "digests": [
+                                        [7, "3q2+7w=="]
+                                    ],
+                                    "integrity-registers": {
+                                        "RoT": [
+                                            [7, "3q2+7w=="]
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    ]
+                ]
+            }
+    }
+  ]
+}
