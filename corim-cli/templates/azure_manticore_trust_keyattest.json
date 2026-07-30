@@ -1,9 +1,14 @@
 {
+    "$comment": [
+    "Azure Manticore Trust Endorsement for Key Attestation (non-TDISP). '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "corim-id is 'Manticore_KeyAttest_'<version>"
+    ],
     "corim-id": "Manticore_KeyAttest_1.1.1",
     "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
     "comids": [
         {
             "tag-identity": {
+                "$comment": "The tag-identity id is Manticore OID",
                 "id": "109dd698-107a-f0a9-e095-7addb1a59873",
                 "version": 1
             },
