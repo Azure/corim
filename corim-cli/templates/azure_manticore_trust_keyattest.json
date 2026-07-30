@@ -1,0 +1,211 @@
+{
+    "corim-id": "Manticore_KeyAttest_1.1.1",
+    "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+    "comids": [
+        {
+            "tag-identity": {
+                "id": "109dd698-107a-f0a9-e095-7addb1a59873",
+                "version": 1
+            },
+            "triples": {
+                "conditional-endorsement-series-triples": [
+                    {
+                        "condition": {
+                            "environment": {
+                                "class": {
+                                    "layer": 0
+                                }
+                            },
+                            "claims-list": [
+                                {
+                                    "value": {
+                                        "svn": {
+                                            "type": "min-svn",
+                                            "value": 0
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "series": [
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.3.5.0-50701001",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.4.2.4-50922174",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 1
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "OutOfDate"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "condition": {
+                            "environment": {
+                                "class": {
+                                    "layer": 1
+                                }
+                            },
+                            "claims-list": [
+                                {
+                                    "value": {
+                                        "svn": {
+                                            "type": "min-svn",
+                                            "value": 0
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "series": [
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.3.5.1-50702174",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.4.3.7-51001222",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 1
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "selection": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "OutOfDate"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
+            }
+        }
+    ]
+}
+ 
