@@ -8,8 +8,43 @@ versions.
 
 ## [Unreleased]
 
-### Added (profile-psa feature)
+## [0.2.0] — 2026-07-30
 
+**Crates:** [`corim`](https://crates.io/crates/corim) v0.2.0, [`corim-macros`](https://crates.io/crates/corim-macros) v0.2.0
+**MSRV:** Rust 1.85
+
+Tracks [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
+(previously draft-10). The structural delta between -10 and -11 is confined
+to the CDDL (Appendix A); the Reference Verifier chapter was renumbered from
+§9 to §8 and rewritten as prose without affecting the wire format.
+
+### Changed (breaking)
+
+- **Triple record / field renames to draft-11 terminology.** These are
+  positional CBOR array elements, so the wire format is byte-identical to
+  draft-10 — only Rust symbol names (and the CLI prose / template field
+  names) change:
+  - `DomainDependencyTriple` → `TrustDependencyTriple`
+    (`domain-dependency-triple-record` → `trust-dependency-triple-record`).
+  - `CesCondition` → `CesCommonCondition`, and
+    `ConditionalEndorsementSeriesTriple::condition()` →
+    `common_condition()` (CES element `condition` → `common-condition`).
+  - `ConditionalSeriesRecord::selection()` → `condition()`
+    (`conditional-series-record` element `selection` → `condition`).
+  - `BuilderError::UnanchoredConditionMeasurement` `triple_kind` value
+    `"conditional-endorsement-series-selection"` →
+    `"conditional-endorsement-series-condition"`.
+  - CLI `generate` / `convert` prose field names updated accordingly
+    (`common-condition`, `condition`); bundled templates were migrated.
+- **`corim-locator-map.thumbprint` array form is now non-empty**
+  (`eatmc.digest / [+ eatmc.digest]`). The decoder already rejected empty
+  arrays; the CDDL and docs now match.
+
+### Added
+
+- **`is-runtime-updatable` flag** (`flags-map` key 10) — new optional
+  `FlagsMap::is_runtime_updatable` field and the
+  `FLAG_KEY_IS_RUNTIME_UPDATABLE` constant.
 - **Arm PSA CoRIM profile** under the new `profile-psa` feature —
   `corim::profile::psa` with `PsaProfile`, implementing the
   `psa-cert-num` (`measurement-values-map` key 100) extension from
@@ -18,6 +53,21 @@ versions.
   labelling, JSON template aliasing, and exact-match appraisal. The
   `psa-cert-num-type` regexp constraint is added to the bundled
   `cddl/corim.cddl`.
+- **CLI registration of the PSA profile** under a default-on `psa`
+  feature, so `generate` resolves the `psa-cert-num` alias, `convert`
+  emits it, and `validate --diagnose` labels `measurement-values-map`
+  key 100.
+
+### Changed (docs)
+
+- Spec references bumped draft-10 → draft-11 throughout; IANA registry
+  section numbers shifted §12.x → §11.x.
+- `validate.rs` appraisal citations remapped from draft-10 §9.x to
+  draft-11 §8.2.x (the restructured Reference Verifier).
+
+### Note
+
+- `corim-cli` is bumped to 0.2.0 in lockstep but is **not published**.
 
 ## [0.1.3] — 2026-06-10
 
