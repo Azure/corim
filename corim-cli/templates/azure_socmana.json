@@ -19,6 +19,10 @@
               "environment": {
                 "class": {
                   "vendor": "Microsoft"
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBNZWFzdXJlbWVudHM="
                 }
               },
               "claims-list": []
