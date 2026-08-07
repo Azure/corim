@@ -9,6 +9,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod baseline;
 mod convert;
 mod display;
 mod edn;
@@ -109,6 +110,14 @@ struct ValidateArgs {
     /// (RFC 8610 §G.4). Mutually exclusive with `--diagnose`.
     #[arg(long, conflicts_with = "diagnose")]
     edn: bool,
+
+    /// Compare the input against a known-good **baseline** CoRIM for
+    /// structural conformance. The baseline may be a CBOR CoRIM, a signed
+    /// CoRIM (attached payload), or a JSON template. Reports structural
+    /// mismatches (which fail) and value differences (informational).
+    /// Exit code: 0 conformant, 3 structural mismatch, 2 invalid input.
+    #[arg(long, value_name = "FILE", conflicts_with_all = ["diagnose", "edn"])]
+    baseline: Option<String>,
 }
 
 fn main() {
@@ -326,6 +335,26 @@ decoded via compat::decode_comid_from_tcg_bstr",
             _ => {
                 warnings.push(format!("tags[{}]: unrecognized tag variant", i));
                 unknown_count += 1;
+            }
+        }
+    }
+
+    // Baseline conformance mode: compare the (valid) input against a
+    // known-good baseline and exit on the conformance result.
+    if let Some(baseline_path) = &cli.baseline {
+        if !errors.is_empty() {
+            eprintln!("Input CoRIM is not valid; cannot compare against baseline:");
+            for e in &errors {
+                eprintln!("  {e}");
+            }
+            process::exit(2);
+        }
+        match baseline::run(&corim, baseline_path, &cli.format) {
+            Ok(true) => process::exit(0),
+            Ok(false) => process::exit(3),
+            Err(e) => {
+                eprintln!("Error: {e}");
+                process::exit(1);
             }
         }
     }
