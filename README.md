@@ -209,7 +209,36 @@ corim-cli generate template.json -o out.cbor
 
 # Convert an unsigned CoRIM back to a JSON template (inverse of generate)
 corim-cli convert myfile.corim -o template.json
+
+# Extract the unsigned CoRIM payload from a signed CoRIM
+corim-cli extract signed.cose -o unsigned.cbor
+
+# Sign (bring-your-own-signer): prepare a staging envelope + to-be-signed bytes,
+# sign the TBS externally (HSM / openssl / ...), then inject the signature
+corim-cli sign prepare unsigned.cbor --alg ES256 --signer-name "ACME Ltd." \
+    --x5chain leaf.pem --out-staging staging.cose --out-tbs tbs.bin
+corim-cli sign finalize staging.cose --signature sig.bin -o signed.cose
 ```
+
+### `extract` / `sign` — signed CoRIM workflow
+
+The tool performs **no cryptography**, so signing is a two-step,
+bring-your-own-signer flow:
+
+1. `sign prepare` wraps an unsigned CoRIM in a COSE_Sign1 protected
+   header (algorithm, `CWT-Claims` signer identity, and an `x5chain`
+   certificate chain from DER or PEM files, leaf-first) and writes a
+   **staging** envelope (placeholder signature) plus the raw
+   `Sig_structure1` **to-be-signed** bytes.
+2. Sign the TBS bytes with your own key/HSM per the chosen COSE
+   algorithm.
+3. `sign finalize` injects that signature into the staging envelope,
+   producing the final signed CoRIM.
+
+`extract` reverses signing: it pulls the embedded unsigned CoRIM payload
+back out of a signed CoRIM (attached payloads only). `validate` on a
+signed CoRIM checks structure only and prints a note that the signature
+is **not** cryptographically verified.
 
 ### `generate` — build a CoRIM from a JSON template
 

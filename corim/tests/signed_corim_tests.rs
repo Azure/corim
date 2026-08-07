@@ -405,6 +405,36 @@ fn signed_corim_builder_with_both_meta_and_cwt() {
 }
 
 #[test]
+fn signed_corim_builder_with_x509_header_fields() {
+    use corim::types::measurement::DigestAlg;
+
+    let corim_bytes = build_sample_corim_bytes();
+    let leaf = vec![0x30, 0x82, 0x01, 0x01]; // fake DER leaf
+    let issuer = vec![0x30, 0x82, 0x02, 0x02]; // fake DER issuer
+    let x5t = CoseCertHash {
+        hash_alg: DigestAlg::Int(-16), // SHA-256 (COSE alg)
+        hash_value: vec![0xAB; 32],
+    };
+
+    let mut builder = SignedCorimBuilder::new(-7, corim_bytes)
+        .set_cwt_claims(CwtClaims::new("X509 Test"))
+        .x5chain(CoseX509::Chain(vec![leaf.clone(), issuer.clone()]))
+        .kid(vec![0x01, 0x02, 0x03])
+        .x5t(x5t.clone());
+
+    let _tbs = builder.to_be_signed(&[]).unwrap();
+    let signed_bytes = builder.build_with_signature(vec![0xEE; 64]).unwrap();
+
+    let signed = decode_signed_corim(&signed_bytes).unwrap();
+    assert_eq!(
+        signed.protected.x5chain,
+        Some(CoseX509::Chain(vec![leaf, issuer]))
+    );
+    assert_eq!(signed.protected.kid, Some(vec![0x01, 0x02, 0x03]));
+    assert_eq!(signed.protected.x5t, Some(x5t));
+}
+
+#[test]
 fn signed_corim_builder_missing_meta_and_cwt_fails() {
     let corim_bytes = build_sample_corim_bytes();
     let mut builder = SignedCorimBuilder::new(-7, corim_bytes);
