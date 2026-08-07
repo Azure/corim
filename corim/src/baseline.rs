@@ -254,6 +254,301 @@ fn compare_triples(
         input.endorsed_triples.as_deref().map(endorsed_as_pairs),
         r,
     );
+    compare_ces(
+        base_path,
+        baseline.conditional_endorsement_series.as_deref(),
+        input.conditional_endorsement_series.as_deref(),
+        r,
+    );
+    compare_ce(
+        base_path,
+        baseline.conditional_endorsement.as_deref(),
+        input.conditional_endorsement.as_deref(),
+        r,
+    );
+    // Key/domain triples carry identity content (keys, domains, tag-ids)
+    // that the spec compares binary (§8.2.4.4.2); any difference is
+    // therefore structural. Paired by position.
+    compare_opaque_triples(
+        "identity",
+        base_path,
+        baseline.identity_triples.as_deref(),
+        input.identity_triples.as_deref(),
+        r,
+    );
+    compare_opaque_triples(
+        "attest-key",
+        base_path,
+        baseline.attest_key_triples.as_deref(),
+        input.attest_key_triples.as_deref(),
+        r,
+    );
+    compare_opaque_triples(
+        "dependency",
+        base_path,
+        baseline.dependency_triples.as_deref(),
+        input.dependency_triples.as_deref(),
+        r,
+    );
+    compare_opaque_triples(
+        "membership",
+        base_path,
+        baseline.membership_triples.as_deref(),
+        input.membership_triples.as_deref(),
+        r,
+    );
+    compare_opaque_triples(
+        "coswid",
+        base_path,
+        baseline.coswid_triples.as_deref(),
+        input.coswid_triples.as_deref(),
+        r,
+    );
+}
+
+/// Compare conditional-endorsement-series triples, paired by their
+/// common-condition environment. Claims-list and each series record's
+/// condition/addition measurement lists are compared like measurements.
+fn compare_ces(
+    base_path: &[PathSegment],
+    baseline: Option<&[crate::types::triples::ConditionalEndorsementSeriesTriple]>,
+    input: Option<&[crate::types::triples::ConditionalEndorsementSeriesTriple]>,
+    r: &mut ConformanceReport,
+) {
+    let b = baseline.unwrap_or(&[]);
+    let i = input.unwrap_or(&[]);
+    let kind = "conditional-endorsement-series";
+    for (index, bt) in b.iter().enumerate() {
+        let mut path = base_path.to_vec();
+        path.push(PathSegment::Triple { kind, index });
+        match i
+            .iter()
+            .find(|it| it.common_condition().environment == bt.common_condition().environment)
+        {
+            Some(it) => {
+                meas_list(
+                    &path,
+                    "claims-list",
+                    &bt.common_condition().claims_list,
+                    &it.common_condition().claims_list,
+                    r,
+                );
+                if bt.common_condition().authorized_by != it.common_condition().authorized_by {
+                    push_authority_mismatch(&path, r);
+                }
+                compare_series(&path, bt.series(), it.series(), r);
+            }
+            None => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::MissingInInput,
+                detail:
+                    "CES triple common-condition environment present in baseline but not in input"
+                        .into(),
+            }),
+        }
+    }
+    for it in i {
+        if !b
+            .iter()
+            .any(|bt| bt.common_condition().environment == it.common_condition().environment)
+        {
+            let mut path = base_path.to_vec();
+            path.push(PathSegment::Triple {
+                kind,
+                index: usize::MAX,
+            });
+            r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::UnexpectedInInput,
+                detail: "CES triple present in input but not in baseline".into(),
+            });
+        }
+    }
+}
+
+/// Compare CES series records by position (order is significant — first
+/// match wins, §8.2.4.3.2). A differing series length is structural.
+fn compare_series(
+    base_path: &[PathSegment],
+    baseline: &[crate::types::triples::ConditionalSeriesRecord],
+    input: &[crate::types::triples::ConditionalSeriesRecord],
+    r: &mut ConformanceReport,
+) {
+    if baseline.len() != input.len() {
+        let mut p = base_path.to_vec();
+        p.push(PathSegment::Field("series"));
+        r.structural_mismatches.push(StructuralMismatch {
+            path: p,
+            kind: MismatchKind::TypeMismatch {
+                baseline: baseline.len().to_string(),
+                input: input.len().to_string(),
+            },
+            detail: "CES series length differs".into(),
+        });
+    }
+    for (idx, br) in baseline.iter().enumerate() {
+        let mut p = base_path.to_vec();
+        p.push(PathSegment::Field("series"));
+        p.push(PathSegment::Index(idx));
+        match input.get(idx) {
+            Some(ir) => {
+                meas_list(&p, "condition", br.condition(), ir.condition(), r);
+                meas_list(&p, "addition", br.addition(), ir.addition(), r);
+            }
+            None => r.structural_mismatches.push(StructuralMismatch {
+                path: p,
+                kind: MismatchKind::MissingInInput,
+                detail: "CES series record present in baseline but not in input".into(),
+            }),
+        }
+    }
+}
+
+/// Compare conditional-endorsement triples by position: `conditions`
+/// (stateful-environment-records, paired by environment) and
+/// `endorsements` (endorsed-triple-records, paired by environment).
+fn compare_ce(
+    base_path: &[PathSegment],
+    baseline: Option<&[crate::types::triples::ConditionalEndorsementTriple]>,
+    input: Option<&[crate::types::triples::ConditionalEndorsementTriple]>,
+    r: &mut ConformanceReport,
+) {
+    let b = baseline.unwrap_or(&[]);
+    let i = input.unwrap_or(&[]);
+    let kind = "conditional-endorsement";
+    let n = b.len().max(i.len());
+    for index in 0..n {
+        let mut path = base_path.to_vec();
+        path.push(PathSegment::Triple { kind, index });
+        match (b.get(index), i.get(index)) {
+            (Some(bt), Some(it)) => {
+                // conditions: stateful-environment-records, env-keyed.
+                let bc: EnvMeas = bt.0.iter().map(|s| (&s.0, s.1.as_slice())).collect();
+                let ic: EnvMeas = it.0.iter().map(|s| (&s.0, s.1.as_slice())).collect();
+                compare_env_meas(&path, "conditions", &bc, &ic, r);
+                // endorsements: endorsed-triple-records, env-keyed.
+                let be: EnvMeas = it_pairs(&bt.1);
+                let ie: EnvMeas = it_pairs(&it.1);
+                compare_env_meas(&path, "endorsements", &be, &ie, r);
+            }
+            (Some(_), None) => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::MissingInInput,
+                detail: "conditional-endorsement triple present in baseline but not in input"
+                    .into(),
+            }),
+            (None, Some(_)) => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::UnexpectedInInput,
+                detail: "conditional-endorsement triple present in input but not in baseline"
+                    .into(),
+            }),
+            (None, None) => {}
+        }
+    }
+}
+
+fn it_pairs(v: &[crate::types::triples::EndorsedTriple]) -> EnvMeas<'_> {
+    v.iter().map(|t| (&t.0, t.1.as_slice())).collect()
+}
+
+/// Compare two env-keyed measurement groups nested under a named field.
+fn compare_env_meas(
+    base_path: &[PathSegment],
+    field: &'static str,
+    baseline: &EnvMeas<'_>,
+    input: &EnvMeas<'_>,
+    r: &mut ConformanceReport,
+) {
+    for (b_env, b_meas) in baseline {
+        let mut path = base_path.to_vec();
+        path.push(PathSegment::Field(field));
+        match input.iter().find(|(ie, _)| *ie == *b_env) {
+            Some((_, i_meas)) => compare_measurements(&path, b_meas, i_meas, r),
+            None => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::MissingInInput,
+                detail: format!("{field} environment present in baseline but not in input"),
+            }),
+        }
+    }
+    for (i_env, _) in input {
+        if !baseline.iter().any(|(be, _)| *be == *i_env) {
+            let mut path = base_path.to_vec();
+            path.push(PathSegment::Field(field));
+            r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::UnexpectedInInput,
+                detail: format!("{field} environment present in input but not in baseline"),
+            });
+        }
+    }
+}
+
+/// Push a measurement-list comparison under a named field segment.
+fn meas_list(
+    base_path: &[PathSegment],
+    field: &'static str,
+    baseline: &[MeasurementMap],
+    input: &[MeasurementMap],
+    r: &mut ConformanceReport,
+) {
+    let mut p = base_path.to_vec();
+    p.push(PathSegment::Field(field));
+    compare_measurements(&p, baseline, input, r);
+}
+
+/// Structural comparison of identity/key/domain-bearing triples whose
+/// content is binary-compared per the spec. Paired by position; any
+/// difference is a structural mismatch.
+fn compare_opaque_triples<T: PartialEq>(
+    kind: &'static str,
+    base_path: &[PathSegment],
+    baseline: Option<&[T]>,
+    input: Option<&[T]>,
+    r: &mut ConformanceReport,
+) {
+    let b = baseline.unwrap_or(&[]);
+    let i = input.unwrap_or(&[]);
+    let n = b.len().max(i.len());
+    for index in 0..n {
+        let mut path = base_path.to_vec();
+        path.push(PathSegment::Triple { kind, index });
+        match (b.get(index), i.get(index)) {
+            (Some(x), Some(y)) if x != y => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::TypeMismatch {
+                    baseline: "triple".into(),
+                    input: "triple".into(),
+                },
+                detail: format!("{kind} triple content differs from baseline"),
+            }),
+            (Some(_), None) => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::MissingInInput,
+                detail: format!("{kind} triple present in baseline but not in input"),
+            }),
+            (None, Some(_)) => r.structural_mismatches.push(StructuralMismatch {
+                path,
+                kind: MismatchKind::UnexpectedInInput,
+                detail: format!("{kind} triple present in input but not in baseline"),
+            }),
+            _ => {}
+        }
+    }
+}
+
+fn push_authority_mismatch(path: &[PathSegment], r: &mut ConformanceReport) {
+    let mut p = path.to_vec();
+    p.push(PathSegment::Field("authorized-by"));
+    r.structural_mismatches.push(StructuralMismatch {
+        path: p,
+        kind: MismatchKind::TypeMismatch {
+            baseline: "authority".into(),
+            input: "authority".into(),
+        },
+        detail: "authorized-by keys differ (binary comparison, §8.2.4.4.2)".into(),
+    });
 }
 
 type EnvMeas<'a> = Vec<(

@@ -152,3 +152,77 @@ fn missing_svn_field_in_input_is_a_structural_mismatch() {
         .iter()
         .any(|m| m.kind == MismatchKind::MissingInInput));
 }
+
+/// A conditional-endorsement-series triple's series `addition` digest is
+/// compared: differing bytes are a value difference (still conformant).
+#[test]
+fn ces_series_addition_digest_is_compared() {
+    use corim::types::triples::{
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+    };
+
+    fn ces_corim(addition_digest: Vec<u8>) -> CorimMap {
+        let env = EnvironmentMap {
+            class: Some(ClassMap {
+                class_id: None,
+                vendor: Some("Intel".into()),
+                model: Some("TDX".into()),
+                layer: None,
+                index: None,
+            }),
+            instance: None,
+            group: None,
+        };
+        let cond_meas = MeasurementMap {
+            mkey: Some(MeasuredElement::Text("cond".into())),
+            mval: MeasurementValuesMap {
+                svn: Some(SvnChoice::MinValue(1)),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        };
+        let add_meas = MeasurementMap {
+            mkey: Some(MeasuredElement::Text("add".into())),
+            mval: MeasurementValuesMap {
+                digests: Some(vec![Digest::new(7, addition_digest)]),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        };
+        let ces = ConditionalEndorsementSeriesTriple::new(
+            CesCommonCondition {
+                environment: env,
+                claims_list: vec![],
+                authorized_by: None,
+            },
+            vec![ConditionalSeriesRecord::new(
+                vec![cond_meas],
+                vec![add_meas],
+            )],
+        );
+        let comid = ComidBuilder::new(TagIdChoice::Text("c1".into()))
+            .add_conditional_endorsement_series(ces)
+            .build()
+            .unwrap();
+        let bytes = CorimBuilder::new(CorimId::Text("corim-1".into()))
+            .add_comid_tag(comid)
+            .unwrap()
+            .build_bytes()
+            .unwrap();
+        corim::validate::decode_and_validate(&bytes).unwrap().0
+    }
+
+    let base = ces_corim(vec![0xAA; 48]);
+    let same = ces_corim(vec![0xAA; 48]);
+    let diff = ces_corim(vec![0xBB; 48]);
+
+    assert!(compare(&same, &base).value_differences.is_empty());
+    let report = compare(&diff, &base);
+    assert!(report.is_conformant(), "CES digest bytes may differ");
+    assert_eq!(
+        report.value_differences.len(),
+        1,
+        "CES addition digest compared"
+    );
+    assert_eq!(report.value_differences[0].field, "digest-value");
+}
