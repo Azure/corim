@@ -14,6 +14,7 @@ mod display;
 mod edn;
 mod generate;
 mod prose;
+mod sign;
 
 fn build_registry() -> corim::profile::ProfileRegistry {
     #[allow(unused_mut)]
@@ -58,6 +59,19 @@ enum Commands {
     /// prose-keyed JSON template that feeds straight back into
     /// `generate`, reproducing the original bytes.
     Convert(convert::ConvertArgs),
+
+    /// Extract the unsigned CoRIM payload from a signed CoRIM.
+    ///
+    /// Decodes a `#6.18` COSE_Sign1 CoRIM and writes the embedded
+    /// `tagged-unsigned-corim-map` bytes. Errors on detached payloads.
+    Extract(sign::ExtractArgs),
+
+    /// Prepare and assemble a signed CoRIM (bring-your-own-signer).
+    ///
+    /// `sign prepare` emits a staging envelope + to-be-signed bytes; you
+    /// sign externally; `sign finalize` injects the signature. No
+    /// cryptography is performed by the tool.
+    Sign(sign::SignArgs),
 }
 
 #[derive(Parser)]
@@ -104,6 +118,8 @@ fn main() {
         Commands::Validate(args) => run_validate(args),
         Commands::Generate(args) => generate::run(args),
         Commands::Convert(args) => convert::run(args),
+        Commands::Extract(args) => sign::run_extract(args),
+        Commands::Sign(args) => sign::run_sign(args),
     }
 }
 
