@@ -204,6 +204,9 @@ corim-cli validate -f json myfile.corim
 # Non-aborting structural diagnose pass — prints issues without rejecting
 corim-cli validate --diagnose myfile.corim
 
+# Structural conformance check against a known-good baseline (JSON or CBOR)
+corim-cli validate myfile.corim --baseline golden.json
+
 # Generate an unsigned CoRIM from a JSON template
 corim-cli generate template.json -o out.cbor
 
@@ -219,6 +222,34 @@ corim-cli sign prepare unsigned.cbor --alg ES256 --signer-name "ACME Ltd." \
     --x5chain leaf.pem --out-staging staging.cose --out-tbs tbs.bin
 corim-cli sign finalize staging.cose --signature sig.bin -o signed.cose
 ```
+
+### `validate --baseline` — structural conformance check
+
+`--baseline <FILE>` compares the CoRIM under validation against a
+known-good reference and fails if they are not **structurally** the
+same. The reference may be JSON, CBOR, or a signed CoRIM (auto-detected
+and validated first). This is meant for generation pipelines: run it
+right after `generate` to catch a dropped or mistyped field before the
+CoRIM ships.
+
+The structure/value boundary follows
+[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
+§8.2.4.4. **Structure** — which must match — is the environment, the
+measurement keys, the *presence* and *type* of each measurement
+attribute, the digest *algorithm(s)*, and the authorities. **Values** —
+which may differ — are the measured bytes and scalars: digest values,
+SVN numbers, flags, raw values, versions, and the like.
+
+```sh
+corim-cli validate candidate.cbor --baseline golden.json
+```
+
+- Exit `0` — structurally conformant (any value-only differences are
+  listed but do not fail).
+- Exit `3` — a structural mismatch (missing, unexpected, or retyped
+  field).
+- `--format json` emits the full diff as
+  `{ result, conformant, summary, structural_mismatches, value_differences }`.
 
 ### `extract` / `sign` — signed CoRIM workflow
 
