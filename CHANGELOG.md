@@ -8,6 +8,19 @@ versions.
 
 ## [Unreleased]
 
+### Added
+
+- **CLI signed-CoRIM commands.** `extract` pulls the embedded unsigned
+  CoRIM payload out of a `#6.18` COSE_Sign1 signed CoRIM. A new `sign`
+  group provides `sign prepare` (emit a staging envelope + raw
+  `Sig_structure1` to-be-signed bytes from an unsigned CoRIM, a signer
+  name, and a DER/PEM certificate chain) and `sign finalize` (inject an
+  externally computed signature). The tool performs no cryptography;
+  `validate` on a signed CoRIM now notes the signature is not verified.
+- **`SignedCorimBuilder::x5chain` / `kid` / `x5t` setters** — attach the
+  RFC 9360 X.509 protected-header fields directly instead of via
+  `add_protected`.
+
 ## [0.2.0] — 2026-07-30
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.2.0, [`corim-macros`](https://crates.io/crates/corim-macros) v0.2.0
