@@ -126,9 +126,28 @@ pub fn run(args: GenerateArgs) {
 fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
     let template_str = fs::read_to_string(&args.template)
         .map_err(|e| format!("reading template {}: {e}", args.template))?;
-    let mut template: serde_json::Value =
+    let template: serde_json::Value =
         serde_json::from_str(&template_str).map_err(|e| format!("parsing template JSON: {e}"))?;
 
+    let bytes = build_corim_from_template(template, args.profile.as_deref())?;
+
+    let out_path = match args.output {
+        Some(o) => PathBuf::from(o),
+        None => PathBuf::from(&args.template).with_extension("cbor"),
+    };
+    fs::write(&out_path, &bytes).map_err(|e| format!("writing {}: {e}", out_path.display()))?;
+    Ok(out_path)
+}
+
+/// Build tag-501 CoRIM bytes from a prose-or-integer JSON template.
+///
+/// This is the shared core of `generate` (also used by `validate
+/// --baseline` to load a JSON baseline). `profile_override`, when set,
+/// replaces the template's `profile` and drives mval-alias resolution.
+pub(crate) fn build_corim_from_template(
+    mut template: serde_json::Value,
+    profile_override: Option<&str>,
+) -> Result<Vec<u8>, String> {
     // Strip authoring comments before any structural processing so they
     // never reach the CBOR output (see `strip_comments`).
     strip_comments(&mut template);
@@ -147,7 +166,7 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
     // profile: `--profile` (always a URI) overrides the template's
     // `profile`, which may be a text URI or a `{ "type": "oid", ... }`
     // type-choice.
-    let profile_choice: Option<ProfileChoice> = match args.profile.as_deref() {
+    let profile_choice: Option<ProfileChoice> = match profile_override {
         Some(uri) => Some(ProfileChoice::Uri(uri.to_owned())),
         None => match obj.get("profile") {
             Some(p) => Some(decode_scalar(p).map_err(|e| format!("profile: {e}"))?),
@@ -266,12 +285,7 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
             .map_err(|e| format!("post-build decode failed: {e}"))?;
     }
 
-    let out_path = match args.output {
-        Some(o) => PathBuf::from(o),
-        None => PathBuf::from(&args.template).with_extension("cbor"),
-    };
-    fs::write(&out_path, &bytes).map_err(|e| format!("writing {}: {e}", out_path.display()))?;
-    Ok(out_path)
+    Ok(bytes)
 }
 
 /// Decode one prose-keyed template value of the given root kind into a
