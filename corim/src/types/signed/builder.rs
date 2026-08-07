@@ -17,6 +17,7 @@ use super::algorithm::CoseAlgorithm;
 use super::cwt::CwtClaims;
 use super::envelope::{build_sig_structure1, encode_signed_corim, CoseSign1Corim};
 use super::header::{ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE};
+use super::x509::{CoseCertHash, CoseX509};
 use crate::cbor;
 use crate::cbor::value::Value;
 
@@ -64,6 +65,10 @@ pub struct SignedCorimBuilder {
     payload: Vec<u8>,
     unprotected: Vec<(Value, Value)>,
     extra_protected: BTreeMap<i64, Value>,
+    // X.509 header fields (RFC 9360)
+    kid: Option<Vec<u8>>,
+    x5chain: Option<CoseX509>,
+    x5t: Option<CoseCertHash>,
     // Cached protected header bytes (computed lazily)
     cached_protected_bytes: Option<Vec<u8>>,
 }
@@ -86,6 +91,9 @@ impl SignedCorimBuilder {
             payload: corim_payload,
             unprotected: Vec::new(),
             extra_protected: BTreeMap::new(),
+            kid: None,
+            x5chain: None,
+            x5t: None,
             cached_protected_bytes: None,
         }
     }
@@ -124,6 +132,29 @@ impl SignedCorimBuilder {
         self
     }
 
+    /// Set the `x5chain` (key 33): an ordered chain of DER-encoded X.509
+    /// certificates (end-entity first) per RFC 9360.
+    pub fn x5chain(mut self, chain: CoseX509) -> Self {
+        self.x5chain = Some(chain);
+        self.cached_protected_bytes = None;
+        self
+    }
+
+    /// Set the `kid` (key 4): an opaque key identifier.
+    pub fn kid(mut self, kid: Vec<u8>) -> Self {
+        self.kid = Some(kid);
+        self.cached_protected_bytes = None;
+        self
+    }
+
+    /// Set the `x5t` (key 34): the hash of the end-entity X.509
+    /// certificate per RFC 9360. The caller computes the hash externally.
+    pub fn x5t(mut self, hash: CoseCertHash) -> Self {
+        self.x5t = Some(hash);
+        self.cached_protected_bytes = None;
+        self
+    }
+
     /// Build the protected header and return its CBOR-encoded bytes.
     fn build_protected_bytes(&mut self) -> Result<Vec<u8>, crate::EncodeError> {
         if let Some(ref cached) = self.cached_protected_bytes {
@@ -152,10 +183,10 @@ impl SignedCorimBuilder {
             payload_location: None,
             corim_meta: self.corim_meta.clone(),
             cwt_claims: self.cwt_claims.clone(),
-            kid: None,
+            kid: self.kid.clone(),
             x5bag: None,
-            x5chain: None,
-            x5t: None,
+            x5chain: self.x5chain.clone(),
+            x5t: self.x5t.clone(),
             x5u: None,
             extra: self.extra_protected.clone(),
         })
