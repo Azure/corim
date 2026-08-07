@@ -566,6 +566,11 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
         println!("{}Raw bytes:", sub);
         display::print_hex_block(&info.signature, &hex_indent, 32);
     }
+    println!(
+        "{}note: signature is NOT cryptographically verified — this tool checks \
+         structure only (no crypto dependency)",
+        indent
+    );
     println!();
 }
 
