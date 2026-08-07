@@ -105,11 +105,19 @@ fn extract_detached_payload_errors() {
     let sc = unique_temp("extract_detached", "cose");
     std::fs::write(&sc, &signed).unwrap();
 
-    let status = Command::new(bin())
+    let output = Command::new(bin())
         .args(["extract", sc.to_str().unwrap(), "-o", "/dev/null"])
-        .status()
+        .output()
         .expect("run extract");
-    assert!(!status.success(), "extract must fail on a detached payload");
+    assert!(
+        !output.status.success(),
+        "extract must fail on a detached payload"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("detached"),
+        "error must explain the detached payload, got: {stderr}"
+    );
 
     let _ = std::fs::remove_file(&sc);
 }

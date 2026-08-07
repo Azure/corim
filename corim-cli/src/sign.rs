@@ -26,7 +26,8 @@ use base64::Engine;
 use clap::{Parser, Subcommand};
 
 use corim::types::signed::{
-    decode_signed_corim, encode_signed_corim, CoseX509, CwtClaims, SignedCorimBuilder,
+    decode_signed_corim, encode_signed_corim, CoseAlgorithm, CoseX509, CwtClaims,
+    SignedCorimBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -200,9 +201,11 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
 
     if !args.x5chain.is_empty() {
         let certs = load_certs(&args.x5chain)?;
-        let x5chain = match certs.len() {
-            1 => CoseX509::Single(certs.into_iter().next().unwrap_or_default()),
-            _ => CoseX509::Chain(certs),
+        let x5chain = if certs.len() == 1 {
+            // Safe: length checked to be exactly 1 immediately above.
+            CoseX509::Single(certs.into_iter().next().expect("certs.len() == 1"))
+        } else {
+            CoseX509::Chain(certs)
         };
         builder = builder.x5chain(x5chain);
     }
@@ -234,9 +237,7 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
     eprintln!(
         "Next: sign {} with your {} key, then run `corim-cli sign finalize {} --signature <sig> -o <signed>`",
         args.out_tbs,
-        parse_alg(&args.alg)
-            .map(cose_alg_name)
-            .unwrap_or("the chosen"),
+        CoseAlgorithm::from_i64(alg).name(),
         args.out_staging
     );
     Ok(())
@@ -293,25 +294,6 @@ fn parse_alg(s: &str) -> Result<i64, String> {
         }
     };
     Ok(alg)
-}
-
-/// Human-readable COSE algorithm name for the `next step` hint.
-fn cose_alg_name(alg: i64) -> &'static str {
-    match alg {
-        -7 => "ES256",
-        -8 => "EdDSA",
-        -9 => "ESP256",
-        -19 => "Ed25519",
-        -35 => "ES384",
-        -36 => "ES512",
-        -37 => "PS256",
-        -38 => "PS384",
-        -39 => "PS512",
-        -51 => "ESP384",
-        -52 => "ESP512",
-        -53 => "Ed448",
-        _ => "the chosen",
-    }
 }
 
 /// Load one or more certificate files, each DER or PEM, into DER byte
