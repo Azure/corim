@@ -121,6 +121,17 @@ fn epoch_time_tag_unwraps_to_inner_integer() {
     assert_eq!(value_to_json(&v), 1234567890);
 }
 
+#[test]
+fn epoch_time_tag_survives_json_round_trip() {
+    // Regression: an opaque `#6.1(int)` value (e.g. a profile extension
+    // timestamp in an mval-extension) must round-trip through JSON without
+    // silently losing its tag. Unlike `validity`, extension values have no
+    // typed decoder to re-add the tag, so the JSON form must be lossless.
+    let v = Value::Tag(1, Box::new(Value::Integer(1234567890)));
+    let round_tripped = json_to_value(&value_to_json(&v));
+    assert_eq!(round_tripped, v);
+}
+
 // ===========================================================================
 // json_to_value — typed-object dispatch
 // ===========================================================================
