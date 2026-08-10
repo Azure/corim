@@ -154,6 +154,9 @@ pub mod cbor;
 pub mod error;
 pub mod types;
 
+/// Structural conformance comparison of a CoRIM against a known-good
+/// baseline. See module docs for the structure-vs-value model.
+pub mod baseline;
 pub mod builder;
 /// Decode-only interop helpers (legacy tag stripping, etc.). See module docs.
 pub mod compat;
