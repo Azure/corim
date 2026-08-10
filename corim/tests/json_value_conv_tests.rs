@@ -116,9 +116,24 @@ fn unknown_tag_uses_cbor_tag_envelope() {
 }
 
 #[test]
-fn epoch_time_tag_unwraps_to_inner_integer() {
+fn epoch_time_tag_uses_cbor_tag_envelope() {
+    // Tag 1 is preserved via the generic `__cbor_tag` envelope so it can be
+    // recovered on the reverse conversion (see the round-trip test below).
     let v = Value::Tag(1, Box::new(Value::Integer(1234567890)));
-    assert_eq!(value_to_json(&v), 1234567890);
+    let j = value_to_json(&v);
+    assert_eq!(j["__cbor_tag"], 1);
+    assert_eq!(j["__cbor_value"], 1234567890);
+}
+
+#[test]
+fn epoch_time_tag_survives_json_round_trip() {
+    // Regression: an opaque `#6.1(int)` value (e.g. a profile extension
+    // timestamp in an mval-extension) must round-trip through JSON without
+    // silently losing its tag. Unlike `validity`, extension values have no
+    // typed decoder to re-add the tag, so the JSON form must be lossless.
+    let v = Value::Tag(1, Box::new(Value::Integer(1234567890)));
+    let round_tripped = json_to_value(&value_to_json(&v));
+    assert_eq!(round_tripped, v);
 }
 
 // ===========================================================================

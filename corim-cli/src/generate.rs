@@ -193,14 +193,25 @@ pub(crate) fn build_corim_from_template(
         let vo = v
             .as_object()
             .ok_or_else(|| "rim-validity must be an object".to_string())?;
-        let epoch = |names: &[&str]| -> Option<i64> {
-            names
-                .iter()
-                .find_map(|n| vo.get(*n))
-                .and_then(serde_json::Value::as_i64)
+        // Epoch seconds may be a bare integer or a `#6.1(int)` tag envelope
+        // (`{"__cbor_tag": 1, "__cbor_value": <epoch>}`), the form emitted by
+        // `convert`. Accept either.
+        let as_epoch = |val: &serde_json::Value| -> Option<i64> {
+            val.as_i64().or_else(|| {
+                val.as_object()
+                    .filter(|o| o.get("__cbor_tag").and_then(|t| t.as_u64()) == Some(1))
+                    .and_then(|o| o.get("__cbor_value"))
+                    .and_then(serde_json::Value::as_i64)
+            })
         };
-        let not_after = epoch(&["not-after", "1"])
-            .ok_or_else(|| "rim-validity requires integer \"not-after\"".to_string())?;
+        let epoch = |names: &[&str]| -> Option<i64> {
+            names.iter().find_map(|n| vo.get(*n)).and_then(as_epoch)
+        };
+        let not_after = epoch(&["not-after", "1"]).ok_or_else(|| {
+            "rim-validity requires \"not-after\" as an epoch integer or a \
+             #6.1 tag envelope ({\"__cbor_tag\": 1, \"__cbor_value\": <epoch>})"
+                .to_string()
+        })?;
         let not_before = epoch(&["not-before", "0"]);
         builder = builder
             .set_validity(not_before, not_after)
