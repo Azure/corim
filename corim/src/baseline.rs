@@ -59,6 +59,9 @@ pub enum PathSegment {
     Field(&'static str),
     /// An array index within a field (e.g. a digest slot).
     Index(usize),
+    /// A signed integer map key (e.g. an `mval-extension` key, which the
+    /// CDDL allows to be any `int` including large or negative values).
+    MapKey(i64),
 }
 
 /// The nature of a structural mismatch.
@@ -134,6 +137,7 @@ pub fn render_path(path: &[PathSegment]) -> String {
             PathSegment::Measurement(k) => s.push_str(&format!(".measurement[{k}]")),
             PathSegment::Field(f) => s.push_str(&format!(".{f}")),
             PathSegment::Index(i) => s.push_str(&format!("[{i}]")),
+            PathSegment::MapKey(k) => s.push_str(&format!("[{k}]")),
         }
     }
     s
@@ -347,7 +351,7 @@ fn compare_ces(
             }),
         }
     }
-    for it in i {
+    for (in_index, it) in i.iter().enumerate() {
         if !b
             .iter()
             .any(|bt| bt.common_condition().environment == it.common_condition().environment)
@@ -355,7 +359,7 @@ fn compare_ces(
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
-                index: usize::MAX,
+                index: in_index,
             });
             r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -587,12 +591,12 @@ fn compare_measurement_triples(
             }),
         }
     }
-    for (i_env, _) in &input {
+    for (in_index, (i_env, _)) in input.iter().enumerate() {
         if !baseline.iter().any(|(be, _)| *be == *i_env) {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
-                index: usize::MAX,
+                index: in_index,
             });
             r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -981,7 +985,7 @@ fn compare_extra_entries(
     for (k, bv) in baseline {
         let mut p = path.to_vec();
         p.push(PathSegment::Field("mval-extension"));
-        p.push(PathSegment::Index(usize::try_from(*k).unwrap_or(0)));
+        p.push(PathSegment::MapKey(*k));
         match input.get(k) {
             Some(iv) if iv != bv => r.value_differences.push(ValueDifference {
                 path: p,
@@ -1001,7 +1005,7 @@ fn compare_extra_entries(
         if !baseline.contains_key(k) {
             let mut p = path.to_vec();
             p.push(PathSegment::Field("mval-extension"));
-            p.push(PathSegment::Index(usize::try_from(*k).unwrap_or(0)));
+            p.push(PathSegment::MapKey(*k));
             r.structural_mismatches.push(StructuralMismatch {
                 path: p,
                 kind: MismatchKind::UnexpectedInInput,
@@ -1056,6 +1060,19 @@ fn compare_opt_value(
         (None, None) => {}
         (Some(_), None) if structural => push_missing_field_at(path, field, r),
         (None, Some(_)) if structural => push_unexpected_field_at(path, field, r),
+        // A structural field present in both but with a different value
+        // (e.g. `profile`) means the documents follow different structures;
+        // report it as a structural mismatch, not an informational value diff.
+        (Some(b), Some(i)) if structural && b != i => {
+            r.structural_mismatches.push(StructuralMismatch {
+                path: path.to_vec(),
+                kind: MismatchKind::TypeMismatch {
+                    baseline: describe_value(&b),
+                    input: describe_value(&i),
+                },
+                detail: format!("{field} differs; the documents follow different structures"),
+            })
+        }
         (Some(b), Some(i)) if b != i => r.value_differences.push(ValueDifference {
             path: path.to_vec(),
             field,
@@ -1112,4 +1129,16 @@ fn hex(bytes: &[u8]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// A short, human-readable description of a CBOR value for mismatch detail
+/// strings (not a canonical encoding).
+fn describe_value(v: &Value) -> String {
+    match v {
+        Value::Text(t) => t.clone(),
+        Value::Bytes(b) => hex(b),
+        Value::Integer(n) => n.to_string(),
+        Value::Tag(t, inner) => format!("#6.{t}({})", describe_value(inner)),
+        other => format!("{other:?}"),
+    }
 }
