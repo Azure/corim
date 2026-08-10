@@ -10,6 +10,23 @@ versions.
 
 ### Added
 
+- **`corim::baseline` structural conformance.** A new library module
+  compares a candidate `CorimMap` against a known-good baseline and
+  reports the delta as a `ConformanceReport`: `structural_mismatches`
+  (a field the baseline requires is missing, is unexpected, or changed
+  type/discriminant) versus `value_differences` (the structure matches
+  but a digest, SVN, flag, or other measured value differs). The
+  structure/value boundary follows draft-ietf-rats-corim-11 §8.2.4.4:
+  environments, mkeys, attribute presence, digest algorithms, and
+  authorities are structural; measured bytes and scalars are values.
+  All nine triple kinds are covered, including conditional-endorsement
+  and conditional-endorsement-series.
+- **`validate --baseline <FILE>` CLI check.** Verifies a generated
+  CoRIM is structurally identical to a reference CoRIM (JSON, CBOR, or
+  signed CBOR — auto-detected and itself validated first), so a missing
+  or mistyped field is caught at generation time. Exit code `0` when
+  conformant (value-only differences allowed), `3` on a structural
+  mismatch. `--format json` emits a machine-readable diff.
 - **CLI signed-CoRIM commands.** `extract` pulls the embedded unsigned
   CoRIM payload out of a `#6.18` COSE_Sign1 signed CoRIM. A new `sign`
   group provides `sign prepare` (emit a staging envelope + raw
