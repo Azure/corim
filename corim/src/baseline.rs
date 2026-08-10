@@ -625,7 +625,14 @@ fn compare_measurements(
             input.get(idx).filter(|i| i.mkey.is_none())
         };
         match matched {
-            Some(i) => compare_mval(&path, &b.mval, &i.mval, r),
+            Some(i) => {
+                // `authorized-by` (the measurement's authority keys) is part
+                // of the structural identity (§8.2.4.4.2), not a value.
+                if b.authorized_by != i.authorized_by {
+                    push_authority_mismatch(&path, r);
+                }
+                compare_mval(&path, &b.mval, &i.mval, r);
+            }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
                 kind: MismatchKind::MissingInInput,

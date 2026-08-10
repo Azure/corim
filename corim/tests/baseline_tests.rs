@@ -350,3 +350,64 @@ fn mval_extension_keys_render_distinctly() {
         "distinct keys, distinct paths: {ext_paths:?}"
     );
 }
+
+/// A measurement's `authorized-by` (authority keys) is structural: dropping,
+/// adding, or changing it must fail conformance.
+#[test]
+fn measurement_authorized_by_difference_is_structural() {
+    use corim::types::common::CryptoKey;
+
+    fn corim_with_authority(authority: Option<CryptoKey>) -> CorimMap {
+        let comid = ComidBuilder::new(TagIdChoice::Text("c1".into()))
+            .add_reference_triple(ReferenceTriple::new(
+                EnvironmentMap {
+                    class: Some(ClassMap {
+                        class_id: None,
+                        vendor: Some("Intel".into()),
+                        model: Some("TDX".into()),
+                        layer: None,
+                        index: None,
+                    }),
+                    instance: None,
+                    group: None,
+                },
+                vec![MeasurementMap {
+                    mkey: Some(MeasuredElement::Text("MRTD".into())),
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::MinValue(1)),
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: authority.map(|k| vec![k]),
+                }],
+            ))
+            .build()
+            .unwrap();
+        let bytes = CorimBuilder::new(CorimId::Text("corim-1".into()))
+            .add_comid_tag(comid)
+            .unwrap()
+            .build_bytes()
+            .unwrap();
+        corim::validate::decode_and_validate(&bytes).unwrap().0
+    }
+
+    let base = corim_with_authority(Some(CryptoKey::PkixBase64Key("KEY-A".into())));
+
+    // Same authority → conformant.
+    let same = corim_with_authority(Some(CryptoKey::PkixBase64Key("KEY-A".into())));
+    assert!(compare(&same, &base).is_conformant());
+
+    // Changed authority → structural mismatch.
+    let changed = corim_with_authority(Some(CryptoKey::PkixBase64Key("KEY-B".into())));
+    let report = compare(&changed, &base);
+    assert!(!report.is_conformant(), "changed authority is structural");
+    assert!(report.structural_mismatches.iter().any(|m| m
+        .path
+        .contains(&corim::baseline::PathSegment::Field("authorized-by"))));
+
+    // Dropped authority → structural mismatch.
+    let dropped = corim_with_authority(None);
+    assert!(
+        !compare(&dropped, &base).is_conformant(),
+        "dropped authority is structural"
+    );
+}
