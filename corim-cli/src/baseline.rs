@@ -202,7 +202,18 @@ fn value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Bytes(b) => serde_json::Value::String(hex(b)),
         Value::Text(t) => serde_json::Value::String(t.clone()),
-        Value::Integer(n) => serde_json::json!(n),
+        Value::Integer(n) => {
+            // `Value::Integer` is an `i128`; `serde_json` numbers only cover
+            // i64/u64, so fall back to a string for out-of-range values
+            // rather than risking a serializer failure.
+            if let Ok(x) = i64::try_from(*n) {
+                serde_json::json!(x)
+            } else if let Ok(x) = u64::try_from(*n) {
+                serde_json::json!(x)
+            } else {
+                serde_json::Value::String(n.to_string())
+            }
+        }
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Null => serde_json::Value::Null,
         Value::Array(a) => serde_json::Value::Array(a.iter().map(value_to_json).collect()),
