@@ -46,16 +46,18 @@ fn load_corim(path: &str) -> Result<CorimMap, String> {
             serde_json::from_slice(&raw).map_err(|e| format!("parsing baseline JSON: {e}"))?;
         crate::generate::build_corim_from_template(json, None)
             .map_err(|e| format!("building baseline from JSON template: {e}"))?
-    } else if raw.first() == Some(&0xD2) {
-        // Signed CoRIM (tag 18): compare against the embedded payload.
-        let env = corim::types::signed::decode_signed_corim(&raw)
-            .map_err(|e| format!("decoding signed baseline: {e}"))?;
-        env.payload.ok_or_else(|| {
-            "baseline is a detached signed CoRIM (nil payload); supply the unsigned CoRIM"
-                .to_string()
-        })?
     } else {
-        raw
+        // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
+        // recognizes both the bare `#6.18` tag and the legacy
+        // `#6.500`/`#6.502` wrappers. If it isn't a signed CoRIM, fall back
+        // to treating the bytes as an unsigned CoRIM.
+        match corim::types::signed::decode_signed_corim(&raw) {
+            Ok(env) => env.payload.ok_or_else(|| {
+                "baseline is a detached signed CoRIM (nil payload); supply the unsigned CoRIM"
+                    .to_string()
+            })?,
+            Err(_) => raw,
+        }
     };
 
     let (corim, _) = corim::validate::decode_and_validate(&bytes)

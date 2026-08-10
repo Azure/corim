@@ -226,3 +226,127 @@ fn ces_series_addition_digest_is_compared() {
     );
     assert_eq!(report.value_differences[0].field, "digest-value");
 }
+
+/// `profile` is structural: a differing profile means the documents follow
+/// different structures and must fail conformance, not pass as a value diff.
+#[test]
+fn profile_difference_is_a_structural_mismatch() {
+    use corim::types::corim::ProfileChoice;
+
+    fn corim_with_profile(profile: &str) -> CorimMap {
+        let comid = ComidBuilder::new(TagIdChoice::Text("c1".into()))
+            .add_reference_triple(ReferenceTriple::new(
+                EnvironmentMap {
+                    class: Some(ClassMap {
+                        class_id: None,
+                        vendor: Some("Intel".into()),
+                        model: Some("TDX".into()),
+                        layer: None,
+                        index: None,
+                    }),
+                    instance: None,
+                    group: None,
+                },
+                vec![MeasurementMap {
+                    mkey: Some(MeasuredElement::Text("MRTD".into())),
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::MinValue(1)),
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: None,
+                }],
+            ))
+            .build()
+            .unwrap();
+        let bytes = CorimBuilder::new(CorimId::Text("corim-1".into()))
+            .set_profile(ProfileChoice::Uri(profile.into()))
+            .add_comid_tag(comid)
+            .unwrap()
+            .build_bytes()
+            .unwrap();
+        corim::validate::decode_and_validate(&bytes).unwrap().0
+    }
+
+    let base = corim_with_profile("https://example.com/profile/a");
+    let input = corim_with_profile("https://example.com/profile/b");
+    let report = compare(&input, &base);
+    assert!(!report.is_conformant(), "differing profile is structural");
+    assert!(report
+        .structural_mismatches
+        .iter()
+        .any(|m| matches!(m.kind, MismatchKind::TypeMismatch { .. })));
+    assert!(report.value_differences.is_empty());
+}
+
+/// Distinct `mval-extension` keys (incl. negative ones) must not collapse
+/// onto the same rendered path.
+#[test]
+fn mval_extension_keys_render_distinctly() {
+    use corim::baseline::render_path;
+    use corim::cbor::value::Value;
+
+    fn corim_with_ext(entries: &[(i64, Value)]) -> CorimMap {
+        let mut extra = std::collections::BTreeMap::new();
+        for (k, v) in entries {
+            extra.insert(*k, v.clone());
+        }
+        let comid = ComidBuilder::new(TagIdChoice::Text("c1".into()))
+            .add_reference_triple(ReferenceTriple::new(
+                EnvironmentMap {
+                    class: Some(ClassMap {
+                        class_id: None,
+                        vendor: Some("Intel".into()),
+                        model: Some("TDX".into()),
+                        layer: None,
+                        index: None,
+                    }),
+                    instance: None,
+                    group: None,
+                },
+                vec![MeasurementMap {
+                    mkey: Some(MeasuredElement::Text("MRTD".into())),
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::MinValue(1)),
+                        extra_entries: extra,
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: None,
+                }],
+            ))
+            .build()
+            .unwrap();
+        let bytes = CorimBuilder::new(CorimId::Text("corim-1".into()))
+            .add_comid_tag(comid)
+            .unwrap()
+            .build_bytes()
+            .unwrap();
+        corim::validate::decode_and_validate(&bytes).unwrap().0
+    }
+
+    // Baseline carries two distinct extension keys; input has neither.
+    let base = corim_with_ext(&[(-1, Value::Integer(10)), (-2, Value::Integer(20))]);
+    let input = corim_with_ext(&[]);
+    let report = compare(&input, &base);
+
+    let ext_paths: Vec<String> = report
+        .structural_mismatches
+        .iter()
+        .filter(|m| m.kind == MismatchKind::MissingInInput)
+        .map(|m| render_path(&m.path))
+        .filter(|p| p.contains("mval-extension"))
+        .collect();
+    assert!(
+        ext_paths.iter().any(|p| p.ends_with("[-1]")),
+        "{ext_paths:?}"
+    );
+    assert!(
+        ext_paths.iter().any(|p| p.ends_with("[-2]")),
+        "{ext_paths:?}"
+    );
+    // The two keys must not collapse onto one path.
+    assert_eq!(
+        ext_paths.len(),
+        2,
+        "distinct keys, distinct paths: {ext_paths:?}"
+    );
+}
