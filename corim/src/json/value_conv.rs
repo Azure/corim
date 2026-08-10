@@ -131,8 +131,6 @@ pub fn json_to_value(j: &serde_json::Value) -> Value {
 /// Known CBOR tags for type-choice → JSON format.
 fn tag_to_json(tag: u64, inner: &Value) -> serde_json::Value {
     match tag {
-        // Tag 1: epoch time → just the integer
-        1 => value_to_json(inner),
         // Tag 37: UUID → {"type": "uuid", "value": "xxxxxxxx-xxxx-..."}
         37 => match inner {
             Value::Bytes(b) if b.len() == 16 => {

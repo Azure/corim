@@ -38,6 +38,16 @@ versions.
   RFC 9360 X.509 protected-header fields directly instead of via
   `add_protected`.
 
+### Fixed
+
+- **JSON round-trip drops CBOR epoch tag (`#6.1`).** `to_json` flattened
+  a tagged epoch-time value to a bare integer, which `from_json` could
+  not recover as a tag. Harmless for typed `validity` fields (re-tagged
+  on encode) but lossy for opaque values such as a profile
+  `mval-extension` timestamp. Tag 1 now uses the same
+  `{"__cbor_tag": 1, "__cbor_value": n}` envelope as every other opaque
+  tag, so the value round-trips faithfully.
+
 ## [0.2.0] — 2026-07-30
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.2.0, [`corim-macros`](https://crates.io/crates/corim-macros) v0.2.0
