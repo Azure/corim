@@ -201,7 +201,19 @@ fn run_validate(cli: ValidateArgs) {
             Ok((corim_map, info)) => (Some(corim_map), Some(info)),
             Err(SignedDecodeResult::HeaderOnly(info)) => {
                 // Signed CoRIM decoded but payload is detached/non-standard.
-                // Show header info only.
+                // With `--baseline`, still compare the protected header
+                // (there is no payload to validate/compare). Otherwise show
+                // header info only.
+                if let Some(baseline_path) = &cli.baseline {
+                    match baseline::run(None, Some(&info.protected), baseline_path, &cli.format) {
+                        Ok(true) => process::exit(0),
+                        Ok(false) => process::exit(3),
+                        Err(e) => {
+                            eprintln!("Error: {e}");
+                            process::exit(1);
+                        }
+                    }
+                }
                 print_signed_header_only(&info, cli.show_raw);
                 process::exit(0);
             }
@@ -349,7 +361,12 @@ decoded via compat::decode_comid_from_tcg_bstr",
             }
             process::exit(2);
         }
-        match baseline::run(&corim, baseline_path, &cli.format) {
+        match baseline::run(
+            Some(&corim),
+            signed_info.as_ref().map(|i| &i.protected),
+            baseline_path,
+            &cli.format,
+        ) {
             Ok(true) => process::exit(0),
             Ok(false) => process::exit(3),
             Err(e) => {
@@ -392,7 +409,6 @@ decoded via compat::decode_comid_from_tcg_bstr",
 struct SignedInfo {
     // -- protected header (decoded fields + raw bstr) --
     alg: corim::types::signed::CoseAlgorithm,
-    signer_name: Option<String>,
     content_type: Option<String>,
     has_cwt_claims: bool,
     has_corim_meta: bool,
@@ -400,6 +416,9 @@ struct SignedInfo {
     has_x5t: bool,
     has_kid: bool,
     protected_header_bytes: Vec<u8>,
+    /// Full decoded protected header (for `--baseline` header comparison
+    /// and the metadata display lines).
+    protected: corim::types::signed::ProtectedCorimHeaderMap,
 
     // -- unprotected header (re-encoded CBOR map) --
     unprotected_entries: usize,
@@ -416,7 +435,7 @@ struct SignedInfo {
 /// Result when signed CoRIM decode partially fails.
 enum SignedDecodeResult {
     /// Protected header decoded but payload is absent/non-standard.
-    HeaderOnly(SignedInfo),
+    HeaderOnly(Box<SignedInfo>),
     /// Complete failure.
     Failed(String),
 }
@@ -437,19 +456,6 @@ fn try_decode_signed(
         Err(e) => return Some(Err(SignedDecodeResult::Failed(format!("{}", e)))),
     };
 
-    let signer_name = signed
-        .protected
-        .cwt_claims
-        .as_ref()
-        .map(|c| c.iss.clone())
-        .or_else(|| {
-            signed
-                .protected
-                .corim_meta
-                .as_ref()
-                .map(|m| m.signer.signer_name.clone())
-        });
-
     // Re-encode the unprotected header map so we can display its raw CBOR bytes
     // alongside the other COSE_Sign1 sections. Failures here are non-fatal —
     // an empty Vec just means we won't render bytes for that section.
@@ -459,7 +465,6 @@ fn try_decode_signed(
 
     let info = SignedInfo {
         alg: signed.protected.alg,
-        signer_name,
         content_type: signed.protected.content_type.clone(),
         has_cwt_claims: signed.protected.cwt_claims.is_some(),
         has_corim_meta: signed.protected.corim_meta.is_some(),
@@ -472,6 +477,7 @@ fn try_decode_signed(
         has_x5t: signed.protected.x5t.is_some(),
         has_kid: signed.protected.kid.is_some(),
         protected_header_bytes: signed.protected_header_bytes.clone(),
+        protected: signed.protected.clone(),
         unprotected_entries: signed.unprotected.len(),
         unprotected_bytes,
         is_detached: signed.is_detached(),
@@ -481,7 +487,7 @@ fn try_decode_signed(
 
     let payload = match &signed.payload {
         Some(p) => p,
-        None => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
+        None => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
     };
 
     // Decode interop: TCG-style producers (e.g. NVIDIA) emit the inner CoRIM
@@ -494,11 +500,11 @@ fn try_decode_signed(
     let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
         match corim::cbor::decode(payload_bytes) {
             Ok(t) => t,
-            Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
+            Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
         };
 
     if tagged.tag != corim::types::tags::TAG_CORIM {
-        return Some(Err(SignedDecodeResult::HeaderOnly(info)));
+        return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info))));
     }
 
     Some(Ok((tagged.value, info)))
@@ -535,8 +541,19 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     if let Some(ref ct) = info.content_type {
         println!("{}Content-Type: {}", sub, ct);
     }
-    if let Some(ref name) = info.signer_name {
-        println!("{}Signer:       {}", sub, name);
+    if let Some(iss) = info.protected.cwt_claims.as_ref().map(|c| &c.iss) {
+        println!("{}Issuer:       {}", sub, iss);
+    }
+    if let Some(subject) = info
+        .protected
+        .cwt_claims
+        .as_ref()
+        .and_then(|c| c.sub.as_ref())
+    {
+        println!("{}Subject:      {}", sub, subject);
+    }
+    if let Some(meta) = info.protected.corim_meta.as_ref() {
+        println!("{}Signer name:  {}", sub, meta.signer.signer_name);
     }
     let metadata = match (info.has_cwt_claims, info.has_corim_meta) {
         (true, true) => "CWT-Claims + corim-meta",
