@@ -31,10 +31,11 @@
 use crate::cbor::value::{to_value, Value};
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
-use crate::types::corim::{ConciseTagChoice, CorimMap};
+use crate::types::corim::{ConciseTagChoice, CorimMap, CorimMetaMap};
 use crate::types::measurement::{
-    Digest, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
+    Digest, DigestAlg, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
+use crate::types::signed::{CoseCertHash, CoseX509, CwtClaims, ProtectedCorimHeaderMap};
 
 // ---------------------------------------------------------------------------
 // Report types
@@ -125,6 +126,14 @@ impl ConformanceReport {
     pub fn is_conformant(&self) -> bool {
         self.structural_mismatches.is_empty()
     }
+
+    /// Append another report's findings into this one (used to combine a
+    /// payload comparison with a protected-header comparison).
+    pub fn merge(&mut self, other: ConformanceReport) {
+        self.structural_mismatches
+            .extend(other.structural_mismatches);
+        self.value_differences.extend(other.value_differences);
+    }
 }
 
 /// Render a path as a dotted location string (presentation-neutral).
@@ -178,6 +187,323 @@ pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
     compare_comids(&base_comids, &input_comids, &mut r);
 
     r
+}
+
+// ---------------------------------------------------------------------------
+// Protected-header comparison (signed CoRIMs)
+// ---------------------------------------------------------------------------
+
+/// Compare two COSE protected headers of signed CoRIMs.
+///
+/// Structural (must match): `alg`, `content-type`, hash-envelope mode
+/// (`payload_hash_alg` / `payload_preimage_content_type`), the *presence*
+/// of `corim-meta` / `CWT-Claims` / `kid` / `x5bag` / `x5chain` / `x5t` /
+/// `x5u`, and the CWT `iss` (the signer identity). Everything else — signer
+/// name/uri, signature-validity, CWT `sub`/`exp`/`nbf` and extra claims,
+/// certificate/key bytes, `payload-location`, extra header labels — is
+/// reported as a value difference only.
+///
+/// Findings are located under `$.protected-header`.
+pub fn compare_headers(
+    input: &ProtectedCorimHeaderMap,
+    baseline: &ProtectedCorimHeaderMap,
+) -> ConformanceReport {
+    let mut r = ConformanceReport::default();
+    let base = [PathSegment::Field("protected-header")];
+
+    // alg — structural (the signing algorithm must match).
+    if baseline.alg != input.alg {
+        let mut p = base.to_vec();
+        p.push(PathSegment::Field("alg"));
+        r.structural_mismatches.push(StructuralMismatch {
+            path: p,
+            kind: MismatchKind::TypeMismatch {
+                baseline: format!("{}", baseline.alg),
+                input: format!("{}", input.alg),
+            },
+            detail: "protected-header alg differs".into(),
+        });
+    }
+    // content-type / hash-envelope mode — structural.
+    compare_leaf(
+        &base,
+        "content-type",
+        opt_val(&baseline.content_type),
+        opt_val(&input.content_type),
+        &mut r,
+        true,
+    );
+    compare_leaf(
+        &base,
+        "payload-hash-alg",
+        opt_int(baseline.payload_hash_alg),
+        opt_int(input.payload_hash_alg),
+        &mut r,
+        true,
+    );
+    compare_leaf(
+        &base,
+        "payload-preimage-content-type",
+        opt_val(&baseline.payload_preimage_content_type),
+        opt_val(&input.payload_preimage_content_type),
+        &mut r,
+        true,
+    );
+    // payload-location — value.
+    compare_leaf(
+        &base,
+        "payload-location",
+        opt_val(&baseline.payload_location),
+        opt_val(&input.payload_location),
+        &mut r,
+        false,
+    );
+
+    // corim-meta — presence structural; contents are values.
+    compare_presence(
+        &base,
+        "corim-meta",
+        baseline.corim_meta.is_some(),
+        input.corim_meta.is_some(),
+        &mut r,
+    );
+    if let (Some(b), Some(i)) = (&baseline.corim_meta, &input.corim_meta) {
+        compare_corim_meta(&base, b, i, &mut r);
+    }
+
+    // CWT-Claims — presence structural; `iss` structural; rest values.
+    compare_presence(
+        &base,
+        "cwt-claims",
+        baseline.cwt_claims.is_some(),
+        input.cwt_claims.is_some(),
+        &mut r,
+    );
+    if let (Some(b), Some(i)) = (&baseline.cwt_claims, &input.cwt_claims) {
+        compare_cwt_claims(&base, b, i, &mut r);
+    }
+
+    // X.509 / kid — presence structural; the bytes/contents are values.
+    compare_opt_with(&base, "kid", &baseline.kid, &input.kid, &mut r, |b| {
+        Value::Bytes(b.clone())
+    });
+    compare_opt_with(
+        &base,
+        "x5bag",
+        &baseline.x5bag,
+        &input.x5bag,
+        &mut r,
+        cose_x509_value,
+    );
+    compare_opt_with(
+        &base,
+        "x5chain",
+        &baseline.x5chain,
+        &input.x5chain,
+        &mut r,
+        cose_x509_value,
+    );
+    compare_opt_with(
+        &base,
+        "x5t",
+        &baseline.x5t,
+        &input.x5t,
+        &mut r,
+        cose_cert_hash_value,
+    );
+    compare_opt_with(&base, "x5u", &baseline.x5u, &input.x5u, &mut r, |s| {
+        Value::Text(s.clone())
+    });
+
+    // Extra header labels — reported as value differences.
+    compare_extra_values(
+        &base,
+        "header-extension",
+        &baseline.extra,
+        &input.extra,
+        &mut r,
+    );
+
+    r
+}
+
+/// A presence difference on a structural field.
+fn compare_presence(
+    base: &[PathSegment],
+    field: &'static str,
+    baseline_present: bool,
+    input_present: bool,
+    r: &mut ConformanceReport,
+) {
+    match (baseline_present, input_present) {
+        (true, false) => push_missing_field(base, field, r),
+        (false, true) => push_unexpected_field(base, field, r),
+        _ => {}
+    }
+}
+
+/// Presence is structural; when present on both, a content difference (as
+/// produced by `to_val`) is a value difference.
+fn compare_opt_with<T: PartialEq, F: Fn(&T) -> Value>(
+    base: &[PathSegment],
+    field: &'static str,
+    baseline: &Option<T>,
+    input: &Option<T>,
+    r: &mut ConformanceReport,
+    to_val: F,
+) {
+    match (baseline, input) {
+        (Some(_), None) => push_missing_field(base, field, r),
+        (None, Some(_)) => push_unexpected_field(base, field, r),
+        (Some(b), Some(i)) if b != i => {
+            let mut p = base.to_vec();
+            p.push(PathSegment::Field(field));
+            r.value_differences.push(ValueDifference {
+                path: p,
+                field,
+                baseline: to_val(b),
+                input: to_val(i),
+            });
+        }
+        _ => {}
+    }
+}
+
+fn cose_x509_value(x: &CoseX509) -> Value {
+    match x {
+        CoseX509::Single(c) => Value::Bytes(c.clone()),
+        CoseX509::Chain(cs) => Value::Array(cs.iter().map(|c| Value::Bytes(c.clone())).collect()),
+    }
+}
+
+fn cose_cert_hash_value(h: &CoseCertHash) -> Value {
+    let alg = match &h.hash_alg {
+        DigestAlg::Int(n) => Value::Integer(i128::from(*n)),
+        DigestAlg::Text(t) => Value::Text(t.clone()),
+    };
+    Value::Array(alloc::vec![alg, Value::Bytes(h.hash_value.clone())])
+}
+
+fn compare_corim_meta(
+    base: &[PathSegment],
+    baseline: &CorimMetaMap,
+    input: &CorimMetaMap,
+    r: &mut ConformanceReport,
+) {
+    let mut p = base.to_vec();
+    p.push(PathSegment::Field("corim-meta"));
+    compare_leaf(
+        &p,
+        "signer-name",
+        Some(Value::Text(baseline.signer.signer_name.clone())),
+        Some(Value::Text(input.signer.signer_name.clone())),
+        r,
+        false,
+    );
+    compare_leaf(
+        &p,
+        "signer-uri",
+        opt_val(&baseline.signer.signer_uri),
+        opt_val(&input.signer.signer_uri),
+        r,
+        false,
+    );
+    compare_leaf(
+        &p,
+        "signature-validity",
+        opt_val(&baseline.signature_validity),
+        opt_val(&input.signature_validity),
+        r,
+        false,
+    );
+}
+
+fn compare_cwt_claims(
+    base: &[PathSegment],
+    baseline: &CwtClaims,
+    input: &CwtClaims,
+    r: &mut ConformanceReport,
+) {
+    let mut p = base.to_vec();
+    p.push(PathSegment::Field("cwt-claims"));
+    // `iss` (the signer identity) is structural.
+    compare_leaf(
+        &p,
+        "iss",
+        Some(Value::Text(baseline.iss.clone())),
+        Some(Value::Text(input.iss.clone())),
+        r,
+        true,
+    );
+    compare_leaf(
+        &p,
+        "sub",
+        opt_val(&baseline.sub),
+        opt_val(&input.sub),
+        r,
+        false,
+    );
+    compare_leaf(
+        &p,
+        "exp",
+        opt_int(baseline.exp),
+        opt_int(input.exp),
+        r,
+        false,
+    );
+    compare_leaf(
+        &p,
+        "nbf",
+        opt_int(baseline.nbf),
+        opt_int(input.nbf),
+        r,
+        false,
+    );
+    compare_extra_values(&p, "cwt-extension", &baseline.extra, &input.extra, r);
+}
+
+/// Report presence and content differences of an integer-keyed extension
+/// map as value differences (never structural).
+fn compare_extra_values(
+    base: &[PathSegment],
+    field: &'static str,
+    baseline: &BTreeMap<i64, Value>,
+    input: &BTreeMap<i64, Value>,
+    r: &mut ConformanceReport,
+) {
+    for (k, bv) in baseline {
+        // Compare on presence: a key absent from the input is a difference
+        // even when the baseline value is `Value::Null`.
+        if input.get(k) != Some(bv) {
+            let iv = input.get(k).cloned().unwrap_or(Value::Null);
+            let mut p = base.to_vec();
+            p.push(PathSegment::Field(field));
+            p.push(PathSegment::MapKey(*k));
+            r.value_differences.push(ValueDifference {
+                path: p,
+                field,
+                baseline: bv.clone(),
+                input: iv,
+            });
+        }
+    }
+    for (k, iv) in input {
+        if !baseline.contains_key(k) {
+            let mut p = base.to_vec();
+            p.push(PathSegment::Field(field));
+            p.push(PathSegment::MapKey(*k));
+            r.value_differences.push(ValueDifference {
+                path: p,
+                field,
+                baseline: Value::Null,
+                input: iv.clone(),
+            });
+        }
+    }
+}
+
+fn opt_int(v: Option<i64>) -> Option<Value> {
+    v.map(|n| Value::Integer(i128::from(n)))
 }
 
 /// Decode the CoMID tags of a CoRIM into `(tag-id, ComidTag)` pairs,
@@ -1055,6 +1381,20 @@ fn scalar(
 }
 
 /// corim-level presence/value helper: structural presence vs value.
+/// Compare a single leaf attribute located at `base + Field(field)`.
+fn compare_leaf(
+    base: &[PathSegment],
+    field: &'static str,
+    baseline: Option<Value>,
+    input: Option<Value>,
+    r: &mut ConformanceReport,
+    structural: bool,
+) {
+    let mut p = base.to_vec();
+    p.push(PathSegment::Field(field));
+    compare_opt_value(&p, field, baseline, input, r, structural);
+}
+
 fn compare_opt_value(
     path: &[PathSegment],
     field: &'static str,

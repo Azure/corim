@@ -249,7 +249,26 @@ corim-cli validate candidate.cbor --baseline golden.json
 - Exit `3` — a structural mismatch (missing, unexpected, or retyped
   field).
 - `--format json` emits the full diff as
-  `{ result, conformant, summary, structural_mismatches, value_differences }`.
+  `{ result, conformant, baseline_format, target_format, compared, summary, structural_mismatches, value_differences }`.
+
+**Signed CoRIMs — protected-header comparison.** When **both** the
+baseline and the target are signed, the COSE protected headers are
+compared too (in addition to the payload, when present). Structural
+header fields — `alg`, `content-type`, hash-envelope mode, the CWT
+`iss` (signer identity), and the *presence* of `corim-meta` /
+`CWT-Claims` / `kid` / `x5chain` / `x5bag` / `x5t` / `x5u` — must match;
+signer name, `sub`, timestamps, certificate bytes, and other details are
+reported as value differences. Detached (nil-payload) signed CoRIMs are
+supported: only the header is compared. What was compared depends on the
+formats of the two files:
+
+| baseline \ target | signed | unsigned |
+| --- | --- | --- |
+| **signed** | protected header (+ payload if both present) | payload |
+| **unsigned** | payload | payload |
+
+The output notes the detected format of each file (e.g. `signed CoRIM
+(detached payload)`) and what was compared.
 
 ### `extract` / `sign` — signed CoRIM workflow
 

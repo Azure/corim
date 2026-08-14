@@ -10,6 +10,19 @@ versions.
 
 ### Added
 
+- **Protected-header baseline comparison.** `corim::baseline::compare_headers`
+  compares two signed CoRIMs' COSE protected headers, and
+  `ConformanceReport::merge` combines a payload report with a header
+  report. `validate --baseline` now compares protected headers when both
+  the baseline and the target are signed (and supports detached,
+  nil-payload signed CoRIMs, comparing the header alone). Structural
+  header fields (`alg`, `content-type`, hash-envelope mode, CWT `iss`,
+  and the presence of `corim-meta` / `CWT-Claims` / `kid` / `x5chain` /
+  `x5bag` / `x5t` / `x5u`) must match; signer name, `sub`, timestamps,
+  and certificate bytes are reported as value differences. The CLI notes
+  the detected format of each file and what was compared. The signed-CoRIM
+  `validate` view now also prints the CWT `Subject` and the `corim-meta`
+  signer name.
 - **`corim::baseline` structural conformance.** A new library module
   compares a candidate `CorimMap` against a known-good baseline and
   reports the delta as a `ConformanceReport`: `structural_mismatches`
