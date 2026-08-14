@@ -4,7 +4,8 @@
 //! Tests for `corim::baseline::compare_headers` — protected-header
 //! structural conformance of signed CoRIMs.
 
-use corim::baseline::{compare_headers, MismatchKind, PathSegment};
+use corim::baseline::{compare_headers, render_path, MismatchKind, PathSegment};
+use corim::cbor::value::Value;
 use corim::types::corim::{CorimMetaMap, CorimSignerMap};
 use corim::types::signed::{
     CoseAlgorithm, CwtClaims, ProtectedCorimHeaderMap, ProtectedCorimHeaderMapBuilder,
@@ -110,4 +111,50 @@ fn kid_bytes_difference_is_value() {
     let r = compare_headers(&i, &b);
     assert!(r.is_conformant(), "kid bytes may differ");
     assert!(r.value_differences.iter().any(|v| v.field == "kid"));
+}
+
+#[test]
+fn value_diff_path_includes_leaf_field() {
+    let b = header().corim_meta(meta("Authority A")).build();
+    let i = header().corim_meta(meta("Authority B")).build();
+    let r = compare_headers(&i, &b);
+    let paths: Vec<String> = r
+        .value_differences
+        .iter()
+        .map(|v| render_path(&v.path))
+        .collect();
+    assert!(
+        paths
+            .iter()
+            .any(|p| p == "$.protected-header.corim-meta.signer-name"),
+        "{paths:?}"
+    );
+}
+
+#[test]
+fn structural_mismatch_path_includes_leaf_field() {
+    let b = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256)
+        .content_type("application/rim+cbor")
+        .build();
+    let i = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256)
+        .content_type("text/plain")
+        .build();
+    let r = compare_headers(&i, &b);
+    assert!(r
+        .structural_mismatches
+        .iter()
+        .any(|m| render_path(&m.path) == "$.protected-header.content-type"));
+}
+
+#[test]
+fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
+    let b = header().extra(9, Value::Null).build();
+    let i = header().build();
+    let r = compare_headers(&i, &b);
+    assert!(
+        r.value_differences
+            .iter()
+            .any(|v| render_path(&v.path) == "$.protected-header.header-extension[9]"),
+        "a baseline extension key (even a null one) missing from the input is a difference"
+    );
 }
