@@ -301,19 +301,33 @@ fn mismatch_kind_str(k: &MismatchKind) -> &'static str {
     }
 }
 
-/// Render a CBOR [`Value`] as a compact human string (bytes as hex).
+/// Render a CBOR [`Value`] as a compact human string (bytes as hex,
+/// tags as `#6.N(inner)`).
 fn render_value(v: &Value) -> String {
     match v {
         Value::Bytes(b) => hex(b),
         Value::Text(t) => t.clone(),
         Value::Integer(n) => n.to_string(),
+        Value::Float(f) => f.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".into(),
-        other => format!("{other:?}"),
+        Value::Tag(t, inner) => format!("#6.{t}({})", render_value(inner)),
+        Value::Array(a) => {
+            let items: Vec<String> = a.iter().map(render_value).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Map(m) => {
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, val)| format!("{}: {}", render_value(k), render_value(val)))
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
     }
 }
 
-/// Render a CBOR [`Value`] into a JSON value (bytes as a hex string).
+/// Render a CBOR [`Value`] into a JSON value (bytes as hex; tags as the
+/// `{"__cbor_tag": N, "__cbor_value": ...}` envelope).
 fn value_to_json(v: &Value) -> serde_json::Value {
     match v {
         Value::Bytes(b) => serde_json::Value::String(hex(b)),
@@ -330,10 +344,23 @@ fn value_to_json(v: &Value) -> serde_json::Value {
                 serde_json::Value::String(n.to_string())
             }
         }
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(serde_json::Value::Number)
+            .unwrap_or(serde_json::Value::Null),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Null => serde_json::Value::Null,
         Value::Array(a) => serde_json::Value::Array(a.iter().map(value_to_json).collect()),
-        other => serde_json::Value::String(format!("{other:?}")),
+        Value::Tag(t, inner) => serde_json::json!({
+            "__cbor_tag": t,
+            "__cbor_value": value_to_json(inner),
+        }),
+        Value::Map(m) => {
+            let mut obj = serde_json::Map::new();
+            for (k, val) in m {
+                obj.insert(render_value(k), value_to_json(val));
+            }
+            serde_json::Value::Object(obj)
+        }
     }
 }
 
