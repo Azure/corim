@@ -18,51 +18,158 @@ use corim::baseline::{
 };
 use corim::cbor::value::Value;
 use corim::types::corim::CorimMap;
+use corim::types::signed::ProtectedCorimHeaderMap;
 
-/// Compare `input` against the baseline at `path`. Returns `Ok(true)`
-/// when the input is structurally conformant. Prints the report as text
-/// or JSON (`format` is `"text"` or `"json"`).
-pub fn run(input: &CorimMap, path: &str, format: &str) -> Result<bool, String> {
+/// Compare the input against the baseline at `path`. Returns `Ok(true)`
+/// when the input is structurally conformant.
+///
+/// Protected headers are compared only when **both** the baseline and the
+/// target are signed. Payloads are compared whenever both sides carry one
+/// (a detached signed CoRIM has no payload). Prints the report as text or
+/// JSON (`format` is `"text"` or `"json"`).
+pub fn run(
+    input_payload: Option<&CorimMap>,
+    input_header: Option<&ProtectedCorimHeaderMap>,
+    path: &str,
+    format: &str,
+) -> Result<bool, String> {
     let baseline = load_corim(path)?;
-    let report = compare(input, &baseline);
+
+    let mut report = ConformanceReport::default();
+    let mut compared_header = false;
+    let mut compared_payload = false;
+
+    // Header: only when both baseline and target are signed.
+    if let (Some(ih), Some(bh)) = (input_header, baseline.header.as_ref()) {
+        report.merge(corim::baseline::compare_headers(ih, bh));
+        compared_header = true;
+    }
+    // Payload: whenever both sides carry one.
+    if let (Some(ip), Some(bp)) = (input_payload, baseline.payload.as_ref()) {
+        report.merge(compare(ip, bp));
+        compared_payload = true;
+    }
+
+    let target = describe_side(
+        input_header.is_some(),
+        input_payload.is_some(),
+        "unsigned CoRIM",
+    );
+    let baseline_desc = describe_side(
+        baseline.header.is_some(),
+        baseline.payload.is_some(),
+        baseline.source_unsigned_desc,
+    );
+
+    if !compared_header && !compared_payload {
+        return Err(format!(
+            "nothing to compare (baseline: {baseline_desc}; target: {target}). \
+             Header comparison needs both sides signed; payload comparison needs \
+             both sides to carry a payload."
+        ));
+    }
+
     if format == "json" {
-        println!("{}", render_json(&report));
+        println!(
+            "{}",
+            render_json(
+                &report,
+                &baseline_desc,
+                &target,
+                compared_header,
+                compared_payload
+            )
+        );
     } else {
+        println!("Baseline: {baseline_desc}");
+        println!("Target:   {target}");
+        println!(
+            "Comparing: {}",
+            compared_scope(compared_header, compared_payload)
+        );
         render_text(&report);
     }
     Ok(report.is_conformant())
 }
 
+/// A decoded baseline: its optional payload and optional protected header.
+struct LoadedBaseline {
+    payload: Option<CorimMap>,
+    header: Option<ProtectedCorimHeaderMap>,
+    /// Description used when the baseline is unsigned (JSON vs CBOR source).
+    source_unsigned_desc: &'static str,
+}
+
+/// Human-readable description of one side's format.
+fn describe_side(signed: bool, has_payload: bool, unsigned_desc: &str) -> String {
+    match (signed, has_payload) {
+        (true, true) => "signed CoRIM (attached payload)".into(),
+        (true, false) => "signed CoRIM (detached payload)".into(),
+        (false, _) => unsigned_desc.to_string(),
+    }
+}
+
+fn compared_scope(header: bool, payload: bool) -> &'static str {
+    match (header, payload) {
+        (true, true) => "protected header + payload",
+        (true, false) => "protected header",
+        (false, true) => "payload",
+        (false, false) => "nothing",
+    }
+}
+
 /// Load a CoRIM from a JSON template, a CBOR CoRIM, or a signed CoRIM,
-/// then decode-and-validate it into a [`CorimMap`].
-fn load_corim(path: &str) -> Result<CorimMap, String> {
+/// retaining the protected header (if signed) and payload (if present).
+fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
     let raw = fs::read(path).map_err(|e| format!("reading baseline {path}: {e}"))?;
     if raw.is_empty() {
         return Err("baseline is empty".into());
     }
 
-    let bytes = if is_json(&raw) {
+    if is_json(&raw) {
         let json: serde_json::Value =
             serde_json::from_slice(&raw).map_err(|e| format!("parsing baseline JSON: {e}"))?;
-        crate::generate::build_corim_from_template(json, None)
-            .map_err(|e| format!("building baseline from JSON template: {e}"))?
-    } else {
-        // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
-        // recognizes both the bare `#6.18` tag and the legacy
-        // `#6.500`/`#6.502` wrappers. If it isn't a signed CoRIM, fall back
-        // to treating the bytes as an unsigned CoRIM.
-        match corim::types::signed::decode_signed_corim(&raw) {
-            Ok(env) => env.payload.ok_or_else(|| {
-                "baseline is a detached signed CoRIM (nil payload); supply the unsigned CoRIM"
-                    .to_string()
-            })?,
-            Err(_) => raw,
-        }
-    };
+        let bytes = crate::generate::build_corim_from_template(json, None)
+            .map_err(|e| format!("building baseline from JSON template: {e}"))?;
+        let (corim, _) = corim::validate::decode_and_validate(&bytes)
+            .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
+        return Ok(LoadedBaseline {
+            payload: Some(corim),
+            header: None,
+            source_unsigned_desc: "unsigned CoRIM (from JSON template)",
+        });
+    }
 
-    let (corim, _) = corim::validate::decode_and_validate(&bytes)
-        .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
-    Ok(corim)
+    // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
+    // recognizes both the bare `#6.18` tag and the legacy `#6.500`/`#6.502`
+    // wrappers. If it isn't signed, fall back to an unsigned CoRIM.
+    match corim::types::signed::decode_signed_corim(&raw) {
+        Ok(env) => {
+            let payload = match env.payload {
+                Some(p) => {
+                    let (corim, _) = corim::validate::decode_and_validate(&p).map_err(|e| {
+                        format!("baseline signed payload is not a valid CoRIM: {e}")
+                    })?;
+                    Some(corim)
+                }
+                None => None,
+            };
+            Ok(LoadedBaseline {
+                payload,
+                header: Some(env.protected),
+                source_unsigned_desc: "unsigned CoRIM",
+            })
+        }
+        Err(_) => {
+            let (corim, _) = corim::validate::decode_and_validate(&raw)
+                .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
+            Ok(LoadedBaseline {
+                payload: Some(corim),
+                header: None,
+                source_unsigned_desc: "unsigned CoRIM",
+            })
+        }
+    }
 }
 
 /// A byte buffer is treated as a JSON template if its first non-whitespace
@@ -129,7 +236,13 @@ fn render_text(report: &ConformanceReport) {
     }
 }
 
-fn render_json(report: &ConformanceReport) -> String {
+fn render_json(
+    report: &ConformanceReport,
+    baseline_desc: &str,
+    target_desc: &str,
+    compared_header: bool,
+    compared_payload: bool,
+) -> String {
     let structural: Vec<serde_json::Value> = report
         .structural_mismatches
         .iter()
@@ -144,6 +257,9 @@ fn render_json(report: &ConformanceReport) -> String {
     let out = serde_json::json!({
         "result": result_str(report),
         "conformant": report.is_conformant(),
+        "baseline_format": baseline_desc,
+        "target_format": target_desc,
+        "compared": compared_scope(compared_header, compared_payload),
         "summary": {
             "structural_mismatches": report.structural_mismatches.len(),
             "value_differences": report.value_differences.len(),
