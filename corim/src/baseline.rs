@@ -225,7 +225,7 @@ pub fn compare_headers(
         });
     }
     // content-type / hash-envelope mode — structural.
-    compare_opt_value(
+    compare_leaf(
         &base,
         "content-type",
         opt_val(&baseline.content_type),
@@ -233,7 +233,7 @@ pub fn compare_headers(
         &mut r,
         true,
     );
-    compare_opt_value(
+    compare_leaf(
         &base,
         "payload-hash-alg",
         opt_int(baseline.payload_hash_alg),
@@ -241,7 +241,7 @@ pub fn compare_headers(
         &mut r,
         true,
     );
-    compare_opt_value(
+    compare_leaf(
         &base,
         "payload-preimage-content-type",
         opt_val(&baseline.payload_preimage_content_type),
@@ -250,7 +250,7 @@ pub fn compare_headers(
         true,
     );
     // payload-location — value.
-    compare_opt_value(
+    compare_leaf(
         &base,
         "payload-location",
         opt_val(&baseline.payload_location),
@@ -392,7 +392,7 @@ fn compare_corim_meta(
 ) {
     let mut p = base.to_vec();
     p.push(PathSegment::Field("corim-meta"));
-    compare_opt_value(
+    compare_leaf(
         &p,
         "signer-name",
         Some(Value::Text(baseline.signer.signer_name.clone())),
@@ -400,7 +400,7 @@ fn compare_corim_meta(
         r,
         false,
     );
-    compare_opt_value(
+    compare_leaf(
         &p,
         "signer-uri",
         opt_val(&baseline.signer.signer_uri),
@@ -408,7 +408,7 @@ fn compare_corim_meta(
         r,
         false,
     );
-    compare_opt_value(
+    compare_leaf(
         &p,
         "signature-validity",
         opt_val(&baseline.signature_validity),
@@ -427,7 +427,7 @@ fn compare_cwt_claims(
     let mut p = base.to_vec();
     p.push(PathSegment::Field("cwt-claims"));
     // `iss` (the signer identity) is structural.
-    compare_opt_value(
+    compare_leaf(
         &p,
         "iss",
         Some(Value::Text(baseline.iss.clone())),
@@ -435,7 +435,7 @@ fn compare_cwt_claims(
         r,
         true,
     );
-    compare_opt_value(
+    compare_leaf(
         &p,
         "sub",
         opt_val(&baseline.sub),
@@ -443,7 +443,7 @@ fn compare_cwt_claims(
         r,
         false,
     );
-    compare_opt_value(
+    compare_leaf(
         &p,
         "exp",
         opt_int(baseline.exp),
@@ -451,7 +451,7 @@ fn compare_cwt_claims(
         r,
         false,
     );
-    compare_opt_value(
+    compare_leaf(
         &p,
         "nbf",
         opt_int(baseline.nbf),
@@ -472,8 +472,10 @@ fn compare_extra_values(
     r: &mut ConformanceReport,
 ) {
     for (k, bv) in baseline {
-        let iv = input.get(k).cloned().unwrap_or(Value::Null);
-        if &iv != bv {
+        // Compare on presence: a key absent from the input is a difference
+        // even when the baseline value is `Value::Null`.
+        if input.get(k) != Some(bv) {
+            let iv = input.get(k).cloned().unwrap_or(Value::Null);
             let mut p = base.to_vec();
             p.push(PathSegment::Field(field));
             p.push(PathSegment::MapKey(*k));
@@ -1379,6 +1381,20 @@ fn scalar(
 }
 
 /// corim-level presence/value helper: structural presence vs value.
+/// Compare a single leaf attribute located at `base + Field(field)`.
+fn compare_leaf(
+    base: &[PathSegment],
+    field: &'static str,
+    baseline: Option<Value>,
+    input: Option<Value>,
+    r: &mut ConformanceReport,
+    structural: bool,
+) {
+    let mut p = base.to_vec();
+    p.push(PathSegment::Field(field));
+    compare_opt_value(&p, field, baseline, input, r, structural);
+}
+
 fn compare_opt_value(
     path: &[PathSegment],
     field: &'static str,
