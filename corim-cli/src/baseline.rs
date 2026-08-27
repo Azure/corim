@@ -11,6 +11,7 @@
 //! this module owns the text and JSON presentation and the exit-code
 //! semantics.
 
+use std::fmt::Write as _;
 use std::fs;
 
 use corim::baseline::{
@@ -229,8 +230,8 @@ fn render_text(report: &ConformanceReport) {
                 "  {} {}: {} → {}",
                 corim::baseline::render_path(&v.path),
                 v.field,
-                render_value(&v.baseline),
-                render_value(&v.input)
+                render_value_short(&v.baseline),
+                render_value_short(&v.input)
             );
         }
     }
@@ -298,6 +299,118 @@ fn mismatch_kind_str(k: &MismatchKind) -> &'static str {
         MismatchKind::UnexpectedInInput => "unexpected-in-input",
         MismatchKind::TypeMismatch { .. } => "type-mismatch",
         _ => "structural-mismatch",
+    }
+}
+
+/// Maximum rendered length of a value in text output. Certificate chains and
+/// other long byte strings are elided; `--format json` always carries the
+/// full value.
+const MAX_TEXT_VALUE_LEN: usize = 96;
+
+/// Accumulates a rendering while writing at most `limit` chars, tracking the
+/// full length so the caller can report how much was elided. Byte strings are
+/// hex-encoded only up to the budget, so a large `x5chain` is never fully
+/// materialized just to be thrown away.
+struct Capped {
+    out: String,
+    written: usize,
+    total: usize,
+    limit: usize,
+}
+
+impl Capped {
+    fn new(limit: usize) -> Self {
+        Self {
+            out: String::new(),
+            written: 0,
+            total: 0,
+            limit,
+        }
+    }
+
+    fn push(&mut self, s: &str) {
+        let n = s.chars().count();
+        self.total += n;
+        if self.written >= self.limit {
+            return;
+        }
+        let room = self.limit - self.written;
+        if n <= room {
+            self.out.push_str(s);
+            self.written += n;
+        } else {
+            self.out.extend(s.chars().take(room));
+            self.written = self.limit;
+        }
+    }
+
+    fn push_hex(&mut self, bytes: &[u8]) {
+        self.total += bytes.len() * 2;
+        if self.written >= self.limit {
+            return;
+        }
+        let room = self.limit - self.written;
+        let take = room.div_ceil(2).min(bytes.len());
+        for b in &bytes[..take] {
+            let _ = write!(self.out, "{b:02x}");
+        }
+        if take * 2 > room {
+            self.out.pop();
+        }
+        self.written = (self.written + take * 2).min(self.limit);
+    }
+
+    fn finish(self) -> String {
+        if self.total > self.limit {
+            format!("{}… ({} chars total)", self.out, self.total)
+        } else {
+            self.out
+        }
+    }
+}
+
+/// Text-mode rendering of a value, eliding anything overly long.
+fn render_value_short(v: &Value) -> String {
+    let mut c = Capped::new(MAX_TEXT_VALUE_LEN);
+    render_capped(v, &mut c);
+    c.finish()
+}
+
+fn render_capped(v: &Value, c: &mut Capped) {
+    match v {
+        Value::Bytes(b) => c.push_hex(b),
+        Value::Text(t) => c.push(t),
+        Value::Integer(n) => c.push(&n.to_string()),
+        Value::Float(f) => c.push(&f.to_string()),
+        Value::Bool(b) => c.push(if *b { "true" } else { "false" }),
+        Value::Null => c.push("null"),
+        Value::Tag(t, inner) => {
+            c.push(&format!("#6.{t}("));
+            render_capped(inner, c);
+            c.push(")");
+        }
+        Value::Array(a) => {
+            c.push("[");
+            for (i, item) in a.iter().enumerate() {
+                if i > 0 {
+                    c.push(", ");
+                }
+                render_capped(item, c);
+            }
+            c.push("]");
+        }
+        Value::Map(m) => {
+            c.push("{");
+            for (i, (k, val)) in m.iter().enumerate() {
+                if i > 0 {
+                    c.push(", ");
+                }
+                render_capped(k, c);
+                c.push(": ");
+                render_capped(val, c);
+            }
+            c.push("}");
+        }
     }
 }
 
@@ -370,4 +483,63 @@ fn hex(bytes: &[u8]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn short_values_are_not_elided() {
+        let v = Value::Text("hello".into());
+        assert_eq!(render_value_short(&v), "hello");
+    }
+
+    #[test]
+    fn value_exactly_at_the_limit_is_not_elided() {
+        let v = Value::Text("x".repeat(MAX_TEXT_VALUE_LEN));
+        let out = render_value_short(&v);
+        assert!(!out.contains("chars total"), "{out}");
+        assert_eq!(out.chars().count(), MAX_TEXT_VALUE_LEN);
+    }
+
+    #[test]
+    fn long_bytes_are_elided_with_the_full_length() {
+        // 1 KiB of bytes renders as 2048 hex chars.
+        let v = Value::Bytes(vec![0xab; 1024]);
+        let out = render_value_short(&v);
+        assert!(out.ends_with("… (2048 chars total)"), "{out}");
+        let head: String = out.chars().take(MAX_TEXT_VALUE_LEN).collect();
+        assert_eq!(head, "ab".repeat(MAX_TEXT_VALUE_LEN / 2));
+    }
+
+    /// The hex prefix is encoded a whole byte at a time, so an odd remaining
+    /// budget must still cut cleanly at the limit.
+    #[test]
+    fn odd_budget_cuts_hex_at_the_limit() {
+        // "[" + hex ... : one char consumed before the byte string, leaving an
+        // odd budget for the hex.
+        let v = Value::Array(vec![Value::Bytes(vec![0xcd; 1024])]);
+        let out = render_value_short(&v);
+        let head: String = out.chars().take(MAX_TEXT_VALUE_LEN).collect();
+        assert_eq!(head.chars().count(), MAX_TEXT_VALUE_LEN);
+        assert!(head.starts_with("[cd"), "{head}");
+        // 1 ("[") + 2048 (hex) + 1 ("]") = 2050
+        assert!(out.ends_with("… (2050 chars total)"), "{out}");
+    }
+
+    #[test]
+    fn elision_never_exceeds_the_limit_for_nested_values() {
+        let v = Value::Map(vec![(
+            Value::Text("k".into()),
+            Value::Array(vec![
+                Value::Bytes(vec![0x01; 512]),
+                Value::Bytes(vec![0x02; 512]),
+            ]),
+        )]);
+        let out = render_value_short(&v);
+        let head: String = out.chars().take(MAX_TEXT_VALUE_LEN).collect();
+        assert_eq!(head.chars().count(), MAX_TEXT_VALUE_LEN);
+        assert!(out.contains("chars total"), "{out}");
+    }
 }

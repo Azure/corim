@@ -8,6 +8,21 @@ versions.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Baseline comparison skipped CoRIM and CoMID metadata.** `compare`
+  only looked at `profile`, `corim-id`, and the triples, so a changed
+  `rim-validity`, `entities`, or `dependent-rims`, or a changed CoMID
+  `tag-version` / `language` / `entities` / `linked-tags`, was silently
+  omitted from the report — despite the docs claiming validity and
+  entities were reported. These are now compared and surfaced as value
+  differences (they legitimately change when a document is re-issued;
+  `tag-version` in particular is bumped on every re-issue).
+- **`--baseline` text output flooded the terminal.** A differing
+  `x5chain` printed the full certificate hex (~10 KB). Long values are
+  now elided in the text report; `--format json` still carries them in
+  full.
+
 ### Added
 
 - **Protected-header baseline comparison.** `corim::baseline::compare_headers`
