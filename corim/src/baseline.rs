@@ -163,20 +163,44 @@ pub fn render_path(path: &[PathSegment]) -> String {
 pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
     let mut r = ConformanceReport::default();
 
-    // --- corim-level: profile is structural; id/validity/entities are values.
-    compare_opt_value(
-        &[PathSegment::Field("profile")],
+    // --- corim-level: profile is structural; the rest are values.
+    compare_leaf(
+        &[],
         "profile",
         opt_val(&baseline.profile),
         opt_val(&input.profile),
         &mut r,
         /*structural=*/ true,
     );
-    compare_opt_value(
-        &[PathSegment::Field("corim-id")],
+    compare_leaf(
+        &[],
         "corim-id",
         Some(to_value_lossy(&baseline.id)),
         Some(to_value_lossy(&input.id)),
+        &mut r,
+        false,
+    );
+    compare_leaf(
+        &[],
+        "rim-validity",
+        opt_val(&baseline.rim_validity),
+        opt_val(&input.rim_validity),
+        &mut r,
+        false,
+    );
+    compare_leaf(
+        &[],
+        "entities",
+        opt_val(&baseline.entities),
+        opt_val(&input.entities),
+        &mut r,
+        false,
+    );
+    compare_leaf(
+        &[],
+        "dependent-rims",
+        opt_val(&baseline.dependent_rims),
+        opt_val(&input.dependent_rims),
         &mut r,
         false,
     );
@@ -540,6 +564,7 @@ fn compare_comids(
         match input.iter().find(|(iid, _)| iid == id) {
             Some((_, i_comid)) => {
                 let path = [PathSegment::Comid(id.clone())];
+                compare_comid_metadata(&path, b_comid, i_comid, r);
                 compare_triples(&path, &b_comid.triples, &i_comid.triples, r);
             }
             None => r.structural_mismatches.push(StructuralMismatch {
@@ -558,6 +583,53 @@ fn compare_comids(
             });
         }
     }
+}
+
+/// Compare a CoMID's non-triple metadata. These fields legitimately change
+/// when a document is re-issued (`tag-version` is bumped on every re-issue),
+/// so they are reported as value differences, not structural mismatches.
+fn compare_comid_metadata(
+    path: &[PathSegment],
+    baseline: &ComidTag,
+    input: &ComidTag,
+    r: &mut ConformanceReport,
+) {
+    compare_leaf(
+        path,
+        "tag-version",
+        baseline.tag_identity.tag_version.map(u64_value),
+        input.tag_identity.tag_version.map(u64_value),
+        r,
+        false,
+    );
+    compare_leaf(
+        path,
+        "language",
+        opt_val(&baseline.language),
+        opt_val(&input.language),
+        r,
+        false,
+    );
+    compare_leaf(
+        path,
+        "entities",
+        opt_val(&baseline.entities),
+        opt_val(&input.entities),
+        r,
+        false,
+    );
+    compare_leaf(
+        path,
+        "linked-tags",
+        opt_val(&baseline.linked_tags),
+        opt_val(&input.linked_tags),
+        r,
+        false,
+    );
+}
+
+fn u64_value(v: u64) -> Value {
+    Value::Integer(i128::from(v))
 }
 
 // ---------------------------------------------------------------------------
