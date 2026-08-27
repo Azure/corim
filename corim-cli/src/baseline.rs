@@ -229,8 +229,8 @@ fn render_text(report: &ConformanceReport) {
                 "  {} {}: {} → {}",
                 corim::baseline::render_path(&v.path),
                 v.field,
-                render_value(&v.baseline),
-                render_value(&v.input)
+                render_value_short(&v.baseline),
+                render_value_short(&v.input)
             );
         }
     }
@@ -299,6 +299,21 @@ fn mismatch_kind_str(k: &MismatchKind) -> &'static str {
         MismatchKind::TypeMismatch { .. } => "type-mismatch",
         _ => "structural-mismatch",
     }
+}
+
+/// Maximum rendered length of a value in text output. Certificate chains and
+/// other long byte strings are elided; `--format json` always carries the
+/// full value.
+const MAX_TEXT_VALUE_LEN: usize = 96;
+
+/// Text-mode rendering of a value, eliding anything overly long.
+fn render_value_short(v: &Value) -> String {
+    let s = render_value(v);
+    if s.chars().count() <= MAX_TEXT_VALUE_LEN {
+        return s;
+    }
+    let head: String = s.chars().take(MAX_TEXT_VALUE_LEN).collect();
+    format!("{head}… ({} chars total)", s.chars().count())
 }
 
 /// Render a CBOR [`Value`] as a compact human string (bytes as hex,
