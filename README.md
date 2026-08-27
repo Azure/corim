@@ -238,7 +238,11 @@ The structure/value boundary follows
 measurement keys, the *presence* and *type* of each measurement
 attribute, the digest *algorithm(s)*, and the authorities. **Values** —
 which may differ — are the measured bytes and scalars: digest values,
-SVN numbers, flags, raw values, versions, and the like.
+SVN numbers, flags, raw values, versions, and the like. Document
+metadata that legitimately changes on every re-issue — `corim-id`,
+`rim-validity`, `entities`, `dependent-rims`, and each CoMID's
+`tag-version` / `language` / `entities` / `linked-tags` — is also
+reported as a value difference.
 
 ```sh
 corim-cli validate candidate.cbor --baseline golden.json
@@ -250,6 +254,8 @@ corim-cli validate candidate.cbor --baseline golden.json
   field).
 - `--format json` emits the full diff as
   `{ result, conformant, baseline_format, target_format, compared, summary, structural_mismatches, value_differences }`.
+  Long values (certificate chains and the like) are elided in the text
+  report; the JSON report always carries them in full.
 
 **Signed CoRIMs — protected-header comparison.** When **both** the
 baseline and the target are signed, the COSE protected headers are
