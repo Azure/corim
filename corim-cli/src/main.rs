@@ -214,7 +214,15 @@ fn run_validate(cli: ValidateArgs) {
                         }
                     }
                 }
-                print_signed_header_only(&info, cli.show_raw);
+                if cli.format == "json" {
+                    println!("{{");
+                    println!("  \"valid\": true,");
+                    println!("  \"payload_decoded\": false,");
+                    print_signed_json(&info, "  ", false);
+                    println!("}}");
+                } else {
+                    print_signed_header_only(&info, cli.show_raw);
+                }
                 process::exit(0);
             }
             Err(SignedDecodeResult::Failed(e)) => {
@@ -379,7 +387,14 @@ decoded via compat::decode_comid_from_tcg_bstr",
     // Step 4: Output results
     match cli.format.as_str() {
         "json" => {
-            print_json_output(&corim, &comid_tags, &errors, &warnings, cli.show_raw);
+            print_json_output(
+                &corim,
+                &comid_tags,
+                &errors,
+                &warnings,
+                &signed_info,
+                cli.show_raw,
+            );
         }
         _ => {
             print_text_output(
@@ -696,6 +711,7 @@ fn print_json_output(
     comids: &[corim::types::comid::ComidTag],
     errors: &[String],
     warnings: &[String],
+    signed_info: &Option<SignedInfo>,
     _show_raw: bool,
 ) {
     // Simple JSON output without pulling in serde_json
@@ -718,6 +734,10 @@ fn print_json_output(
             println!("    \"{}\"{}", json_escape(w), comma);
         }
         println!("  ],");
+    }
+
+    if let Some(info) = signed_info {
+        print_signed_json(info, "  ", true);
     }
 
     println!("  \"id\": {},", display::corim_id_json(&corim.id));
@@ -756,4 +776,66 @@ fn json_escape(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
+}
+
+/// Emit the `"signed"` object, mirroring the fields the text renderer shows
+/// for the four COSE_Sign1 elements (RFC 9052 §4).
+fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
+    let p = &info.protected;
+    println!("{indent}\"signed\": {{");
+    println!(
+        "{indent}  \"tag\": {},",
+        corim::types::tags::TAG_SIGNED_CORIM
+    );
+
+    println!("{indent}  \"protected\": {{");
+    println!(
+        "{indent}    \"size\": {},",
+        info.protected_header_bytes.len()
+    );
+    println!("{indent}    \"alg\": \"{}\",", json_escape(info.alg.name()));
+    println!("{indent}    \"alg_id\": {},", info.alg.to_i64());
+    if let Some(ref ct) = info.content_type {
+        println!("{indent}    \"content_type\": \"{}\",", json_escape(ct));
+    }
+    if let Some(claims) = p.cwt_claims.as_ref() {
+        println!("{indent}    \"issuer\": \"{}\",", json_escape(&claims.iss));
+        if let Some(subject) = claims.sub.as_ref() {
+            println!("{indent}    \"subject\": \"{}\",", json_escape(subject));
+        }
+    }
+    if let Some(meta) = p.corim_meta.as_ref() {
+        println!(
+            "{indent}    \"signer_name\": \"{}\",",
+            json_escape(&meta.signer.signer_name)
+        );
+    }
+    println!("{indent}    \"has_cwt_claims\": {},", info.has_cwt_claims);
+    println!("{indent}    \"has_corim_meta\": {},", info.has_corim_meta);
+    println!("{indent}    \"has_kid\": {},", info.has_kid);
+    println!("{indent}    \"x5chain_count\": {},", info.x5chain_count);
+    println!("{indent}    \"has_x5t\": {}", info.has_x5t);
+    println!("{indent}  }},");
+
+    println!(
+        "{indent}  \"unprotected\": {{ \"entries\": {}, \"size\": {} }},",
+        info.unprotected_entries,
+        info.unprotected_bytes.len()
+    );
+    if info.is_detached {
+        println!("{indent}  \"payload\": {{ \"detached\": true }},");
+    } else {
+        println!(
+            "{indent}  \"payload\": {{ \"detached\": false, \"size\": {} }},",
+            info.payload_bytes.len()
+        );
+    }
+    println!(
+        "{indent}  \"signature\": {{ \"size\": {} }},",
+        info.signature.len()
+    );
+    // Structure-only tool: the signature is never checked.
+    println!("{indent}  \"signature_verified\": false");
+
+    println!("{indent}}}{}", if comma { "," } else { "" });
 }
