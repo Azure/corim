@@ -198,7 +198,8 @@ corim-cli validate --skip-expiry myfile.corim
 # Validate a signed CoRIM (auto-detected)
 corim-cli validate --skip-expiry signed.corim
 
-# JSON output
+# JSON output (signed CoRIMs also carry a "signed" object describing the
+# COSE_Sign1 envelope and protected header)
 corim-cli validate -f json myfile.corim
 
 # Non-aborting structural diagnose pass — prints issues without rejecting
@@ -222,6 +223,42 @@ corim-cli sign prepare unsigned.cbor --alg ES256 --signer-name "ACME Ltd." \
     --x5chain leaf.pem --out-staging staging.cose --out-tbs tbs.bin
 corim-cli sign finalize staging.cose --signature sig.bin -o signed.cose
 ```
+
+### `validate -f json` — machine-readable report
+
+`-f json` emits the validation summary as JSON. For a **signed** CoRIM it
+also carries a `signed` object describing the COSE_Sign1 envelope and its
+protected header — the same fields the text renderer shows:
+
+```jsonc
+{
+  "valid": true,
+  "signed": {
+    "tag": 18,
+    "protected": {
+      "size": 5160,
+      "alg": "PS384", "alg_id": -38,
+      "content_type": "application/rim+cbor",
+      "issuer": "did:x509:0:sha256:…::eku:…",   // CWT `iss`
+      "subject": "TDX-Trust-Endorsement",        // CWT `sub`
+      "signer_name": "ACC Endorsement Issuer",   // corim-meta
+      "has_cwt_claims": true, "has_corim_meta": true,
+      "has_kid": true, "x5chain_count": 3, "has_x5t": true
+    },
+    "unprotected": { "entries": 1, "size": 771 },
+    "payload": { "detached": false, "size": 456 },
+    "signature": { "size": 384 },
+    "signature_verified": false
+  },
+  "id": "…", "tags_count": 3, "comid_count": 3, "comids": [ … ]
+}
+```
+
+`signature_verified` is always `false` — the tool has no crypto dependency
+and checks structure only. A **detached** signed CoRIM has no payload to
+decode, so the report carries `"payload_decoded": false` and the `signed`
+object without the inner CoRIM summary. Unsigned CoRIMs have no `signed`
+object at all.
 
 ### `validate --baseline` — structural conformance check
 
