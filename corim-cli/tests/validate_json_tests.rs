@@ -85,6 +85,14 @@ fn validate_json(bytes: &[u8], ext: &str) -> serde_json::Value {
         .expect("run validate");
     let _ = std::fs::remove_file(&path);
     let stdout = String::from_utf8(out.stdout).expect("utf-8 stdout");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    // Assert the exit status first: otherwise a failing run surfaces as a
+    // confusing JSON parse error instead of the real reason.
+    assert!(
+        out.status.success(),
+        "validate exited with {}\nstderr:\n{stderr}\nstdout:\n{stdout}",
+        out.status
+    );
     serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("output is not valid JSON: {e}\n{stdout}"))
 }
@@ -141,4 +149,20 @@ fn unsigned_corim_json_has_no_signed_object() {
     assert_eq!(v["valid"], true);
     assert!(v.get("signed").is_none(), "unsigned CoRIM has no envelope");
     assert_eq!(v["id"], "json-corim");
+}
+
+/// Producer-controlled strings reach the report verbatim, so control
+/// characters must be escaped rather than emitted raw (which would make the
+/// output unparseable).
+#[test]
+fn control_characters_in_producer_strings_stay_valid_json() {
+    let nasty = "iss\twith\r\nctrl\u{01}and \"quotes\" \\ backslash";
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(CwtClaims::new(nasty))
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    // `validate_json` parses the output, so a bad escape fails here.
+    let v = validate_json(&signed, "cose");
+    assert_eq!(v["signed"]["protected"]["issuer"], nasty);
 }

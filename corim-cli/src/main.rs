@@ -3,6 +3,7 @@
 
 //! CLI tool for validating and inspecting CoRIM documents.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read};
 use std::process;
@@ -772,10 +773,26 @@ fn print_json_output(
     println!("}}");
 }
 
+/// Escape a string for a JSON string literal per RFC 8259 §7: the quote and
+/// reverse solidus, plus every control character below U+0020.
 fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{:04x}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 /// Emit the `"signed"` object, mirroring the fields the text renderer shows
