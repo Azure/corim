@@ -10,6 +10,16 @@ versions.
 
 ### Added
 
+- **`validate -f json` reports the signed envelope.** The JSON report
+  previously omitted the COSE_Sign1 envelope entirely, so a signed CoRIM
+  produced the same output as an unsigned one and the protected-header
+  details were only visible in the text renderer. JSON now carries a
+  `signed` object with the protected header (`alg`/`alg_id`,
+  `content_type`, CWT `issuer`/`subject`, `corim-meta` `signer_name`, and
+  the `kid` / `x5chain` / `x5t` presence flags), the unprotected header,
+  payload, signature sizes, and `signature_verified: false`. A detached
+  signed CoRIM now also honours `-f json` (it previously fell back to the
+  text header view) and reports `payload_decoded: false`.
 - **Protected-header baseline comparison.** `corim::baseline::compare_headers`
   compares two signed CoRIMs' COSE protected headers, and
   `ConformanceReport::merge` combines a payload report with a header
