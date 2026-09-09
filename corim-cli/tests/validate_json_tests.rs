@@ -166,3 +166,47 @@ fn control_characters_in_producer_strings_stay_valid_json() {
     let v = validate_json(&signed, "cose");
     assert_eq!(v["signed"]["protected"]["issuer"], nasty);
 }
+
+/// Text-keyed CWT claims (e.g. the `"svn"` claim Azure SOC-MANA CoRIMs
+/// carry) and integer extras such as `iat` must both reach the report.
+#[test]
+fn extra_cwt_claims_are_reported() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("test-issuer");
+    claims
+        .extra
+        .insert(ClaimKey::Text("svn".into()), Value::Integer(7));
+    claims.extra.insert(
+        ClaimKey::Int(6),
+        Value::Tag(1, Box::new(Value::Integer(1788524559))),
+    );
+
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let extra = &v["signed"]["protected"]["cwt_claims_extra"];
+    assert_eq!(extra["svn"], 7, "text-keyed claim must survive: {extra}");
+    assert_eq!(extra["6"]["__cbor_tag"], 1);
+    assert_eq!(extra["6"]["__cbor_value"], 1788524559i64);
+}
+
+#[test]
+fn cwt_exp_and_nbf_are_reported() {
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(
+            CwtClaims::new("iss")
+                .with_exp(1900000000)
+                .with_nbf(1700000000),
+        )
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    assert_eq!(v["signed"]["protected"]["exp"], 1900000000i64);
+    assert_eq!(v["signed"]["protected"]["nbf"], 1700000000i64);
+}

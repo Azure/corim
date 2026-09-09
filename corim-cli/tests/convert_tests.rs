@@ -295,3 +295,91 @@ fn convert_emits_psa_mval_alias_name() {
         let _ = std::fs::remove_file(f);
     }
 }
+
+/// `convert` accepts a signed CoRIM directly: it converts the embedded
+/// payload rather than requiring a separate `extract` step first.
+#[test]
+fn convert_accepts_a_signed_corim() {
+    let src_t = unique_temp("conv_signed_src", "json");
+    let unsigned = unique_temp("conv_signed_unsigned", "cbor");
+    let signed = unique_temp("conv_signed_signed", "cose");
+    let back_t = unique_temp("conv_signed_back", "json");
+    let back_c = unique_temp("conv_signed_back", "cbor");
+
+    std::fs::write(
+        &src_t,
+        r#"{
+          "corim-id": "signed-convert",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    // template -> unsigned CBOR -> signed COSE (placeholder signature)
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            unsigned.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(bin())
+        .args([
+            "sign",
+            "prepare",
+            unsigned.to_str().unwrap(),
+            "--alg",
+            "ES256",
+            "--signer-name",
+            "Test Signer",
+            "--out-staging",
+            signed.to_str().unwrap(),
+            "--out-tbs",
+            unique_temp("conv_signed_tbs", "bin").to_str().unwrap(),
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    // convert straight from the signed CoRIM
+    let s = Command::new(bin())
+        .args([
+            "convert",
+            signed.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap(),
+        ])
+        .status()
+        .expect("convert signed");
+    assert!(s.success(), "convert must accept a signed CoRIM");
+
+    // and the template still regenerates the original payload byte-for-byte
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            back_t.to_str().unwrap(),
+            "-o",
+            back_c.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(
+        std::fs::read(&unsigned).unwrap(),
+        std::fs::read(&back_c).unwrap(),
+        "convert(signed) -> generate must reproduce the payload"
+    );
+
+    for f in [&src_t, &unsigned, &signed, &back_t, &back_c] {
+        let _ = std::fs::remove_file(f);
+    }
+}

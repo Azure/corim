@@ -211,7 +211,8 @@ corim-cli validate myfile.corim --baseline golden.json
 # Generate an unsigned CoRIM from a JSON template
 corim-cli generate template.json -o out.cbor
 
-# Convert an unsigned CoRIM back to a JSON template (inverse of generate)
+# Convert a CoRIM back to a JSON template (inverse of generate;
+# accepts unsigned or signed-with-attached-payload input)
 corim-cli convert myfile.corim -o template.json
 
 # Extract the unsigned CoRIM payload from a signed CoRIM
@@ -395,7 +396,14 @@ that feeds straight back into `generate`, reproducing the original bytes:
 ```sh
 corim-cli convert myfile.corim -o template.json
 corim-cli generate template.json -o roundtrip.corim   # byte-identical
+
+# A signed CoRIM works too — its embedded payload is converted
+corim-cli convert signed.cose -o template.json
 ```
+
+A signed (`#6.18`) CoRIM is accepted directly: the embedded payload is
+converted, so no separate `extract` step is needed. Detached (nil)
+payloads cannot be converted — the unsigned document travels separately.
 
 This differs from `validate -f json`, which prints a validation
 *summary* (validity, counts, triple types), not the CoRIM contents. Use

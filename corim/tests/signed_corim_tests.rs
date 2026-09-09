@@ -99,11 +99,35 @@ fn cwt_claims_minimal() {
 #[test]
 fn cwt_claims_with_extra_fields() {
     let mut claims = CwtClaims::new("Test");
-    claims.extra.insert(100, Value::Text("custom".into()));
+    claims
+        .extra
+        .insert(ClaimKey::Int(100), Value::Text("custom".into()));
 
     let bytes = cbor::encode(&claims).unwrap();
     let decoded: CwtClaims = cbor::decode(&bytes).unwrap();
-    assert_eq!(decoded.extra.get(&100), Some(&Value::Text("custom".into())));
+    assert_eq!(
+        decoded.extra.get(&ClaimKey::Int(100)),
+        Some(&Value::Text("custom".into()))
+    );
+}
+
+/// Real producers emit text-keyed claims (e.g. Azure SOC-MANA CoRIMs carry
+/// `"svn"`); they must survive a decode/encode round-trip rather than being
+/// silently dropped.
+#[test]
+fn cwt_claims_with_text_key_round_trip() {
+    let mut claims = CwtClaims::new("Test");
+    claims
+        .extra
+        .insert(ClaimKey::Text("svn".into()), Value::Integer(1));
+
+    let bytes = cbor::encode(&claims).unwrap();
+    let decoded: CwtClaims = cbor::decode(&bytes).unwrap();
+    assert_eq!(
+        decoded.extra.get(&ClaimKey::Text("svn".into())),
+        Some(&Value::Integer(1))
+    );
+    assert_eq!(decoded, claims);
 }
 
 #[test]

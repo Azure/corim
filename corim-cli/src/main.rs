@@ -571,6 +571,17 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     if let Some(meta) = info.protected.corim_meta.as_ref() {
         println!("{}Signer name:  {}", sub, meta.signer.signer_name);
     }
+    if let Some(claims) = info.protected.cwt_claims.as_ref() {
+        if let Some(exp) = claims.exp {
+            println!("{}Expires:      {} (epoch)", sub, exp);
+        }
+        if let Some(nbf) = claims.nbf {
+            println!("{}Not before:   {} (epoch)", sub, nbf);
+        }
+        for (k, v) in &claims.extra {
+            println!("{}CWT claim {}: {}", sub, k, display::value_summary(v));
+        }
+    }
     let metadata = match (info.has_cwt_claims, info.has_corim_meta) {
         (true, true) => "CWT-Claims + corim-meta",
         (true, false) => "CWT-Claims",
@@ -795,6 +806,56 @@ fn json_escape(s: &str) -> String {
     out
 }
 
+/// Render a CBOR `Value` as a JSON fragment. Byte strings become hex; tags
+/// use the `{"__cbor_tag": N, "__cbor_value": …}` envelope the `json` module
+/// already uses, so the value round-trips rather than being flattened.
+fn cbor_json(v: &corim::cbor::value::Value) -> String {
+    use corim::cbor::value::Value;
+    match v {
+        Value::Null => "null".into(),
+        Value::Bool(b) => b.to_string(),
+        Value::Text(t) => format!("\"{}\"", json_escape(t)),
+        Value::Bytes(b) => format!("\"{}\"", hex::encode(b)),
+        // JSON numbers only cover i64/u64; fall back to a string outside that.
+        Value::Integer(n) => match (i64::try_from(*n), u64::try_from(*n)) {
+            (Ok(x), _) => x.to_string(),
+            (_, Ok(x)) => x.to_string(),
+            _ => format!("\"{n}\""),
+        },
+        Value::Float(f) => {
+            if f.is_finite() {
+                f.to_string()
+            } else {
+                "null".into()
+            }
+        }
+        Value::Array(a) => {
+            let items: Vec<String> = a.iter().map(cbor_json).collect();
+            format!("[{}]", items.join(", "))
+        }
+        Value::Map(m) => {
+            let items: Vec<String> = m
+                .iter()
+                .map(|(k, val)| {
+                    let key = match k {
+                        Value::Text(t) => t.clone(),
+                        Value::Integer(n) => n.to_string(),
+                        other => display::value_summary(other),
+                    };
+                    format!("\"{}\": {}", json_escape(&key), cbor_json(val))
+                })
+                .collect();
+            format!("{{{}}}", items.join(", "))
+        }
+        Value::Tag(t, inner) => {
+            format!(
+                "{{\"__cbor_tag\": {t}, \"__cbor_value\": {}}}",
+                cbor_json(inner)
+            )
+        }
+    }
+}
+
 /// Emit the `"signed"` object, mirroring the fields the text renderer shows
 /// for the four COSE_Sign1 elements (RFC 9052 §4).
 fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
@@ -819,6 +880,23 @@ fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
         println!("{indent}    \"issuer\": \"{}\",", json_escape(&claims.iss));
         if let Some(subject) = claims.sub.as_ref() {
             println!("{indent}    \"subject\": \"{}\",", json_escape(subject));
+        }
+        if let Some(exp) = claims.exp {
+            println!("{indent}    \"exp\": {exp},");
+        }
+        if let Some(nbf) = claims.nbf {
+            println!("{indent}    \"nbf\": {nbf},");
+        }
+        if !claims.extra.is_empty() {
+            let entries: Vec<String> = claims
+                .extra
+                .iter()
+                .map(|(k, v)| format!("\"{}\": {}", json_escape(&k.to_string()), cbor_json(v)))
+                .collect();
+            println!(
+                "{indent}    \"cwt_claims_extra\": {{ {} }},",
+                entries.join(", ")
+            );
         }
     }
     if let Some(meta) = p.corim_meta.as_ref() {
