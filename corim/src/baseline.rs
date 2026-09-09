@@ -35,7 +35,7 @@ use crate::types::corim::{ConciseTagChoice, CorimMap, CorimMetaMap};
 use crate::types::measurement::{
     Digest, DigestAlg, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
-use crate::types::signed::{CoseCertHash, CoseX509, CwtClaims, ProtectedCorimHeaderMap};
+use crate::types::signed::{ClaimKey, CoseCertHash, CoseX509, CwtClaims, ProtectedCorimHeaderMap};
 
 // ---------------------------------------------------------------------------
 // Report types
@@ -63,6 +63,8 @@ pub enum PathSegment {
     /// A signed integer map key (e.g. an `mval-extension` key, which the
     /// CDDL allows to be any `int` including large or negative values).
     MapKey(i64),
+    /// A text map key (e.g. a text-keyed CWT claim such as `"svn"`).
+    TextKey(String),
 }
 
 /// The nature of a structural mismatch.
@@ -147,6 +149,7 @@ pub fn render_path(path: &[PathSegment]) -> String {
             PathSegment::Field(f) => s.push_str(&format!(".{f}")),
             PathSegment::Index(i) => s.push_str(&format!("[{i}]")),
             PathSegment::MapKey(k) => s.push_str(&format!("[{k}]")),
+            PathSegment::TextKey(k) => s.push_str(&format!("[\"{k}\"]")),
         }
     }
     s
@@ -346,6 +349,7 @@ pub fn compare_headers(
         &baseline.extra,
         &input.extra,
         &mut r,
+        |k| PathSegment::MapKey(*k),
     );
 
     r
@@ -483,17 +487,28 @@ fn compare_cwt_claims(
         r,
         false,
     );
-    compare_extra_values(&p, "cwt-extension", &baseline.extra, &input.extra, r);
+    compare_extra_values(
+        &p,
+        "cwt-extension",
+        &baseline.extra,
+        &input.extra,
+        r,
+        |k| match k {
+            ClaimKey::Int(n) => PathSegment::MapKey(*n),
+            ClaimKey::Text(t) => PathSegment::TextKey(t.clone()),
+        },
+    );
 }
 
-/// Report presence and content differences of an integer-keyed extension
-/// map as value differences (never structural).
-fn compare_extra_values(
+/// Report presence and content differences of an extension map as value
+/// differences (never structural). `seg` renders a key as a path segment.
+fn compare_extra_values<K: Ord>(
     base: &[PathSegment],
     field: &'static str,
-    baseline: &BTreeMap<i64, Value>,
-    input: &BTreeMap<i64, Value>,
+    baseline: &BTreeMap<K, Value>,
+    input: &BTreeMap<K, Value>,
     r: &mut ConformanceReport,
+    seg: impl Fn(&K) -> PathSegment,
 ) {
     for (k, bv) in baseline {
         // Compare on presence: a key absent from the input is a difference
@@ -502,7 +517,7 @@ fn compare_extra_values(
             let iv = input.get(k).cloned().unwrap_or(Value::Null);
             let mut p = base.to_vec();
             p.push(PathSegment::Field(field));
-            p.push(PathSegment::MapKey(*k));
+            p.push(seg(k));
             r.value_differences.push(ValueDifference {
                 path: p,
                 field,
@@ -515,7 +530,7 @@ fn compare_extra_values(
         if !baseline.contains_key(k) {
             let mut p = base.to_vec();
             p.push(PathSegment::Field(field));
-            p.push(PathSegment::MapKey(*k));
+            p.push(seg(k));
             r.value_differences.push(ValueDifference {
                 path: p,
                 field,

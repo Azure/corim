@@ -31,6 +31,50 @@ pub const CWT_CLAIM_IAT: i64 = 6;
 // CWT Claims (RFC 8392 / RFC 9597)
 // ===================================================================
 
+/// A CWT claim key.
+///
+/// RFC 8392 registers integer claim keys, but the claims map is keyed by
+/// `int / tstr`, and real-world producers do use text keys (e.g. an Azure
+/// SOC-MANA CoRIM carries a `"svn"` claim). Both forms are preserved.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[non_exhaustive]
+pub enum ClaimKey {
+    /// An integer claim key, e.g. `6` (`iat`).
+    Int(i64),
+    /// A text claim key, e.g. `"svn"`.
+    Text(String),
+}
+
+impl From<i64> for ClaimKey {
+    fn from(n: i64) -> Self {
+        Self::Int(n)
+    }
+}
+
+impl From<&str> for ClaimKey {
+    fn from(s: &str) -> Self {
+        Self::Text(s.into())
+    }
+}
+
+impl core::fmt::Display for ClaimKey {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Int(n) => write!(f, "{n}"),
+            Self::Text(t) => write!(f, "{t}"),
+        }
+    }
+}
+
+impl Serialize for ClaimKey {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Int(n) => s.serialize_i64(*n),
+            Self::Text(t) => s.serialize_str(t),
+        }
+    }
+}
+
 /// CWT Claims map, used in the protected header of a signed CoRIM (§4.2.2).
 ///
 /// ```text
@@ -39,7 +83,7 @@ pub const CWT_CLAIM_IAT: i64 = 6;
 ///   ? &(sub: 2) => tstr,
 ///   ? &(exp: 4) => int / float,
 ///   ? &(nbf: 5) => int / float,
-///   * int => any,
+///   * (int / tstr) => any,
 /// }
 /// ```
 ///
@@ -57,8 +101,9 @@ pub struct CwtClaims {
     pub exp: Option<i64>,
     /// `nbf` (key 5): Not-before time as epoch seconds.
     pub nbf: Option<i64>,
-    /// Additional CWT claims beyond the standard ones.
-    pub extra: BTreeMap<i64, Value>,
+    /// Additional CWT claims beyond the standard ones, keyed by integer or
+    /// text claim key.
+    pub extra: BTreeMap<ClaimKey, Value>,
 }
 
 impl CwtClaims {
@@ -141,13 +186,16 @@ impl<'de> Deserialize<'de> for CwtClaims {
         let mut extra = BTreeMap::new();
 
         for (k, v) in map {
-            let key = match &k {
-                Value::Integer(n) => i64::try_from(*n)
+            let key = match k {
+                Value::Integer(n) => i64::try_from(n)
                     .map_err(|_| serde::de::Error::custom("cwt key out of range"))?,
-                _ => {
-                    // Non-integer keys: skip
+                // Text-keyed claims are not registered in RFC 8392 but are
+                // emitted in practice; keep them rather than dropping them.
+                Value::Text(t) => {
+                    extra.insert(ClaimKey::Text(t), v);
                     continue;
                 }
+                _ => continue,
             };
             match key {
                 CWT_CLAIM_ISS => {
@@ -169,7 +217,7 @@ impl<'de> Deserialize<'de> for CwtClaims {
                     nbf = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
                 }
                 _ => {
-                    extra.insert(key, v);
+                    extra.insert(ClaimKey::Int(key), v);
                 }
             }
         }

@@ -24,8 +24,9 @@
 //! The result is exactly the shape `generate` accepts, so a round trip
 //! reproduces the original CBOR byte-for-byte.
 //!
-//! Signed CoRIMs (COSE_Sign1, tag 18) are out of scope — convert the
-//! detached/embedded payload instead.
+//! Signed CoRIMs (COSE_Sign1, tag 18) are accepted: the embedded
+//! payload is converted. Detached (nil) payloads cannot be, since the
+//! unsigned document is transported separately.
 
 use std::fs;
 use std::path::PathBuf;
@@ -44,7 +45,8 @@ use crate::prose::Root;
 
 #[derive(Parser)]
 pub struct ConvertArgs {
-    /// Path to the unsigned CoRIM CBOR file. Use "-" or omit for stdin.
+    /// Path to the CoRIM CBOR file: an unsigned `#6.501` CoRIM or a signed
+    /// `#6.18` CoRIM with an attached payload. Use "-" or omit for stdin.
     #[arg(value_name = "FILE")]
     file: Option<String>,
 
@@ -71,13 +73,25 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
     // producers) so the tag-501 decode below sees the inner map.
     let peeled = corim::compat::peel_tcg_wrappers(&bytes)
         .map_err(|e| format!("legacy-wrapper peel failed: {e}"))?;
-    let inner = peeled.as_bytes();
 
-    if inner.first() == Some(&0xD2) {
-        return Err(
-            "input is a signed CoRIM (COSE_Sign1, tag 18); convert its payload instead".into(),
-        );
-    }
+    // A signed CoRIM carries the unsigned document as its payload; convert
+    // that rather than making the caller run `extract` first.
+    let unwrapped;
+    let inner: &[u8] = if peeled.as_bytes().first() == Some(&0xD2) {
+        let env = corim::types::signed::decode_signed_corim(peeled.as_bytes())
+            .map_err(|e| format!("input looks like a signed CoRIM but failed to decode: {e}"))?;
+        let payload = env.payload.ok_or_else(|| {
+            "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is \
+             transported separately and cannot be converted from this envelope"
+                .to_string()
+        })?;
+        unwrapped = corim::compat::wrap_bare_corim_map(&payload)
+            .as_bytes()
+            .to_vec();
+        &unwrapped
+    } else {
+        peeled.as_bytes()
+    };
 
     let tagged: corim::cbor::value::Tagged<CorimMap> =
         corim::cbor::decode(inner).map_err(|e| format!("not a tag-501 unsigned CoRIM: {e}"))?;
