@@ -34,7 +34,10 @@ versions.
 - **`convert` accepts a signed CoRIM.** It previously rejected `#6.18`
   input (`convert its payload instead`), forcing a manual `extract` step.
   The embedded payload is now converted directly; detached (nil) payloads
-  are still refused, since the unsigned document travels separately.
+  are still refused, since the unsigned document travels separately. For
+  signed input the emitted template also carries an informational
+  `protected-header` object describing the COSE envelope; `generate`
+  ignores it, so the round trip stays byte-identical.
 - **Extra CWT claims are reported.** `validate` now renders the CWT
   `exp` / `nbf` claims and every additional claim in the protected
   header's CWT-Claims map, in both the text view and (as

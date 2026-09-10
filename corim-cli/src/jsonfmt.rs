@@ -3,18 +3,25 @@
 
 //! Shared JSON rendering helpers.
 //!
-//! The CLI hand-rolls its JSON output. These helpers keep escaping, CBOR
-//! value rendering, and the COSE protected-header object identical across
-//! `validate -f json` and `extract --header --json`.
+//! The COSE protected header is built once here as a `serde_json::Value` and
+//! reused by `validate -f json`, `extract --header --json`, and `convert`, so
+//! the three cannot drift apart.
 
 use std::fmt::Write as _;
 
 use base64::Engine;
 use corim::cbor::value::Value;
 use corim::types::signed::{ClaimKey, ProtectedCorimHeaderMap};
+use serde_json::{json, Map, Value as JsonValue};
+
+/// Template/report key under which the COSE protected header is emitted.
+pub const PROTECTED_HEADER_KEY: &str = "protected-header";
 
 /// Escape a string for a JSON string literal per RFC 8259 §7: the quote and
 /// reverse solidus, plus every control character below U+0020.
+///
+/// Only needed by the hand-rolled parts of the `validate` report; anything
+/// going through `serde_json` is escaped for us.
 pub fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -35,162 +42,144 @@ pub fn escape(s: &str) -> String {
     out
 }
 
-/// Render a CBOR [`Value`] as a JSON fragment. Byte strings use base64,
-/// matching `corim::json` and the `convert` / `generate` templates; tags use
-/// the `{"__cbor_tag": N, "__cbor_value": …}` envelope so the value
-/// round-trips rather than being flattened.
-pub fn cbor_value(v: &Value) -> String {
+/// Convert a CBOR [`Value`] to JSON. Byte strings use base64, matching
+/// `corim::json` and the `convert` / `generate` templates; tags use the
+/// `{"__cbor_tag": N, "__cbor_value": …}` envelope so the value round-trips
+/// rather than being flattened.
+pub fn cbor_to_json(v: &Value) -> JsonValue {
     match v {
-        Value::Null => "null".into(),
-        Value::Bool(b) => b.to_string(),
-        Value::Text(t) => format!("\"{}\"", escape(t)),
-        Value::Bytes(b) => format!(
-            "\"{}\"",
-            base64::engine::general_purpose::STANDARD.encode(b)
-        ),
+        Value::Null => JsonValue::Null,
+        Value::Bool(b) => JsonValue::Bool(*b),
+        Value::Text(t) => JsonValue::String(t.clone()),
+        Value::Bytes(b) => JsonValue::String(base64::engine::general_purpose::STANDARD.encode(b)),
         // JSON numbers only cover i64/u64; fall back to a string outside that.
         Value::Integer(n) => match (i64::try_from(*n), u64::try_from(*n)) {
-            (Ok(x), _) => x.to_string(),
-            (_, Ok(x)) => x.to_string(),
-            _ => format!("\"{n}\""),
+            (Ok(x), _) => json!(x),
+            (_, Ok(x)) => json!(x),
+            _ => JsonValue::String(n.to_string()),
         },
-        Value::Float(f) => {
-            if f.is_finite() {
-                f.to_string()
-            } else {
-                "null".into()
-            }
-        }
-        Value::Array(a) => {
-            let items: Vec<String> = a.iter().map(cbor_value).collect();
-            format!("[{}]", items.join(", "))
-        }
+        Value::Float(f) => serde_json::Number::from_f64(*f)
+            .map(JsonValue::Number)
+            .unwrap_or(JsonValue::Null),
+        Value::Array(a) => JsonValue::Array(a.iter().map(cbor_to_json).collect()),
         Value::Map(m) => {
-            let items: Vec<String> = m
-                .iter()
-                .map(|(k, val)| {
-                    let key = match k {
-                        Value::Text(t) => t.clone(),
-                        Value::Integer(n) => n.to_string(),
-                        other => cbor_value(other),
-                    };
-                    format!("\"{}\": {}", escape(&key), cbor_value(val))
-                })
-                .collect();
-            format!("{{{}}}", items.join(", "))
+            let mut obj = Map::new();
+            for (k, val) in m {
+                let key = match k {
+                    Value::Text(t) => t.clone(),
+                    Value::Integer(n) => n.to_string(),
+                    other => cbor_to_json(other).to_string(),
+                };
+                obj.insert(key, cbor_to_json(val));
+            }
+            JsonValue::Object(obj)
         }
-        Value::Tag(t, inner) => {
-            format!(
-                "{{\"__cbor_tag\": {t}, \"__cbor_value\": {}}}",
-                cbor_value(inner)
-            )
-        }
+        Value::Tag(t, inner) => json!({
+            "__cbor_tag": t,
+            "__cbor_value": cbor_to_json(inner),
+        }),
     }
 }
 
-/// Render the COSE protected header as a JSON object.
+/// Build the COSE protected header as a JSON object.
 ///
-/// Lines after the opening brace are prefixed with `indent`; the caller
-/// supplies the leading context (e.g. `"protected": `) and any trailing comma.
-pub fn protected_header(p: &ProtectedCorimHeaderMap, size: usize, indent: &str) -> String {
-    let mut out = String::from("{\n");
-    let mut fields: Vec<String> = Vec::new();
-
-    fields.push(format!("\"size\": {size}"));
-    fields.push(format!("\"alg\": \"{}\"", escape(p.alg.name())));
-    fields.push(format!("\"alg_id\": {}", p.alg.to_i64()));
+/// `size` is the length of the protected `bstr` as it appears in the
+/// envelope (the bytes that go into `Sig_structure1`).
+pub fn protected_header_value(p: &ProtectedCorimHeaderMap, size: usize) -> JsonValue {
+    let mut o = Map::new();
+    o.insert("size".into(), json!(size));
+    o.insert("alg".into(), json!(p.alg.name()));
+    o.insert("alg_id".into(), json!(p.alg.to_i64()));
     if let Some(ct) = p.content_type.as_ref() {
-        fields.push(format!("\"content_type\": \"{}\"", escape(ct)));
-    }
-    if let Some(loc) = p.payload_location.as_ref() {
-        fields.push(format!("\"payload_location\": \"{}\"", escape(loc)));
+        o.insert("content_type".into(), json!(ct));
     }
     if let Some(alg) = p.payload_hash_alg {
-        fields.push(format!("\"payload_hash_alg\": {alg}"));
+        o.insert("payload_hash_alg".into(), json!(alg));
     }
     if let Some(ct) = p.payload_preimage_content_type.as_ref() {
-        fields.push(format!(
-            "\"payload_preimage_content_type\": \"{}\"",
-            escape(ct)
-        ));
+        o.insert("payload_preimage_content_type".into(), json!(ct));
+    }
+    if let Some(loc) = p.payload_location.as_ref() {
+        o.insert("payload_location".into(), json!(loc));
     }
     if let Some(claims) = p.cwt_claims.as_ref() {
-        fields.push(format!("\"issuer\": \"{}\"", escape(&claims.iss)));
+        o.insert("issuer".into(), json!(claims.iss));
         if let Some(subject) = claims.sub.as_ref() {
-            fields.push(format!("\"subject\": \"{}\"", escape(subject)));
+            o.insert("subject".into(), json!(subject));
         }
         if let Some(exp) = claims.exp {
-            fields.push(format!("\"exp\": {exp}"));
+            o.insert("exp".into(), json!(exp));
         }
         if let Some(nbf) = claims.nbf {
-            fields.push(format!("\"nbf\": {nbf}"));
+            o.insert("nbf".into(), json!(nbf));
         }
-        if let Some(extra) = claim_extras_json(&claims.extra) {
-            fields.push(format!("\"cwt_claims_extra\": {extra}"));
+        if let Some(extra) = claim_extras(&claims.extra) {
+            o.insert("cwt_claims_extra".into(), extra);
         }
     }
     if let Some(meta) = p.corim_meta.as_ref() {
-        fields.push(format!(
-            "\"signer_name\": \"{}\"",
-            escape(&meta.signer.signer_name)
-        ));
+        o.insert("signer_name".into(), json!(meta.signer.signer_name));
         if let Some(uri) = meta.signer.signer_uri.as_ref() {
-            fields.push(format!("\"signer_uri\": \"{}\"", escape(uri)));
+            o.insert("signer_uri".into(), json!(uri));
         }
     }
-    fields.push(format!("\"has_cwt_claims\": {}", p.cwt_claims.is_some()));
-    fields.push(format!("\"has_corim_meta\": {}", p.corim_meta.is_some()));
-    fields.push(format!("\"has_kid\": {}", p.kid.is_some()));
-    fields.push(format!(
-        "\"x5chain_count\": {}",
-        p.x5chain.as_ref().map(|x| x.certs().len()).unwrap_or(0)
-    ));
-    fields.push(format!("\"has_x5t\": {}", p.x5t.is_some()));
+    o.insert("has_cwt_claims".into(), json!(p.cwt_claims.is_some()));
+    o.insert("has_corim_meta".into(), json!(p.corim_meta.is_some()));
+    o.insert("has_kid".into(), json!(p.kid.is_some()));
+    o.insert(
+        "x5chain_count".into(),
+        json!(p.x5chain.as_ref().map(|x| x.certs().len()).unwrap_or(0)),
+    );
+    o.insert("has_x5t".into(), json!(p.x5t.is_some()));
     if !p.extra.is_empty() {
-        let items: Vec<String> = p
-            .extra
-            .iter()
-            .map(|(k, v)| format!("\"{k}\": {}", cbor_value(v)))
-            .collect();
-        fields.push(format!("\"header_extra\": {{ {} }}", items.join(", ")));
+        let mut ext = Map::new();
+        for (k, v) in &p.extra {
+            ext.insert(k.to_string(), cbor_to_json(v));
+        }
+        o.insert("header_extra".into(), JsonValue::Object(ext));
     }
+    JsonValue::Object(o)
+}
 
-    for (i, f) in fields.iter().enumerate() {
-        let comma = if i + 1 < fields.len() { "," } else { "" };
-        let _ = writeln!(out, "{indent}  {f}{comma}");
+/// Render the protected header as pretty JSON, with every line after the
+/// first prefixed by `indent` so it can be embedded in a larger report.
+pub fn protected_header(p: &ProtectedCorimHeaderMap, size: usize, indent: &str) -> String {
+    let text = serde_json::to_string_pretty(&protected_header_value(p, size))
+        .unwrap_or_else(|_| "{}".into());
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.lines().enumerate() {
+        if i > 0 {
+            out.push('\n');
+            out.push_str(indent);
+        }
+        out.push_str(line);
     }
-    let _ = write!(out, "{indent}}}");
     out
 }
 
-/// Render the extra CWT claims, namespaced by key type.
+/// Extra CWT claims, namespaced by key type.
 ///
 /// JSON object keys are strings, so integer and text claim keys are kept in
 /// separate objects: `Int(6)` and `Text("6")` would otherwise collide and one
 /// entry would be lost.
-fn claim_extras_json(extra: &std::collections::BTreeMap<ClaimKey, Value>) -> Option<String> {
+fn claim_extras(extra: &std::collections::BTreeMap<ClaimKey, Value>) -> Option<JsonValue> {
     if extra.is_empty() {
         return None;
     }
-    let mut ints: Vec<String> = Vec::new();
-    let mut texts: Vec<String> = Vec::new();
+    let (mut ints, mut texts) = (Map::new(), Map::new());
     for (k, v) in extra {
         match k {
-            ClaimKey::Int(n) => ints.push(format!("\"{n}\": {}", cbor_value(v))),
-            ClaimKey::Text(t) => texts.push(format!("\"{}\": {}", escape(t), cbor_value(v))),
-            other => texts.push(format!(
-                "\"{}\": {}",
-                escape(&other.to_string()),
-                cbor_value(v)
-            )),
-        }
+            ClaimKey::Int(n) => ints.insert(n.to_string(), cbor_to_json(v)),
+            ClaimKey::Text(t) => texts.insert(t.clone(), cbor_to_json(v)),
+            other => texts.insert(other.to_string(), cbor_to_json(v)),
+        };
     }
-    let mut parts = Vec::new();
+    let mut o = Map::new();
     if !ints.is_empty() {
-        parts.push(format!("\"int\": {{ {} }}", ints.join(", ")));
+        o.insert("int".into(), JsonValue::Object(ints));
     }
     if !texts.is_empty() {
-        parts.push(format!("\"text\": {{ {} }}", texts.join(", ")));
+        o.insert("text".into(), JsonValue::Object(texts));
     }
-    Some(format!("{{ {} }}", parts.join(", ")))
+    Some(JsonValue::Object(o))
 }
