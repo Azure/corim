@@ -149,7 +149,11 @@ pub fn render_path(path: &[PathSegment]) -> String {
             PathSegment::Field(f) => s.push_str(&format!(".{f}")),
             PathSegment::Index(i) => s.push_str(&format!("[{i}]")),
             PathSegment::MapKey(k) => s.push_str(&format!("[{k}]")),
-            PathSegment::TextKey(k) => s.push_str(&format!("[\"{k}\"]")),
+            // Quote-escape so a key containing `"` or `\` stays unambiguous.
+            PathSegment::TextKey(k) => {
+                let escaped = k.replace('\\', "\\\\").replace('"', "\\\"");
+                s.push_str(&format!("[\"{escaped}\"]"));
+            }
         }
     }
     s

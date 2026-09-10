@@ -189,10 +189,80 @@ fn extra_cwt_claims_are_reported() {
         .unwrap();
 
     let v = validate_json(&signed, "cose");
-    let extra = &v["signed"]["protected"]["cwt_claims_extra"];
-    assert_eq!(extra["svn"], 7, "text-keyed claim must survive: {extra}");
-    assert_eq!(extra["6"]["__cbor_tag"], 1);
-    assert_eq!(extra["6"]["__cbor_value"], 1788524559i64);
+    let extra = v["signed"]["protected"]["cwt_claims_extra"]
+        .as_array()
+        .expect("cwt_claims_extra is an array");
+
+    let svn = extra
+        .iter()
+        .find(|e| e["key_type"] == "text" && e["key"] == "svn")
+        .expect("text-keyed claim must survive");
+    assert_eq!(svn["value"], 7);
+
+    let iat = extra
+        .iter()
+        .find(|e| e["key_type"] == "int" && e["key"] == 6)
+        .expect("integer-keyed claim must be reported");
+    assert_eq!(iat["value"]["__cbor_tag"], 1);
+    assert_eq!(iat["value"]["__cbor_value"], 1788524559i64);
+}
+
+/// JSON object keys are strings, so an integer key and the same-looking text
+/// key must not collapse onto one entry.
+#[test]
+fn int_and_text_claim_keys_do_not_collide() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims
+        .extra
+        .insert(ClaimKey::Int(6), Value::Text("as-int".into()));
+    claims
+        .extra
+        .insert(ClaimKey::Text("6".into()), Value::Text("as-text".into()));
+
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let extra = v["signed"]["protected"]["cwt_claims_extra"]
+        .as_array()
+        .unwrap();
+    assert_eq!(extra.len(), 2, "both keys must survive: {extra:?}");
+    assert!(extra
+        .iter()
+        .any(|e| e["key_type"] == "int" && e["key"] == 6 && e["value"] == "as-int"));
+    assert!(extra
+        .iter()
+        .any(|e| e["key_type"] == "text" && e["key"] == "6" && e["value"] == "as-text"));
+}
+
+/// Byte values use base64, matching `corim::json` and the convert/generate
+/// templates rather than introducing a second encoding.
+#[test]
+fn claim_byte_values_use_base64() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims.extra.insert(
+        ClaimKey::Text("blob".into()),
+        Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
+    );
+
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let extra = v["signed"]["protected"]["cwt_claims_extra"]
+        .as_array()
+        .unwrap();
+    assert_eq!(extra[0]["value"], "3q2+7w==");
 }
 
 #[test]
