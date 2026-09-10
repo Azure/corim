@@ -410,6 +410,11 @@ A signed (`#6.18`) CoRIM is accepted directly: the embedded payload is
 converted, so no separate `extract` step is needed. Detached (nil)
 payloads cannot be converted — the unsigned document travels separately.
 
+For signed input the template also carries a `protected-header` object
+describing the COSE envelope (algorithm, CWT issuer/subject/claims,
+`corim-meta` signer, certificate presence). It is informational —
+`generate` ignores it, so the round trip stays byte-identical.
+
 This differs from `validate -f json`, which prints a validation
 *summary* (validity, counts, triple types), not the CoRIM contents. Use
 `convert` when you want the full structure as editable JSON, and `validate

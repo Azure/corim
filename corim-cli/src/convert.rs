@@ -77,6 +77,7 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
     // A signed CoRIM carries the unsigned document as its payload; convert
     // that rather than making the caller run `extract` first.
     let unwrapped;
+    let mut protected_header = None;
     let inner: &[u8] = if peeled.as_bytes().first() == Some(&0xD2) {
         let env = corim::types::signed::decode_signed_corim(peeled.as_bytes())
             .map_err(|e| format!("input looks like a signed CoRIM but failed to decode: {e}"))?;
@@ -85,6 +86,10 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
              transported separately and cannot be converted from this envelope"
                 .to_string()
         })?;
+        protected_header = Some(crate::jsonfmt::protected_header_value(
+            &env.protected,
+            env.protected_header_bytes.len(),
+        ));
         unwrapped = corim::compat::wrap_bare_corim_map(&payload)
             .as_bytes()
             .to_vec();
@@ -110,6 +115,11 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
     let mut template = build_template(&corim)?;
     if let Some(p) = profile {
         apply_mval_alias_names(&mut template, p);
+    }
+    // The envelope's protected header is informational: `generate` ignores
+    // unknown top-level keys, so the template still round-trips.
+    if let (Some(header), Some(obj)) = (protected_header, template.as_object_mut()) {
+        obj.insert(crate::jsonfmt::PROTECTED_HEADER_KEY.into(), header);
     }
     let json = serde_json::to_string_pretty(&template)
         .map_err(|e| format!("serializing template: {e}"))?;
