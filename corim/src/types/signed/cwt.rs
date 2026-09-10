@@ -58,10 +58,12 @@ impl From<&str> for ClaimKey {
 }
 
 impl core::fmt::Display for ClaimKey {
+    /// Text keys are quoted so they cannot be confused with an integer key of
+    /// the same digits (CBOR diagnostic notation, RFC 8949 §8).
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             Self::Int(n) => write!(f, "{n}"),
-            Self::Text(t) => write!(f, "{t}"),
+            Self::Text(t) => write!(f, "\"{t}\""),
         }
     }
 }

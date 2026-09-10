@@ -1560,3 +1560,15 @@ fn build_sig_structure1_with_aad_differs_from_without() {
     let tbs2 = build_sig_structure1(&[0xA0], &[0xFF], &[0x01]).unwrap();
     assert_ne!(tbs1, tbs2);
 }
+
+/// `Display` must distinguish a text key from an integer key of the same
+/// digits, otherwise the rendered report is ambiguous.
+#[test]
+fn claim_key_display_distinguishes_int_and_text() {
+    assert_eq!(ClaimKey::Int(6).to_string(), "6");
+    assert_eq!(ClaimKey::Text("6".into()).to_string(), "\"6\"");
+    assert_ne!(
+        ClaimKey::Int(6).to_string(),
+        ClaimKey::Text("6".into()).to_string()
+    );
+}
