@@ -43,6 +43,30 @@ pub enum Value {
     Float(f64),
 }
 
+/// Escape a CBOR text string for the quoted form used in diagnostic
+/// notation (RFC 8949 §8): the quote and reverse solidus, the short forms
+/// for backspace/formfeed/newline/return/tab, and `\uXXXX` for any other
+/// control character.
+pub(crate) fn escape_text(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 impl Value {
     /// Try to extract as integer.
     pub fn into_integer(self) -> Option<i128> {

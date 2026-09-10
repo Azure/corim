@@ -187,5 +187,5 @@ fn text_claim_key_path_is_escaped() {
     assert!(nl.ends_with(r#"["a\nb"]"#), "{nl:?}");
 
     let ctrl = path_for("a\u{1}b");
-    assert!(ctrl.ends_with(r#"["a\u{0001}b"]"#), "{ctrl:?}");
+    assert!(ctrl.ends_with(r#"["a\u0001b"]"#), "{ctrl:?}");
 }

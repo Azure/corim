@@ -1572,3 +1572,20 @@ fn claim_key_display_distinguishes_int_and_text() {
         ClaimKey::Text("6".into()).to_string()
     );
 }
+
+/// A text key's contents are escaped, so a quote or newline cannot make the
+/// rendered report ambiguous or split it across lines.
+#[test]
+fn claim_key_display_escapes_text_contents() {
+    assert_eq!(
+        ClaimKey::Text(r#"a"b\c"#.into()).to_string(),
+        r#""a\"b\\c""#
+    );
+    let nl = ClaimKey::Text("a\nb".into()).to_string();
+    assert_eq!(nl, r#""a\nb""#);
+    assert!(!nl.contains('\n'), "must stay on one line");
+    assert_eq!(
+        ClaimKey::Text("a\u{1}b".into()).to_string(),
+        r#""a\u0001b""#
+    );
+}
