@@ -806,16 +806,21 @@ fn json_escape(s: &str) -> String {
     out
 }
 
-/// Render a CBOR `Value` as a JSON fragment. Byte strings become hex; tags
-/// use the `{"__cbor_tag": N, "__cbor_value": …}` envelope the `json` module
-/// already uses, so the value round-trips rather than being flattened.
+/// Render a CBOR `Value` as a JSON fragment. Byte strings use base64, matching
+/// `corim::json` and the `convert` / `generate` templates; tags use the
+/// `{"__cbor_tag": N, "__cbor_value": …}` envelope so the value round-trips
+/// rather than being flattened.
 fn cbor_json(v: &corim::cbor::value::Value) -> String {
+    use base64::Engine;
     use corim::cbor::value::Value;
     match v {
         Value::Null => "null".into(),
         Value::Bool(b) => b.to_string(),
         Value::Text(t) => format!("\"{}\"", json_escape(t)),
-        Value::Bytes(b) => format!("\"{}\"", hex::encode(b)),
+        Value::Bytes(b) => format!(
+            "\"{}\"",
+            base64::engine::general_purpose::STANDARD.encode(b)
+        ),
         // JSON numbers only cover i64/u64; fall back to a string outside that.
         Value::Integer(n) => match (i64::try_from(*n), u64::try_from(*n)) {
             (Ok(x), _) => x.to_string(),
@@ -888,13 +893,32 @@ fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
             println!("{indent}    \"nbf\": {nbf},");
         }
         if !claims.extra.is_empty() {
+            // A typed array, not an object: JSON object keys are strings, so
+            // `Int(6)` and `Text("6")` would collide and one would be lost.
             let entries: Vec<String> = claims
                 .extra
                 .iter()
-                .map(|(k, v)| format!("\"{}\": {}", json_escape(&k.to_string()), cbor_json(v)))
+                .map(|(k, v)| match k {
+                    corim::types::signed::ClaimKey::Int(n) => {
+                        format!(
+                            "{{\"key_type\": \"int\", \"key\": {n}, \"value\": {}}}",
+                            cbor_json(v)
+                        )
+                    }
+                    corim::types::signed::ClaimKey::Text(t) => format!(
+                        "{{\"key_type\": \"text\", \"key\": \"{}\", \"value\": {}}}",
+                        json_escape(t),
+                        cbor_json(v)
+                    ),
+                    other => format!(
+                        "{{\"key_type\": \"other\", \"key\": \"{}\", \"value\": {}}}",
+                        json_escape(&other.to_string()),
+                        cbor_json(v)
+                    ),
+                })
                 .collect();
             println!(
-                "{indent}    \"cwt_claims_extra\": {{ {} }},",
+                "{indent}    \"cwt_claims_extra\": [{}],",
                 entries.join(", ")
             );
         }

@@ -158,3 +158,32 @@ fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
         "a baseline extension key (even a null one) missing from the input is a difference"
     );
 }
+
+/// A text-keyed claim containing `"` or `\` must not produce an ambiguous
+/// rendered path.
+#[test]
+fn text_claim_key_path_is_escaped() {
+    use corim::types::signed::ClaimKey;
+
+    fn with_claim(key: &str) -> ProtectedCorimHeaderMap {
+        let mut claims = CwtClaims::new("iss");
+        claims
+            .extra
+            .insert(ClaimKey::Text(key.into()), Value::Integer(1));
+        header().cwt_claims(claims).build()
+    }
+
+    let b = with_claim("a\"b\\c");
+    let i = header().cwt_claims(CwtClaims::new("iss")).build();
+    let r = compare_headers(&i, &b);
+
+    let paths: Vec<String> = r
+        .value_differences
+        .iter()
+        .map(|v| render_path(&v.path))
+        .collect();
+    assert!(
+        paths.iter().any(|p| p.ends_with(r#"["a\"b\\c"]"#)),
+        "quote and backslash must be escaped: {paths:?}"
+    );
+}
