@@ -218,6 +218,11 @@ corim-cli convert myfile.corim -o template.json
 # Extract the unsigned CoRIM payload from a signed CoRIM
 corim-cli extract signed.cose -o unsigned.cbor
 
+# Extract the COSE protected header instead (raw bstr, or decoded JSON).
+# Works on detached envelopes, where the header is all there is.
+corim-cli extract signed.cose --header -o header.cbor
+corim-cli extract signed.cose --header --json
+
 # Sign (bring-your-own-signer): prepare a staging envelope + to-be-signed bytes,
 # sign the TBS externally (HSM / openssl / ...), then inject the signature
 corim-cli sign prepare unsigned.cbor --alg ES256 --signer-name "ACME Ltd." \
