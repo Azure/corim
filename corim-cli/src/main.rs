@@ -3,7 +3,6 @@
 
 //! CLI tool for validating and inspecting CoRIM documents.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read};
 use std::process;
@@ -15,6 +14,7 @@ mod convert;
 mod display;
 mod edn;
 mod generate;
+mod jsonfmt;
 mod prose;
 mod sign;
 
@@ -571,6 +571,17 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     if let Some(meta) = info.protected.corim_meta.as_ref() {
         println!("{}Signer name:  {}", sub, meta.signer.signer_name);
     }
+    if let Some(claims) = info.protected.cwt_claims.as_ref() {
+        if let Some(exp) = claims.exp {
+            println!("{}Expires:      {} (epoch)", sub, exp);
+        }
+        if let Some(nbf) = claims.nbf {
+            println!("{}Not before:   {} (epoch)", sub, nbf);
+        }
+        for (k, v) in &claims.extra {
+            println!("{}CWT claim {}: {}", sub, k, display::value_summary(v));
+        }
+    }
     let metadata = match (info.has_cwt_claims, info.has_corim_meta) {
         (true, true) => "CWT-Claims + corim-meta",
         (true, false) => "CWT-Claims",
@@ -723,7 +734,7 @@ fn print_json_output(
         println!("  \"errors\": [");
         for (i, e) in errors.iter().enumerate() {
             let comma = if i + 1 < errors.len() { "," } else { "" };
-            println!("    \"{}\"{}", json_escape(e), comma);
+            println!("    \"{}\"{}", jsonfmt::escape(e), comma);
         }
         println!("  ],");
     }
@@ -732,7 +743,7 @@ fn print_json_output(
         println!("  \"warnings\": [");
         for (i, w) in warnings.iter().enumerate() {
             let comma = if i + 1 < warnings.len() { "," } else { "" };
-            println!("    \"{}\"{}", json_escape(w), comma);
+            println!("    \"{}\"{}", jsonfmt::escape(w), comma);
         }
         println!("  ],");
     }
@@ -748,7 +759,7 @@ fn print_json_output(
     if let Some(ref profile) = corim.profile {
         println!(
             "  \"profile\": \"{}\",",
-            json_escape(&display::profile_str(profile))
+            jsonfmt::escape(&display::profile_str(profile))
         );
     }
 
@@ -773,28 +784,6 @@ fn print_json_output(
     println!("}}");
 }
 
-/// Escape a string for a JSON string literal per RFC 8259 §7: the quote and
-/// reverse solidus, plus every control character below U+0020.
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// Emit the `"signed"` object, mirroring the fields the text renderer shows
 /// for the four COSE_Sign1 elements (RFC 9052 §4).
 fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
@@ -805,34 +794,10 @@ fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
         corim::types::tags::TAG_SIGNED_CORIM
     );
 
-    println!("{indent}  \"protected\": {{");
     println!(
-        "{indent}    \"size\": {},",
-        info.protected_header_bytes.len()
+        "{indent}  \"protected\": {},",
+        jsonfmt::protected_header(p, info.protected_header_bytes.len(), &format!("{indent}  "))
     );
-    println!("{indent}    \"alg\": \"{}\",", json_escape(info.alg.name()));
-    println!("{indent}    \"alg_id\": {},", info.alg.to_i64());
-    if let Some(ref ct) = info.content_type {
-        println!("{indent}    \"content_type\": \"{}\",", json_escape(ct));
-    }
-    if let Some(claims) = p.cwt_claims.as_ref() {
-        println!("{indent}    \"issuer\": \"{}\",", json_escape(&claims.iss));
-        if let Some(subject) = claims.sub.as_ref() {
-            println!("{indent}    \"subject\": \"{}\",", json_escape(subject));
-        }
-    }
-    if let Some(meta) = p.corim_meta.as_ref() {
-        println!(
-            "{indent}    \"signer_name\": \"{}\",",
-            json_escape(&meta.signer.signer_name)
-        );
-    }
-    println!("{indent}    \"has_cwt_claims\": {},", info.has_cwt_claims);
-    println!("{indent}    \"has_corim_meta\": {},", info.has_corim_meta);
-    println!("{indent}    \"has_kid\": {},", info.has_kid);
-    println!("{indent}    \"x5chain_count\": {},", info.x5chain_count);
-    println!("{indent}    \"has_x5t\": {}", info.has_x5t);
-    println!("{indent}  }},");
 
     println!(
         "{indent}  \"unprotected\": {{ \"entries\": {}, \"size\": {} }},",

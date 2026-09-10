@@ -227,3 +227,83 @@ fn sign_prepare_rejects_unknown_algorithm() {
 
     let _ = std::fs::remove_file(&ut);
 }
+
+/// `extract --header` writes the exact protected-header `bstr` contents, so
+/// the bytes can be fed back into a `Sig_structure1` verification.
+#[test]
+fn extract_header_returns_protected_header_bytes() {
+    let signed = make_signed(&sample_unsigned_corim(), false);
+    let sc = unique_temp("extract_hdr_signed", "cose");
+    let out = unique_temp("extract_hdr_out", "cbor");
+    std::fs::write(&sc, &signed).unwrap();
+
+    let s = Command::new(bin())
+        .args([
+            "extract",
+            sc.to_str().unwrap(),
+            "--header",
+            "-o",
+            out.to_str().unwrap(),
+        ])
+        .status()
+        .expect("extract --header");
+    assert!(s.success());
+
+    let envelope = corim::types::signed::decode_signed_corim(&signed).unwrap();
+    assert_eq!(
+        std::fs::read(&out).unwrap(),
+        envelope.protected_header_bytes
+    );
+
+    let _ = std::fs::remove_file(&sc);
+    let _ = std::fs::remove_file(&out);
+}
+
+/// `--header --json` emits the decoded header, and works on a detached
+/// envelope where there is no payload to extract at all.
+#[test]
+fn extract_header_json_works_on_detached_envelope() {
+    let signed = make_signed(&sample_unsigned_corim(), true);
+    let sc = unique_temp("extract_hdr_detached", "cose");
+    std::fs::write(&sc, &signed).unwrap();
+
+    // The payload path still fails for a detached envelope...
+    let payload_attempt = Command::new(bin())
+        .args(["extract", sc.to_str().unwrap(), "-o", "-"])
+        .output()
+        .unwrap();
+    assert!(!payload_attempt.status.success());
+
+    // ...but the header is available.
+    let out = Command::new(bin())
+        .args(["extract", sc.to_str().unwrap(), "--header", "--json"])
+        .output()
+        .expect("extract --header --json");
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("header JSON must parse");
+    assert_eq!(v["issuer"], "Test Signer");
+    assert!(v["size"].as_u64().unwrap() > 0);
+
+    let _ = std::fs::remove_file(&sc);
+}
+
+/// `--json` is only meaningful with `--header`.
+#[test]
+fn extract_json_requires_header() {
+    let signed = make_signed(&sample_unsigned_corim(), false);
+    let sc = unique_temp("extract_json_no_hdr", "cose");
+    std::fs::write(&sc, &signed).unwrap();
+
+    let out = Command::new(bin())
+        .args(["extract", sc.to_str().unwrap(), "--json"])
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "--json alone must be rejected");
+
+    let _ = std::fs::remove_file(&sc);
+}

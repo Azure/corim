@@ -99,11 +99,35 @@ fn cwt_claims_minimal() {
 #[test]
 fn cwt_claims_with_extra_fields() {
     let mut claims = CwtClaims::new("Test");
-    claims.extra.insert(100, Value::Text("custom".into()));
+    claims
+        .extra
+        .insert(ClaimKey::Int(100), Value::Text("custom".into()));
 
     let bytes = cbor::encode(&claims).unwrap();
     let decoded: CwtClaims = cbor::decode(&bytes).unwrap();
-    assert_eq!(decoded.extra.get(&100), Some(&Value::Text("custom".into())));
+    assert_eq!(
+        decoded.extra.get(&ClaimKey::Int(100)),
+        Some(&Value::Text("custom".into()))
+    );
+}
+
+/// Real producers emit text-keyed claims (e.g. Azure SOC-MANA CoRIMs carry
+/// `"svn"`); they must survive a decode/encode round-trip rather than being
+/// silently dropped.
+#[test]
+fn cwt_claims_with_text_key_round_trip() {
+    let mut claims = CwtClaims::new("Test");
+    claims
+        .extra
+        .insert(ClaimKey::Text("svn".into()), Value::Integer(1));
+
+    let bytes = cbor::encode(&claims).unwrap();
+    let decoded: CwtClaims = cbor::decode(&bytes).unwrap();
+    assert_eq!(
+        decoded.extra.get(&ClaimKey::Text("svn".into())),
+        Some(&Value::Integer(1))
+    );
+    assert_eq!(decoded, claims);
 }
 
 #[test]
@@ -1535,4 +1559,141 @@ fn build_sig_structure1_with_aad_differs_from_without() {
     let tbs1 = build_sig_structure1(&[0xA0], &[], &[0x01]).unwrap();
     let tbs2 = build_sig_structure1(&[0xA0], &[0xFF], &[0x01]).unwrap();
     assert_ne!(tbs1, tbs2);
+}
+
+/// `Display` must distinguish a text key from an integer key of the same
+/// digits, otherwise the rendered report is ambiguous.
+#[test]
+fn claim_key_display_distinguishes_int_and_text() {
+    assert_eq!(ClaimKey::Int(6).to_string(), "6");
+    assert_eq!(ClaimKey::Text("6".into()).to_string(), "\"6\"");
+    assert_ne!(
+        ClaimKey::Int(6).to_string(),
+        ClaimKey::Text("6".into()).to_string()
+    );
+}
+
+/// A text key's contents are escaped, so a quote or newline cannot make the
+/// rendered report ambiguous or split it across lines.
+#[test]
+fn claim_key_display_escapes_text_contents() {
+    assert_eq!(
+        ClaimKey::Text(r#"a"b\c"#.into()).to_string(),
+        r#""a\"b\\c""#
+    );
+    let nl = ClaimKey::Text("a\nb".into()).to_string();
+    assert_eq!(nl, r#""a\nb""#);
+    assert!(!nl.contains('\n'), "must stay on one line");
+    assert_eq!(
+        ClaimKey::Text("a\u{1}b".into()).to_string(),
+        r#""a\u0001b""#
+    );
+    // DEL and the C1 range are control characters too.
+    assert_eq!(
+        ClaimKey::Text("a\u{7f}b".into()).to_string(),
+        r#""a\u007fb""#
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{85}b".into()).to_string(),
+        r#""a\u0085b""#,
+        "U+0085 NEL is a line break in some consumers"
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{9f}b".into()).to_string(),
+        r#""a\u009fb""#
+    );
+    // U+2028/U+2029 are not Cc but still break lines in some renderers.
+    assert_eq!(
+        ClaimKey::Text("a\u{2028}b".into()).to_string(),
+        r#""a\u2028b""#
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{2029}b".into()).to_string(),
+        r#""a\u2029b""#
+    );
+    // Printable non-ASCII must pass through untouched.
+    assert_eq!(
+        ClaimKey::Text("aé\u{a0}b".into()).to_string(),
+        "\"aé\u{a0}b\""
+    );
+}
+
+/// A CBOR map must not repeat a key (RFC 8949 §5.6). Letting a later entry
+/// win would make the signer identity ambiguous between parsers, so a
+/// duplicate standard claim is rejected rather than silently resolved.
+#[test]
+fn cwt_claims_reject_duplicate_standard_keys() {
+    for (key, first, second) in [
+        (
+            CWT_CLAIM_ISS,
+            Value::Text("a".into()),
+            Value::Text("b".into()),
+        ),
+        (
+            CWT_CLAIM_SUB,
+            Value::Text("a".into()),
+            Value::Text("b".into()),
+        ),
+        (CWT_CLAIM_EXP, Value::Integer(1), Value::Integer(2)),
+        (CWT_CLAIM_NBF, Value::Integer(1), Value::Integer(2)),
+    ] {
+        let mut entries = vec![(
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        )];
+        entries.push((Value::Integer(key.into()), first));
+        entries.push((Value::Integer(key.into()), second));
+
+        let bytes = cbor::encode(&Value::Map(entries)).unwrap();
+        let err = cbor::decode::<CwtClaims>(&bytes)
+            .expect_err(&format!("duplicate key {key} must be rejected"));
+        assert!(
+            format!("{err}").contains("duplicate"),
+            "unexpected error for key {key}: {err}"
+        );
+    }
+}
+
+#[test]
+fn cwt_claims_reject_duplicate_extension_keys() {
+    // Integer extension key repeated.
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Integer(100), Value::Integer(1)),
+        (Value::Integer(100), Value::Integer(2)),
+    ]))
+    .unwrap();
+    assert!(format!("{}", cbor::decode::<CwtClaims>(&bytes).unwrap_err()).contains("duplicate"));
+
+    // Text extension key repeated.
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Text("svn".into()), Value::Integer(1)),
+        (Value::Text("svn".into()), Value::Integer(2)),
+    ]))
+    .unwrap();
+    assert!(format!("{}", cbor::decode::<CwtClaims>(&bytes).unwrap_err()).contains("duplicate"));
+}
+
+/// An integer key and a text key that merely look alike are distinct claims,
+/// not duplicates.
+#[test]
+fn cwt_claims_allow_int_and_text_keys_that_look_alike() {
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Integer(100), Value::Text("as-int".into())),
+        (Value::Text("100".into()), Value::Text("as-text".into())),
+    ]))
+    .unwrap();
+    let claims: CwtClaims = cbor::decode(&bytes).unwrap();
+    assert_eq!(claims.extra.len(), 2);
 }

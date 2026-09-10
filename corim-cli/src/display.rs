@@ -448,10 +448,10 @@ fn print_measurement(
 /// One-line summary of a CBOR `Value` that highlights tags and primitive
 /// payloads. Used for `extra_entries` in measurement-values where the
 /// concrete shape is profile-specific.
-fn value_summary(v: &Value) -> String {
+pub fn value_summary(v: &Value) -> String {
     match v {
         Value::Integer(n) => n.to_string(),
-        Value::Text(s) => format!("\"{}\"", s),
+        Value::Text(s) => format!("\"{}\"", corim::cbor::value::escape_text(s)),
         Value::Bytes(b) => format!("bytes({} B) {}", b.len(), hex_short(b)),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".into(),

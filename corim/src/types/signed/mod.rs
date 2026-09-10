@@ -40,7 +40,7 @@ pub use x509::{
 
 pub mod cwt;
 pub use cwt::{
-    CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_IAT, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+    ClaimKey, CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_IAT, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
 };
 
 pub mod header;

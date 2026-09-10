@@ -295,3 +295,235 @@ fn convert_emits_psa_mval_alias_name() {
         let _ = std::fs::remove_file(f);
     }
 }
+
+/// `convert` accepts a signed CoRIM directly: it converts the embedded
+/// payload rather than requiring a separate `extract` step first.
+#[test]
+fn convert_accepts_a_signed_corim() {
+    let src_t = unique_temp("conv_signed_src", "json");
+    let unsigned = unique_temp("conv_signed_unsigned", "cbor");
+    let signed = unique_temp("conv_signed_signed", "cose");
+    let back_t = unique_temp("conv_signed_back", "json");
+    let back_c = unique_temp("conv_signed_back", "cbor");
+
+    std::fs::write(
+        &src_t,
+        r#"{
+          "corim-id": "signed-convert",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    // template -> unsigned CBOR -> signed COSE (placeholder signature)
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            unsigned.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(bin())
+        .args([
+            "sign",
+            "prepare",
+            unsigned.to_str().unwrap(),
+            "--alg",
+            "ES256",
+            "--signer-name",
+            "Test Signer",
+            "--out-staging",
+            signed.to_str().unwrap(),
+            "--out-tbs",
+            unique_temp("conv_signed_tbs", "bin").to_str().unwrap(),
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    // convert straight from the signed CoRIM
+    let s = Command::new(bin())
+        .args([
+            "convert",
+            signed.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap(),
+        ])
+        .status()
+        .expect("convert signed");
+    assert!(s.success(), "convert must accept a signed CoRIM");
+
+    // and the template still regenerates the original payload byte-for-byte
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            back_t.to_str().unwrap(),
+            "-o",
+            back_c.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(
+        std::fs::read(&unsigned).unwrap(),
+        std::fs::read(&back_c).unwrap(),
+        "convert(signed) -> generate must reproduce the payload"
+    );
+
+    for f in [&src_t, &unsigned, &signed, &back_t, &back_c] {
+        let _ = std::fs::remove_file(f);
+    }
+}
+
+/// Converting a signed CoRIM also carries the COSE protected header into the
+/// template, without breaking the `generate` round trip (`generate` ignores
+/// the informational key).
+#[test]
+fn convert_signed_includes_protected_header() {
+    let src_t = unique_temp("conv_hdr_src", "json");
+    let unsigned = unique_temp("conv_hdr_unsigned", "cbor");
+    let signed = unique_temp("conv_hdr_signed", "cose");
+    let back_t = unique_temp("conv_hdr_back", "json");
+    let back_c = unique_temp("conv_hdr_back", "cbor");
+
+    std::fs::write(
+        &src_t,
+        r#"{
+          "corim-id": "hdr-convert",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            unsigned.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(bin())
+        .args([
+            "sign",
+            "prepare",
+            unsigned.to_str().unwrap(),
+            "--alg",
+            "ES256",
+            "--signer-name",
+            "Header Signer",
+            "--out-staging",
+            signed.to_str().unwrap(),
+            "--out-tbs",
+            unique_temp("conv_hdr_tbs", "bin").to_str().unwrap(),
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    assert!(Command::new(bin())
+        .args([
+            "convert",
+            signed.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&back_t).unwrap()).unwrap();
+    let header = &t["protected-header"];
+    assert_eq!(header["issuer"], "Header Signer");
+    assert_eq!(header["alg"], "ES256 (deprecated)");
+    assert!(header["size"].as_u64().unwrap() > 0);
+
+    // The informational key must not disturb the round trip.
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            back_t.to_str().unwrap(),
+            "-o",
+            back_c.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert_eq!(
+        std::fs::read(&unsigned).unwrap(),
+        std::fs::read(&back_c).unwrap(),
+        "protected-header key must not affect the regenerated payload"
+    );
+
+    for f in [&src_t, &unsigned, &signed, &back_t, &back_c] {
+        let _ = std::fs::remove_file(f);
+    }
+}
+
+/// An unsigned CoRIM has no envelope, so no header key is emitted.
+#[test]
+fn convert_unsigned_has_no_protected_header_key() {
+    let src_t = unique_temp("conv_nohdr_src", "json");
+    let cbor = unique_temp("conv_nohdr", "cbor");
+    let back_t = unique_temp("conv_nohdr_back", "json");
+
+    std::fs::write(
+        &src_t,
+        r#"{
+          "corim-id": "no-hdr",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
+              ] } }
+          ]
+        }"#,
+    )
+    .unwrap();
+
+    assert!(Command::new(bin())
+        .args([
+            "generate",
+            src_t.to_str().unwrap(),
+            "-o",
+            cbor.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+    assert!(Command::new(bin())
+        .args([
+            "convert",
+            cbor.to_str().unwrap(),
+            "-o",
+            back_t.to_str().unwrap()
+        ])
+        .status()
+        .unwrap()
+        .success());
+
+    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&back_t).unwrap()).unwrap();
+    assert!(t.get("protected-header").is_none());
+
+    for f in [&src_t, &cbor, &back_t] {
+        let _ = std::fs::remove_file(f);
+    }
+}

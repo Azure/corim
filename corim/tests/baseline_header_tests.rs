@@ -158,3 +158,34 @@ fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
         "a baseline extension key (even a null one) missing from the input is a difference"
     );
 }
+
+/// A text-keyed claim containing a quote, backslash, or control character
+/// must not produce an ambiguous or multi-line path.
+#[test]
+fn text_claim_key_path_is_escaped() {
+    use corim::types::signed::ClaimKey;
+
+    fn path_for(key: &str) -> String {
+        let mut claims = CwtClaims::new("iss");
+        claims
+            .extra
+            .insert(ClaimKey::Text(key.into()), Value::Integer(1));
+        let b = header().cwt_claims(claims).build();
+        let i = header().cwt_claims(CwtClaims::new("iss")).build();
+        let r = compare_headers(&i, &b);
+        r.value_differences
+            .iter()
+            .map(|v| render_path(&v.path))
+            .find(|p| p.contains("cwt-extension"))
+            .expect("claim difference reported")
+    }
+
+    assert!(path_for(r#"a"b\c"#).ends_with(r#"["a\"b\\c"]"#));
+
+    let nl = path_for("a\nb");
+    assert!(!nl.contains('\n'), "path must stay on one line: {nl:?}");
+    assert!(nl.ends_with(r#"["a\nb"]"#), "{nl:?}");
+
+    let ctrl = path_for("a\u{1}b");
+    assert!(ctrl.ends_with(r#"["a\u0001b"]"#), "{ctrl:?}");
+}

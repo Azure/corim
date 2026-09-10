@@ -25,6 +25,26 @@ versions.
 
 ### Added
 
+- **`extract --header`.** Extracts the COSE protected header instead of the
+  payload — the exact `bstr` contents that go into `Sig_structure1`, so the
+  bytes can be re-verified. `--header --json` emits the decoded header using
+  the same renderer as `validate -f json`. Both work on **detached**
+  envelopes, where the header is the only thing the envelope carries and
+  payload extraction necessarily fails.
+- **`convert` accepts a signed CoRIM.** It previously rejected `#6.18`
+  input (`convert its payload instead`), forcing a manual `extract` step.
+  The embedded payload is now converted directly; detached (nil) payloads
+  are still refused, since the unsigned document travels separately. For
+  signed input the emitted template also carries an informational
+  `protected-header` object describing the COSE envelope; `generate`
+  ignores it, so the round trip stays byte-identical.
+- **Extra CWT claims are reported.** `validate` now renders the CWT
+  `exp` / `nbf` claims and every additional claim in the protected
+  header's CWT-Claims map, in both the text view and (as
+  `cwt_claims_extra`) `-f json`. Previously even captured claims such as
+  `iat` were invisible. In JSON the claims are namespaced by key type
+  (`cwt_claims_extra.int` / `.text`), so an integer key and a same-looking
+  text key cannot collide on one JSON object key.
 - **`validate -f json` reports the signed envelope.** The JSON report
   previously omitted the COSE_Sign1 envelope entirely, so a signed CoRIM
   produced the same output as an unsigned one and the protected-header
@@ -78,6 +98,13 @@ versions.
 
 ### Fixed
 
+- **Text-keyed CWT claims were silently dropped.** The CWT-Claims map is
+  keyed by `int / tstr`, but `CwtClaims::extra` was `BTreeMap<i64, Value>`
+  and the decoder skipped every non-integer key, so a claim such as the
+  `"svn"` carried by Azure SOC-MANA CoRIMs was lost. **Breaking:** `extra`
+  is now `BTreeMap<ClaimKey, Value>`, where the new
+  `ClaimKey` enum is either `Int(i64)` or `Text(String)`. Migrate by
+  wrapping existing integer keys: `extra.insert(ClaimKey::Int(6), …)`.
 - **JSON round-trip drops CBOR epoch tag (`#6.1`).** `to_json` flattened
   a tagged epoch-time value to a bare integer, which `from_json` could
   not recover as a tag. Harmless for typed `validity` fields (re-tagged
