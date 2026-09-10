@@ -195,32 +195,63 @@ impl<'de> Deserialize<'de> for CwtClaims {
                 // Text-keyed claims are not registered in RFC 8392 but are
                 // emitted in practice; keep them rather than dropping them.
                 Value::Text(t) => {
-                    extra.insert(ClaimKey::Text(t), v);
+                    if extra.insert(ClaimKey::Text(t.clone()), v).is_some() {
+                        return Err(serde::de::Error::custom(alloc::format!(
+                            "cwt-claims: duplicate claim key \"{t}\""
+                        )));
+                    }
                     continue;
                 }
                 _ => continue,
             };
+            // A CBOR map must not repeat a key (RFC 8949 §5.6). Silently
+            // letting a later entry win would make the signer identity and
+            // validity window ambiguous between parsers.
+            macro_rules! set_once {
+                ($slot:ident, $name:literal, $value:expr) => {{
+                    if $slot.is_some() {
+                        return Err(serde::de::Error::custom(concat!(
+                            "cwt-claims: duplicate ",
+                            $name,
+                            " claim"
+                        )));
+                    }
+                    $slot = Some($value);
+                }};
+            }
             match key {
-                CWT_CLAIM_ISS => {
-                    iss = Some(match v {
+                CWT_CLAIM_ISS => set_once!(
+                    iss,
+                    "iss",
+                    match v {
                         Value::Text(t) => t,
                         _ => return Err(serde::de::Error::custom("iss must be tstr")),
-                    });
-                }
-                CWT_CLAIM_SUB => {
-                    sub = Some(match v {
+                    }
+                ),
+                CWT_CLAIM_SUB => set_once!(
+                    sub,
+                    "sub",
+                    match v {
                         Value::Text(t) => t,
                         _ => return Err(serde::de::Error::custom("sub must be tstr")),
-                    });
-                }
-                CWT_CLAIM_EXP => {
-                    exp = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
-                }
-                CWT_CLAIM_NBF => {
-                    nbf = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
-                }
+                    }
+                ),
+                CWT_CLAIM_EXP => set_once!(
+                    exp,
+                    "exp",
+                    value_to_epoch(&v).map_err(serde::de::Error::custom)?
+                ),
+                CWT_CLAIM_NBF => set_once!(
+                    nbf,
+                    "nbf",
+                    value_to_epoch(&v).map_err(serde::de::Error::custom)?
+                ),
                 _ => {
-                    extra.insert(ClaimKey::Int(key), v);
+                    if extra.insert(ClaimKey::Int(key), v).is_some() {
+                        return Err(serde::de::Error::custom(alloc::format!(
+                            "cwt-claims: duplicate claim key {key}"
+                        )));
+                    }
                 }
             }
         }
