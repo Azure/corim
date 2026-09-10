@@ -3,7 +3,6 @@
 
 //! CLI tool for validating and inspecting CoRIM documents.
 
-use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Read};
 use std::process;
@@ -15,6 +14,7 @@ mod convert;
 mod display;
 mod edn;
 mod generate;
+mod jsonfmt;
 mod prose;
 mod sign;
 
@@ -734,7 +734,7 @@ fn print_json_output(
         println!("  \"errors\": [");
         for (i, e) in errors.iter().enumerate() {
             let comma = if i + 1 < errors.len() { "," } else { "" };
-            println!("    \"{}\"{}", json_escape(e), comma);
+            println!("    \"{}\"{}", jsonfmt::escape(e), comma);
         }
         println!("  ],");
     }
@@ -743,7 +743,7 @@ fn print_json_output(
         println!("  \"warnings\": [");
         for (i, w) in warnings.iter().enumerate() {
             let comma = if i + 1 < warnings.len() { "," } else { "" };
-            println!("    \"{}\"{}", json_escape(w), comma);
+            println!("    \"{}\"{}", jsonfmt::escape(w), comma);
         }
         println!("  ],");
     }
@@ -759,7 +759,7 @@ fn print_json_output(
     if let Some(ref profile) = corim.profile {
         println!(
             "  \"profile\": \"{}\",",
-            json_escape(&display::profile_str(profile))
+            jsonfmt::escape(&display::profile_str(profile))
         );
     }
 
@@ -784,83 +784,6 @@ fn print_json_output(
     println!("}}");
 }
 
-/// Escape a string for a JSON string literal per RFC 8259 §7: the quote and
-/// reverse solidus, plus every control character below U+0020.
-fn json_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            c if (c as u32) < 0x20 => {
-                let _ = write!(out, "\\u{:04x}", c as u32);
-            }
-            c => out.push(c),
-        }
-    }
-    out
-}
-
-/// Render a CBOR `Value` as a JSON fragment. Byte strings use base64, matching
-/// `corim::json` and the `convert` / `generate` templates; tags use the
-/// `{"__cbor_tag": N, "__cbor_value": …}` envelope so the value round-trips
-/// rather than being flattened.
-fn cbor_json(v: &corim::cbor::value::Value) -> String {
-    use base64::Engine;
-    use corim::cbor::value::Value;
-    match v {
-        Value::Null => "null".into(),
-        Value::Bool(b) => b.to_string(),
-        Value::Text(t) => format!("\"{}\"", json_escape(t)),
-        Value::Bytes(b) => format!(
-            "\"{}\"",
-            base64::engine::general_purpose::STANDARD.encode(b)
-        ),
-        // JSON numbers only cover i64/u64; fall back to a string outside that.
-        Value::Integer(n) => match (i64::try_from(*n), u64::try_from(*n)) {
-            (Ok(x), _) => x.to_string(),
-            (_, Ok(x)) => x.to_string(),
-            _ => format!("\"{n}\""),
-        },
-        Value::Float(f) => {
-            if f.is_finite() {
-                f.to_string()
-            } else {
-                "null".into()
-            }
-        }
-        Value::Array(a) => {
-            let items: Vec<String> = a.iter().map(cbor_json).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::Map(m) => {
-            let items: Vec<String> = m
-                .iter()
-                .map(|(k, val)| {
-                    let key = match k {
-                        Value::Text(t) => t.clone(),
-                        Value::Integer(n) => n.to_string(),
-                        other => display::value_summary(other),
-                    };
-                    format!("\"{}\": {}", json_escape(&key), cbor_json(val))
-                })
-                .collect();
-            format!("{{{}}}", items.join(", "))
-        }
-        Value::Tag(t, inner) => {
-            format!(
-                "{{\"__cbor_tag\": {t}, \"__cbor_value\": {}}}",
-                cbor_json(inner)
-            )
-        }
-    }
-}
-
 /// Emit the `"signed"` object, mirroring the fields the text renderer shows
 /// for the four COSE_Sign1 elements (RFC 9052 §4).
 fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
@@ -871,70 +794,10 @@ fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
         corim::types::tags::TAG_SIGNED_CORIM
     );
 
-    println!("{indent}  \"protected\": {{");
     println!(
-        "{indent}    \"size\": {},",
-        info.protected_header_bytes.len()
+        "{indent}  \"protected\": {},",
+        jsonfmt::protected_header(p, info.protected_header_bytes.len(), &format!("{indent}  "))
     );
-    println!("{indent}    \"alg\": \"{}\",", json_escape(info.alg.name()));
-    println!("{indent}    \"alg_id\": {},", info.alg.to_i64());
-    if let Some(ref ct) = info.content_type {
-        println!("{indent}    \"content_type\": \"{}\",", json_escape(ct));
-    }
-    if let Some(claims) = p.cwt_claims.as_ref() {
-        println!("{indent}    \"issuer\": \"{}\",", json_escape(&claims.iss));
-        if let Some(subject) = claims.sub.as_ref() {
-            println!("{indent}    \"subject\": \"{}\",", json_escape(subject));
-        }
-        if let Some(exp) = claims.exp {
-            println!("{indent}    \"exp\": {exp},");
-        }
-        if let Some(nbf) = claims.nbf {
-            println!("{indent}    \"nbf\": {nbf},");
-        }
-        if !claims.extra.is_empty() {
-            // A typed array, not an object: JSON object keys are strings, so
-            // `Int(6)` and `Text("6")` would collide and one would be lost.
-            let entries: Vec<String> = claims
-                .extra
-                .iter()
-                .map(|(k, v)| match k {
-                    corim::types::signed::ClaimKey::Int(n) => {
-                        format!(
-                            "{{\"key_type\": \"int\", \"key\": {n}, \"value\": {}}}",
-                            cbor_json(v)
-                        )
-                    }
-                    corim::types::signed::ClaimKey::Text(t) => format!(
-                        "{{\"key_type\": \"text\", \"key\": \"{}\", \"value\": {}}}",
-                        json_escape(t),
-                        cbor_json(v)
-                    ),
-                    other => format!(
-                        "{{\"key_type\": \"other\", \"key\": \"{}\", \"value\": {}}}",
-                        json_escape(&other.to_string()),
-                        cbor_json(v)
-                    ),
-                })
-                .collect();
-            println!(
-                "{indent}    \"cwt_claims_extra\": [{}],",
-                entries.join(", ")
-            );
-        }
-    }
-    if let Some(meta) = p.corim_meta.as_ref() {
-        println!(
-            "{indent}    \"signer_name\": \"{}\",",
-            json_escape(&meta.signer.signer_name)
-        );
-    }
-    println!("{indent}    \"has_cwt_claims\": {},", info.has_cwt_claims);
-    println!("{indent}    \"has_corim_meta\": {},", info.has_corim_meta);
-    println!("{indent}    \"has_kid\": {},", info.has_kid);
-    println!("{indent}    \"x5chain_count\": {},", info.x5chain_count);
-    println!("{indent}    \"has_x5t\": {}", info.has_x5t);
-    println!("{indent}  }},");
 
     println!(
         "{indent}  \"unprotected\": {{ \"entries\": {}, \"size\": {} }},",

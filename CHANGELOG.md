@@ -25,6 +25,12 @@ versions.
 
 ### Added
 
+- **`extract --header`.** Extracts the COSE protected header instead of the
+  payload — the exact `bstr` contents that go into `Sig_structure1`, so the
+  bytes can be re-verified. `--header --json` emits the decoded header using
+  the same renderer as `validate -f json`. Both work on **detached**
+  envelopes, where the header is the only thing the envelope carries and
+  payload extraction necessarily fails.
 - **`convert` accepts a signed CoRIM.** It previously rejected `#6.18`
   input (`convert its payload instead`), forcing a manual `extract` step.
   The embedded payload is now converted directly; detached (nil) payloads
@@ -33,9 +39,9 @@ versions.
   `exp` / `nbf` claims and every additional claim in the protected
   header's CWT-Claims map, in both the text view and (as
   `cwt_claims_extra`) `-f json`. Previously even captured claims such as
-  `iat` were invisible. The JSON form is a typed array of
-  `{ key_type, key, value }` entries, so an integer key and a
-  same-looking text key cannot collapse onto one JSON object key.
+  `iat` were invisible. In JSON the claims are namespaced by key type
+  (`cwt_claims_extra.int` / `.text`), so an integer key and a same-looking
+  text key cannot collide on one JSON object key.
 - **`validate -f json` reports the signed envelope.** The JSON report
   previously omitted the COSE_Sign1 envelope entirely, so a signed CoRIM
   produced the same output as an unsigned one and the protected-header

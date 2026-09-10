@@ -41,12 +41,23 @@ pub struct ExtractArgs {
     #[arg(value_name = "SIGNED")]
     file: Option<String>,
 
-    /// Output path for the extracted `tagged-unsigned-corim-map` bytes.
-    /// Use "-" or omit for stdout.
+    /// Output path for the extracted bytes. Use "-" or omit for stdout.
     #[arg(short, long, value_name = "FILE")]
     output: Option<String>,
 
-    /// Validate the extracted CoRIM after extraction.
+    /// Extract the COSE protected header instead of the payload.
+    ///
+    /// Writes the exact `bstr` contents that go into `Sig_structure1`, so the
+    /// bytes can be re-verified. Works on detached envelopes, where the header
+    /// is the only thing the envelope carries.
+    #[arg(long)]
+    header: bool,
+
+    /// With `--header`, emit the decoded header as JSON instead of raw CBOR.
+    #[arg(long, requires = "header")]
+    json: bool,
+
+    /// Validate the extracted CoRIM after extraction. Ignored with `--header`.
     #[arg(long)]
     validate: bool,
 }
@@ -68,9 +79,32 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
     let envelope =
         decode_signed_corim(&bytes).map_err(|e| format!("decoding signed CoRIM: {e}"))?;
 
+    if args.header {
+        if args.json {
+            let rendered = crate::jsonfmt::protected_header(
+                &envelope.protected,
+                envelope.protected_header_bytes.len(),
+                "",
+            );
+            write_output(
+                args.output.as_deref(),
+                format!("{rendered}\n").as_bytes(),
+                "protected header (JSON)",
+            )?;
+        } else {
+            write_output(
+                args.output.as_deref(),
+                &envelope.protected_header_bytes,
+                "protected header",
+            )?;
+        }
+        return Ok(());
+    }
+
     let payload = envelope.payload.ok_or_else(|| {
         "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is transported \
-         separately and cannot be extracted from this envelope"
+         separately and cannot be extracted from this envelope (use --header to \
+         extract the protected header instead)"
             .to_string()
     })?;
 
@@ -79,7 +113,7 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
             .map_err(|e| format!("extracted CoRIM failed validation: {e}"))?;
     }
 
-    write_output(args.output.as_deref(), &payload)?;
+    write_output(args.output.as_deref(), &payload, "CoRIM payload")?;
     Ok(())
 }
 
@@ -362,12 +396,13 @@ fn read_input(path: Option<&str>) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Write bytes to a file path, or stdout when `None` or `"-"`.
-fn write_output(path: Option<&str>, bytes: &[u8]) -> Result<(), String> {
+/// Write bytes to a file path, or stdout when `None` or `"-"`. `what` names
+/// the artifact in the notice printed for a file write.
+fn write_output(path: Option<&str>, bytes: &[u8], what: &str) -> Result<(), String> {
     match path {
         Some(p) if p != "-" => {
             fs::write(p, bytes).map_err(|e| format!("writing {p}: {e}"))?;
-            eprintln!("Wrote CoRIM payload: {p} ({} bytes)", bytes.len());
+            eprintln!("Wrote {what}: {p} ({} bytes)", bytes.len());
         }
         _ => {
             io::stdout()
