@@ -7,6 +7,7 @@
 //! reused by `validate -f json`, `extract --header --json`, and `convert`, so
 //! the three cannot drift apart.
 
+use std::collections::HashSet;
 use std::fmt::Write as _;
 
 use base64::Engine;
@@ -63,26 +64,46 @@ pub fn cbor_to_json(v: &Value) -> JsonValue {
             .unwrap_or(JsonValue::Null),
         Value::Array(a) => JsonValue::Array(a.iter().map(cbor_to_json).collect()),
         Value::Map(m) => {
-            let mut obj = Map::new();
-            for (k, val) in m {
-                let key = match k {
-                    Value::Text(t) => t.clone(),
-                    Value::Integer(n) => n.to_string(),
-                    // Unwrap string-valued keys: `to_string` on a JSON string
-                    // would bake the quotes into the object key.
-                    other => match cbor_to_json(other) {
-                        JsonValue::String(s) => s,
-                        v => v.to_string(),
-                    },
-                };
-                obj.insert(key, cbor_to_json(val));
+            // JSON object keys are strings, so distinct CBOR keys can collide
+            // (integer `1` and text `"1"`, say). Only use the object form when
+            // every key stringifies uniquely; otherwise fall back to an array
+            // of entries, which keeps each key's type and loses nothing.
+            let keys: Vec<String> = m.iter().map(|(k, _)| map_key(k)).collect();
+            let unique = keys.iter().collect::<HashSet<_>>().len() == keys.len();
+            if unique {
+                let mut obj = Map::new();
+                for ((_, val), key) in m.iter().zip(keys) {
+                    obj.insert(key, cbor_to_json(val));
+                }
+                JsonValue::Object(obj)
+            } else {
+                JsonValue::Array(
+                    m.iter()
+                        .map(|(k, val)| {
+                            json!({ "key": cbor_to_json(k), "value": cbor_to_json(val) })
+                        })
+                        .collect(),
+                )
             }
-            JsonValue::Object(obj)
         }
         Value::Tag(t, inner) => json!({
             "__cbor_tag": t,
             "__cbor_value": cbor_to_json(inner),
         }),
+    }
+}
+
+/// Stringify a CBOR map key for use as a JSON object key.
+fn map_key(k: &Value) -> String {
+    match k {
+        Value::Text(t) => t.clone(),
+        Value::Integer(n) => n.to_string(),
+        // Unwrap string-valued keys: `to_string` on a JSON string would bake
+        // the quotes into the object key.
+        other => match cbor_to_json(other) {
+            JsonValue::String(s) => s,
+            v => v.to_string(),
+        },
     }
 }
 

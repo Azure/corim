@@ -309,3 +309,61 @@ fn byte_map_keys_do_not_keep_json_quotes() {
         keys[0]
     );
 }
+
+/// Distinct CBOR map keys that stringify alike (integer `1` vs text `"1"`)
+/// must not collapse into one JSON object key and lose an entry.
+#[test]
+fn colliding_map_keys_fall_back_to_entry_array() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims.extra.insert(
+        ClaimKey::Text("m".into()),
+        Value::Map(vec![
+            (Value::Integer(1), Value::Text("as-int".into())),
+            (Value::Text("1".into()), Value::Text("as-text".into())),
+        ]),
+    );
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
+    let entries = m.as_array().expect("colliding keys render as an array");
+    assert_eq!(entries.len(), 2, "no entry may be dropped: {m}");
+    // The key's CBOR type survives: a number stays a number, text stays text.
+    assert!(entries
+        .iter()
+        .any(|e| e["key"] == 1 && e["value"] == "as-int"));
+    assert!(entries
+        .iter()
+        .any(|e| e["key"] == "1" && e["value"] == "as-text"));
+}
+
+/// Non-colliding maps keep the friendlier object form.
+#[test]
+fn distinct_map_keys_stay_an_object() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims.extra.insert(
+        ClaimKey::Text("m".into()),
+        Value::Map(vec![
+            (Value::Text("a".into()), Value::Integer(1)),
+            (Value::Text("b".into()), Value::Integer(2)),
+        ]),
+    );
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
+    assert_eq!(m["a"], 1);
+    assert_eq!(m["b"], 2);
+}

@@ -53,6 +53,7 @@ pub enum Value {
 /// attacker-controlled value cannot inject a quote or a line break into a
 /// single-line report.
 pub fn escape_text(s: &str) -> String {
+    use core::fmt::Write as _;
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -68,7 +69,7 @@ pub fn escape_text(s: &str) -> String {
             // U+2028/U+2029 are not Cc but still break lines in some
             // renderers and log viewers.
             c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
-                out.push_str(&format!("\\u{:04x}", c as u32));
+                let _ = write!(out, "\\u{:04x}", c as u32);
             }
             c => out.push(c),
         }
