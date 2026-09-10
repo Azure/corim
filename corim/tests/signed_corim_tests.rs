@@ -1608,3 +1608,83 @@ fn claim_key_display_escapes_text_contents() {
         "\"aé\u{a0}b\""
     );
 }
+
+/// A CBOR map must not repeat a key (RFC 8949 §5.6). Letting a later entry
+/// win would make the signer identity ambiguous between parsers, so a
+/// duplicate standard claim is rejected rather than silently resolved.
+#[test]
+fn cwt_claims_reject_duplicate_standard_keys() {
+    for (key, first, second) in [
+        (
+            CWT_CLAIM_ISS,
+            Value::Text("a".into()),
+            Value::Text("b".into()),
+        ),
+        (
+            CWT_CLAIM_SUB,
+            Value::Text("a".into()),
+            Value::Text("b".into()),
+        ),
+        (CWT_CLAIM_EXP, Value::Integer(1), Value::Integer(2)),
+        (CWT_CLAIM_NBF, Value::Integer(1), Value::Integer(2)),
+    ] {
+        let mut entries = vec![(
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        )];
+        entries.push((Value::Integer(key.into()), first));
+        entries.push((Value::Integer(key.into()), second));
+
+        let bytes = cbor::encode(&Value::Map(entries)).unwrap();
+        let err = cbor::decode::<CwtClaims>(&bytes)
+            .expect_err(&format!("duplicate key {key} must be rejected"));
+        assert!(
+            format!("{err}").contains("duplicate"),
+            "unexpected error for key {key}: {err}"
+        );
+    }
+}
+
+#[test]
+fn cwt_claims_reject_duplicate_extension_keys() {
+    // Integer extension key repeated.
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Integer(100), Value::Integer(1)),
+        (Value::Integer(100), Value::Integer(2)),
+    ]))
+    .unwrap();
+    assert!(format!("{}", cbor::decode::<CwtClaims>(&bytes).unwrap_err()).contains("duplicate"));
+
+    // Text extension key repeated.
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Text("svn".into()), Value::Integer(1)),
+        (Value::Text("svn".into()), Value::Integer(2)),
+    ]))
+    .unwrap();
+    assert!(format!("{}", cbor::decode::<CwtClaims>(&bytes).unwrap_err()).contains("duplicate"));
+}
+
+/// An integer key and a text key that merely look alike are distinct claims,
+/// not duplicates.
+#[test]
+fn cwt_claims_allow_int_and_text_keys_that_look_alike() {
+    let bytes = cbor::encode(&Value::Map(vec![
+        (
+            Value::Integer(CWT_CLAIM_ISS.into()),
+            Value::Text("iss".into()),
+        ),
+        (Value::Integer(100), Value::Text("as-int".into())),
+        (Value::Text("100".into()), Value::Text("as-text".into())),
+    ]))
+    .unwrap();
+    let claims: CwtClaims = cbor::decode(&bytes).unwrap();
+    assert_eq!(claims.extra.len(), 2);
+}
