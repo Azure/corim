@@ -149,14 +149,32 @@ pub fn render_path(path: &[PathSegment]) -> String {
             PathSegment::Field(f) => s.push_str(&format!(".{f}")),
             PathSegment::Index(i) => s.push_str(&format!("[{i}]")),
             PathSegment::MapKey(k) => s.push_str(&format!("[{k}]")),
-            // Quote-escape so a key containing `"` or `\` stays unambiguous.
-            PathSegment::TextKey(k) => {
-                let escaped = k.replace('\\', "\\\\").replace('"', "\\\"");
-                s.push_str(&format!("[\"{escaped}\"]"));
-            }
+            PathSegment::TextKey(k) => s.push_str(&format!("[\"{}\"]", escape_key(k))),
         }
     }
     s
+}
+
+/// Escape a text map key for the quoted form used in a rendered path.
+///
+/// Covers the quote and backslash plus every control character, so a key
+/// containing a newline or tab cannot break the single-line path format.
+fn escape_key(k: &str) -> String {
+    let mut out = String::with_capacity(k.len());
+    for c in k.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
+                out.push_str(&format!("\\u{{{:04x}}}", c as u32));
+            }
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------

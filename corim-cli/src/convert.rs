@@ -76,12 +76,13 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
 
     // A signed CoRIM carries the unsigned document as its payload; convert
     // that rather than making the caller run `extract` first.
-    let unwrapped;
+    let payload;
+    let wrapped;
     let mut protected_header = None;
     let inner: &[u8] = if peeled.as_bytes().first() == Some(&0xD2) {
         let env = corim::types::signed::decode_signed_corim(peeled.as_bytes())
             .map_err(|e| format!("input looks like a signed CoRIM but failed to decode: {e}"))?;
-        let payload = env.payload.ok_or_else(|| {
+        payload = env.payload.ok_or_else(|| {
             "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is \
              transported separately and cannot be converted from this envelope"
                 .to_string()
@@ -90,10 +91,10 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
             &env.protected,
             env.protected_header_bytes.len(),
         ));
-        unwrapped = corim::compat::wrap_bare_corim_map(&payload)
-            .as_bytes()
-            .to_vec();
-        &unwrapped
+        // Borrow rather than copy: the wrap is zero-copy when the payload is
+        // already `#6.501`-tagged.
+        wrapped = corim::compat::wrap_bare_corim_map(&payload);
+        wrapped.as_bytes()
     } else {
         peeled.as_bytes()
     };

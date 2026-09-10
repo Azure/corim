@@ -159,31 +159,33 @@ fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
     );
 }
 
-/// A text-keyed claim containing `"` or `\` must not produce an ambiguous
-/// rendered path.
+/// A text-keyed claim containing a quote, backslash, or control character
+/// must not produce an ambiguous or multi-line path.
 #[test]
 fn text_claim_key_path_is_escaped() {
     use corim::types::signed::ClaimKey;
 
-    fn with_claim(key: &str) -> ProtectedCorimHeaderMap {
+    fn path_for(key: &str) -> String {
         let mut claims = CwtClaims::new("iss");
         claims
             .extra
             .insert(ClaimKey::Text(key.into()), Value::Integer(1));
-        header().cwt_claims(claims).build()
+        let b = header().cwt_claims(claims).build();
+        let i = header().cwt_claims(CwtClaims::new("iss")).build();
+        let r = compare_headers(&i, &b);
+        r.value_differences
+            .iter()
+            .map(|v| render_path(&v.path))
+            .find(|p| p.contains("cwt-extension"))
+            .expect("claim difference reported")
     }
 
-    let b = with_claim("a\"b\\c");
-    let i = header().cwt_claims(CwtClaims::new("iss")).build();
-    let r = compare_headers(&i, &b);
+    assert!(path_for(r#"a"b\c"#).ends_with(r#"["a\"b\\c"]"#));
 
-    let paths: Vec<String> = r
-        .value_differences
-        .iter()
-        .map(|v| render_path(&v.path))
-        .collect();
-    assert!(
-        paths.iter().any(|p| p.ends_with(r#"["a\"b\\c"]"#)),
-        "quote and backslash must be escaped: {paths:?}"
-    );
+    let nl = path_for("a\nb");
+    assert!(!nl.contains('\n'), "path must stay on one line: {nl:?}");
+    assert!(nl.ends_with(r#"["a\nb"]"#), "{nl:?}");
+
+    let ctrl = path_for("a\u{1}b");
+    assert!(ctrl.ends_with(r#"["a\u{0001}b"]"#), "{ctrl:?}");
 }
