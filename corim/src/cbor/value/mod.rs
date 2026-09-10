@@ -46,10 +46,11 @@ pub enum Value {
 /// Escape a CBOR text string for the quoted form used in diagnostic
 /// notation (RFC 8949 §8): the quote and reverse solidus, the short forms
 /// for backspace/formfeed/newline/return/tab, and `\uXXXX` for every other
-/// Unicode control character (U+0000..U+001F, U+007F..U+009F).
+/// Unicode control character (U+0000..U+001F, U+007F..U+009F) plus the
+/// line and paragraph separators U+2028/U+2029.
 ///
 /// Use this anywhere a text string is rendered inside quotes, so an
-/// attacker-controlled value cannot inject a quote or newline into a
+/// attacker-controlled value cannot inject a quote or a line break into a
 /// single-line report.
 pub fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -64,7 +65,9 @@ pub fn escape_text(s: &str) -> String {
             '\t' => out.push_str("\\t"),
             // Every remaining Unicode control character (Cc): C0 + DEL +
             // the C1 range, any of which can garble a terminal or log line.
-            c if c.is_control() => {
+            // U+2028/U+2029 are not Cc but still break lines in some
+            // renderers and log viewers.
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
                 out.push_str(&format!("\\u{:04x}", c as u32));
             }
             c => out.push(c),

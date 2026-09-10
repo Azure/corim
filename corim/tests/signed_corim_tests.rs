@@ -1602,6 +1602,15 @@ fn claim_key_display_escapes_text_contents() {
         ClaimKey::Text("a\u{9f}b".into()).to_string(),
         r#""a\u009fb""#
     );
+    // U+2028/U+2029 are not Cc but still break lines in some renderers.
+    assert_eq!(
+        ClaimKey::Text("a\u{2028}b".into()).to_string(),
+        r#""a\u2028b""#
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{2029}b".into()).to_string(),
+        r#""a\u2029b""#
+    );
     // Printable non-ASCII must pass through untouched.
     assert_eq!(
         ClaimKey::Text("aé\u{a0}b".into()).to_string(),
