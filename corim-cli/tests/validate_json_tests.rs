@@ -245,3 +245,67 @@ fn claim_byte_values_use_base64() {
         "3q2+7w=="
     );
 }
+
+/// A hostile text claim value must not be able to inject a quote or newline
+/// into the single-line text report.
+#[test]
+fn text_claim_values_are_escaped_in_the_text_report() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims.extra.insert(
+        ClaimKey::Text("evil".into()),
+        Value::Text("a\"b\nCWT claim spoofed: 1".into()),
+    );
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let path = unique_temp("escaped_claim", "cose");
+    std::fs::write(&path, &signed).unwrap();
+    let out = Command::new(bin())
+        .args(["validate", path.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let _ = std::fs::remove_file(&path);
+    let stdout = String::from_utf8(out.stdout).unwrap();
+
+    let claim_lines: Vec<&str> = stdout.lines().filter(|l| l.contains("CWT claim")).collect();
+    assert_eq!(
+        claim_lines.len(),
+        1,
+        "value must not span lines: {claim_lines:?}"
+    );
+    assert!(claim_lines[0].contains(r#"\n"#), "{}", claim_lines[0]);
+    assert!(claim_lines[0].contains(r#"\""#), "{}", claim_lines[0]);
+}
+
+/// A CBOR map keyed by a non-text, non-integer value must not bake JSON
+/// quotes into the object key.
+#[test]
+fn byte_map_keys_do_not_keep_json_quotes() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::ClaimKey;
+
+    let mut claims = CwtClaims::new("iss");
+    claims.extra.insert(
+        ClaimKey::Text("m".into()),
+        Value::Map(vec![(Value::Bytes(vec![0xde, 0xad]), Value::Integer(1))]),
+    );
+    let signed = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(claims)
+        .build_with_signature(vec![0xAB; 64])
+        .unwrap();
+
+    let v = validate_json(&signed, "cose");
+    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
+    let keys: Vec<&String> = m.as_object().unwrap().keys().collect();
+    assert_eq!(keys.len(), 1);
+    assert_eq!(
+        keys[0], "3q0=",
+        "key must be the bare base64, got {:?}",
+        keys[0]
+    );
+}

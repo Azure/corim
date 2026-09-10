@@ -47,7 +47,11 @@ pub enum Value {
 /// notation (RFC 8949 §8): the quote and reverse solidus, the short forms
 /// for backspace/formfeed/newline/return/tab, and `\uXXXX` for any other
 /// control character.
-pub(crate) fn escape_text(s: &str) -> String {
+///
+/// Use this anywhere a text string is rendered inside quotes, so an
+/// attacker-controlled value cannot inject a quote or newline into a
+/// single-line report.
+pub fn escape_text(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {

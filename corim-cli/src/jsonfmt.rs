@@ -68,7 +68,12 @@ pub fn cbor_to_json(v: &Value) -> JsonValue {
                 let key = match k {
                     Value::Text(t) => t.clone(),
                     Value::Integer(n) => n.to_string(),
-                    other => cbor_to_json(other).to_string(),
+                    // Unwrap string-valued keys: `to_string` on a JSON string
+                    // would bake the quotes into the object key.
+                    other => match cbor_to_json(other) {
+                        JsonValue::String(s) => s,
+                        v => v.to_string(),
+                    },
                 };
                 obj.insert(key, cbor_to_json(val));
             }
