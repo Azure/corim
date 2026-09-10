@@ -195,10 +195,16 @@ impl<'de> Deserialize<'de> for CwtClaims {
                 // Text-keyed claims are not registered in RFC 8392 but are
                 // emitted in practice; keep them rather than dropping them.
                 Value::Text(t) => {
-                    if extra.insert(ClaimKey::Text(t.clone()), v).is_some() {
-                        return Err(serde::de::Error::custom(alloc::format!(
-                            "cwt-claims: duplicate claim key \"{t}\""
-                        )));
+                    match extra.entry(ClaimKey::Text(t)) {
+                        alloc::collections::btree_map::Entry::Vacant(slot) => {
+                            slot.insert(v);
+                        }
+                        alloc::collections::btree_map::Entry::Occupied(slot) => {
+                            return Err(serde::de::Error::custom(alloc::format!(
+                                "cwt-claims: duplicate claim key {}",
+                                slot.key()
+                            )));
+                        }
                     }
                     continue;
                 }
