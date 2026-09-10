@@ -1588,4 +1588,23 @@ fn claim_key_display_escapes_text_contents() {
         ClaimKey::Text("a\u{1}b".into()).to_string(),
         r#""a\u0001b""#
     );
+    // DEL and the C1 range are control characters too.
+    assert_eq!(
+        ClaimKey::Text("a\u{7f}b".into()).to_string(),
+        r#""a\u007fb""#
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{85}b".into()).to_string(),
+        r#""a\u0085b""#,
+        "U+0085 NEL is a line break in some consumers"
+    );
+    assert_eq!(
+        ClaimKey::Text("a\u{9f}b".into()).to_string(),
+        r#""a\u009fb""#
+    );
+    // Printable non-ASCII must pass through untouched.
+    assert_eq!(
+        ClaimKey::Text("aé\u{a0}b".into()).to_string(),
+        "\"aé\u{a0}b\""
+    );
 }
