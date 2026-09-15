@@ -37,6 +37,10 @@ profile-azure = []
 # First-party Arm PSA profile: the `psa-cert-num` (key 100)
 # measurement-values-map extension from draft-ietf-rats-corim-11.
 profile-psa = []
+# First-party Arm CCA endorsements profile.
+# Implements the draft-ydb-rats-cca-endorsements-04 profile identifiers and
+# the CCA platform/realm measurement-key naming conventions.
+profile-cca = []
 
 [dependencies]
 corim-macros.workspace = true

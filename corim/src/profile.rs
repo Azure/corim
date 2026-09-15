@@ -30,6 +30,7 @@
 //! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-03` |
 //! | `profile-azure`   | `azure` (feature-gated)                       | Azure `tcbstatus` example extension     |
 //! | `profile-psa`     | `psa` (feature-gated)                         | Arm PSA `psa-cert-num` (draft-corim-11) |
+//! | `profile-cca`     | `cca` (feature-gated)                         | Arm CCA endorsements (draft-ydb-rats-cca-endorsements-04) |
 //!
 //! Third-party profiles are first-class — the [`Profile`](crate::profile::Profile) trait is
 //! public and stable, and out-of-tree crates may publish their own
@@ -184,6 +185,18 @@ pub mod azure;
 #[cfg(feature = "profile-psa")]
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-psa")))]
 pub mod psa;
+
+/// Minimal Arm CCA endorsements profile support for
+/// `draft-ydb-rats-cca-endorsements-04`.
+///
+/// The draft primarily introduces CCA Platform / Realm profile URIs and
+/// the characteristic `mkey` names used for measurements. The core crate
+/// already knows how to compare the underlying `digests` / `raw-value`
+/// fields, so this module focuses on profile identification and
+/// enforcement that the `mkey` names belong to the CCA profile.
+#[cfg(feature = "profile-cca")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-cca")))]
+pub mod cca;
 
 // ---------------------------------------------------------------------------
 // MatchContext
