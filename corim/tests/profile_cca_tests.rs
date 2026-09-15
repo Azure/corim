@@ -100,16 +100,10 @@ fn recognized_realm_mkeys_include_rim_rem_and_rpv() {
 #[test]
 fn platform_match_accepts_same_cca_mkey_and_same_core_values() {
     let profile = CcaPlatformProfile::new();
-    let reference = software_component_measurement(
-        "cca.software-component",
-        &[0x11, 0x22, 0x33],
-        &[0xAA; 32],
-    );
-    let evidence = software_component_measurement(
-        "cca.software-component",
-        &[0x11, 0x22, 0x33],
-        &[0xAA; 32],
-    );
+    let reference =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xAA; 32]);
+    let evidence =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xAA; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
