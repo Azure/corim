@@ -40,7 +40,9 @@ pub const CCA_REALM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_realm
 /// Recognize a CCA Platform measurement key, per draft-ydb-rats-cca-endorsements-04.
 pub fn is_cca_platform_mkey(name: &str) -> bool {
     match name {
-        "cca.software-component" | "cca.platform-config" | "cca.platform-manufacturing-config" => true,
+        "cca.software-component" | "cca.platform-config" | "cca.platform-manufacturing-config" => {
+            true
+        }
         _ => {
             let Some(rest) = name.strip_prefix("cca.rotpk.") else {
                 return false;
@@ -94,22 +96,22 @@ fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
                 && m.mval.cryptokeys.as_ref().is_some_and(|keys| {
                     !keys.is_empty()
                         && keys.iter().all(|k| match k {
-                            crate::types::common::CryptoKey::Bytes(b) => matches!(b.len(), 32 | 48 | 64),
+                            crate::types::common::CryptoKey::Bytes(b) => {
+                                matches!(b.len(), 32 | 48 | 64)
+                            }
                             _ => false,
                         })
                 })
         }
         "cca.platform-config" | "cca.platform-manufacturing-config" => m.mval.raw_value.is_some(),
-        _ if is_cca_platform_mkey(&mkey) => {
-            m.mval.cryptokeys.as_ref().is_some_and(|keys| {
-                !keys.is_empty()
-                    && keys.len() == 1
-                    && keys.iter().all(|k| match k {
-                        crate::types::common::CryptoKey::Bytes(b) => matches!(b.len(), 32 | 48 | 64),
-                        _ => false,
-                    })
-            })
-        }
+        _ if is_cca_platform_mkey(&mkey) => m.mval.cryptokeys.as_ref().is_some_and(|keys| {
+            !keys.is_empty()
+                && keys.len() == 1
+                && keys.iter().all(|k| match k {
+                    crate::types::common::CryptoKey::Bytes(b) => matches!(b.len(), 32 | 48 | 64),
+                    _ => false,
+                })
+        }),
         _ => false,
     }
 }
@@ -223,9 +225,7 @@ impl Profile for CcaRealmProfile {
         if !is_cca_realm_mkey(&ref_mkey) {
             return None;
         }
-        if !is_valid_cca_realm_measurement(reference)
-            || !is_valid_cca_realm_measurement(evidence)
-        {
+        if !is_valid_cca_realm_measurement(reference) || !is_valid_cca_realm_measurement(evidence) {
             return Some(false);
         }
 
