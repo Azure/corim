@@ -23,7 +23,7 @@
 //! - identifying the CCA profile URI,
 //! - validating the CCA-specific `mkey` names,
 //! - providing diagnosis labels for those names,
-//! - allowing JSON alias round-tripping for the human-facing names.
+//! - enforcing the CCA-specific measurement-map shapes.
 
 use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
