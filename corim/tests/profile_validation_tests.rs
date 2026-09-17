@@ -74,6 +74,27 @@ impl Profile for AlwaysRejectProfile {
     }
 }
 
+/// Profile that accepts every measurement pair but rejects every evidence claim.
+struct RejectEvidenceProfile {
+    id: ProfileChoice,
+}
+impl Profile for RejectEvidenceProfile {
+    fn identifier(&self) -> &ProfileChoice {
+        &self.id
+    }
+    fn evidence_claim_valid(&self, _claim: &EvidenceClaim) -> bool {
+        false
+    }
+    fn match_measurement(
+        &self,
+        _reference: &MeasurementMap,
+        _evidence: &MeasurementMap,
+        _ctx: &MatchContext,
+    ) -> Option<bool> {
+        Some(true)
+    }
+}
+
 fn test_id() -> ProfileChoice {
     ProfileChoice::Uri("urn:example:test-profile".into())
 }
@@ -362,4 +383,26 @@ fn endorsement_series_always_reject_profile_blocks_endorsement() {
     let with_profile =
         apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(with_profile.len(), 0, "profile should block endorsement");
+}
+
+#[test]
+fn endorsement_series_rejects_profile_invalid_evidence_claim() {
+    let profile = RejectEvidenceProfile { id: test_id() };
+    let triples = vec![build_series_triple(0xAA, 0xCC)];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Widget"),
+        measurements: vec![MeasurementMap {
+            mkey: Some(MeasuredElement::Text("k".into())),
+            mval: MeasurementValuesMap {
+                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        }],
+    }];
+
+    let endorsed =
+        apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
+
+    assert!(endorsed.is_empty());
 }

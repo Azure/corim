@@ -840,6 +840,24 @@ fn realm_profile_rejects_duplicate_realm_measurements() {
 }
 
 #[test]
+fn realm_profile_rejects_unknown_measurement_in_reference_triple() {
+    let profile = CcaRealmProfile::new();
+    let rim_value = [0xAA; 32];
+
+    assert_eq!(
+        realm_claims(
+            &profile,
+            realm_environment(&rim_value),
+            vec![
+                measurement_with_mkey("cca.rim", &rim_value),
+                measurement_with_mkey("tee.something", &[0x11; 32]),
+            ],
+        ),
+        0
+    );
+}
+
+#[test]
 fn realm_profile_rejects_malformed_rim_in_reference_triple() {
     let profile = CcaRealmProfile::new();
     let rim_value = [0xAA; 32];

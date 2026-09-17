@@ -428,9 +428,10 @@ pub fn apply_endorsement_series(
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
-/// [`Profile::match_measurement`] hook when comparing each series
-/// `condition` entry against evidence. Per-pair semantics are identical
-/// to those of [`match_reference_values_with_profile`].
+/// [`Profile::evidence_claim_valid`] hook before generic environment
+/// matching and [`Profile::match_measurement`] hook when comparing each
+/// series `condition` entry against evidence. Per-pair semantics are
+/// identical to those of [`match_reference_values_with_profile`].
 ///
 /// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
 /// to [`apply_endorsement_series`].
@@ -447,6 +448,7 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
 
         let matching_evidence: Vec<_> = evidence
             .iter()
+            .filter(|ev| profile.is_none_or(|p| p.evidence_claim_valid(ev)))
             .filter(|ev| environment_matches(&condition.environment, &ev.environment))
             .collect();
 
