@@ -169,6 +169,37 @@ fn cca_platform_corim(measurements: Vec<MeasurementMap>) -> Vec<u8> {
         .unwrap()
 }
 
+fn cca_platform_instance_environment() -> EnvironmentMap {
+    EnvironmentMap {
+        instance: Some(corim::types::common::InstanceIdChoice::Ueid(
+            [&[0x01u8][..], &[0x5A; 32]].concat(),
+        )),
+        ..cca_platform_environment()
+    }
+}
+
+fn cca_platform_corim_with_attest_key(environment: EnvironmentMap, keys: Vec<CryptoKey>) -> Vec<u8> {
+    let comid = ComidBuilder::new(TagIdChoice::Text("cca-platform-comid".into()))
+        .add_reference_triple(ReferenceTriple::new(
+            cca_platform_environment(),
+            vec![cca_software_component(), cca_platform_config()],
+        ))
+        .add_attest_key_triple(corim::types::triples::AttestKeyTriple::new(
+            environment, keys, None,
+        ))
+        .build()
+        .unwrap();
+
+    CorimBuilder::new(CorimId::Text("cca-platform-corim".into()))
+        .set_profile(corim::types::corim::ProfileChoice::Uri(
+            "tag:arm.com,2025:endorsements/cca_platform#1.0.0".into(),
+        ))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap()
+}
+
 #[test]
 fn signed_corim_json_includes_protected_header_fields() {
     let signed = make_signed(&sample_unsigned_corim(), false);
@@ -246,6 +277,41 @@ fn validate_rejects_invalid_cca_platform_profile_reference_triples() {
         v["errors"].as_array().unwrap().iter().any(|error| error
             .as_str()
             .is_some_and(|s| s.contains("failed profile-specific validation")
+                && s.contains("tag:arm.com,2025:endorsements/cca_platform#1.0.0"))),
+        "expected profile-specific validation error, got: {v}"
+    );
+}
+
+#[test]
+fn validate_accepts_cca_platform_profile_attest_key_triple() {
+    let bytes = cca_platform_corim_with_attest_key(
+        cca_platform_instance_environment(),
+        vec![CryptoKey::PkixBase64Key(
+            "-----BEGIN PUBLIC KEY-----\nMA==\n-----END PUBLIC KEY-----".into(),
+        )],
+    );
+    let v = validate_json(&bytes, "cbor");
+
+    assert_eq!(v["valid"], true);
+}
+
+#[test]
+fn validate_rejects_invalid_cca_platform_profile_attest_key_triple() {
+    // §3.1.4 requires exactly one `tagged-pkix-base64-key-type` key; an
+    // opaque key-identifier bytes value must be rejected.
+    let bytes = cca_platform_corim_with_attest_key(
+        cca_platform_instance_environment(),
+        vec![CryptoKey::Bytes(vec![0xAA; 32])],
+    );
+    let (status, v) = validate_json_status(&bytes, "cbor");
+
+    assert!(!status.success(), "validate unexpectedly succeeded: {v}");
+    assert_eq!(v["valid"], false);
+    assert!(
+        v["errors"].as_array().unwrap().iter().any(|error| error
+            .as_str()
+            .is_some_and(|s| s.contains("attest-key-triples")
+                && s.contains("failed profile-specific validation")
                 && s.contains("tag:arm.com,2025:endorsements/cca_platform#1.0.0"))),
         "expected profile-specific validation error, got: {v}"
     );

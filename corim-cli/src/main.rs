@@ -366,6 +366,7 @@ decoded via compat::decode_comid_from_tcg_bstr",
 
     if let Some(profile) = profile_for_render {
         validate_profile_reference_triples(profile, &comid_tags, &mut errors);
+        validate_profile_attest_key_triples(profile, &comid_tags, &mut errors);
     }
 
     // Baseline conformance mode: compare the (valid) input against a
@@ -441,6 +442,27 @@ fn validate_profile_reference_triples(
             if !profile.reference_triple_valid(triple) {
                 errors.push(format!(
                     "comids[{comid_idx}].reference-triples[{triple_idx}]: failed profile-specific validation for {profile_name}"
+                ));
+            }
+        }
+    }
+}
+
+fn validate_profile_attest_key_triples(
+    profile: &(dyn corim::profile::Profile + Send + Sync),
+    comids: &[corim::types::comid::ComidTag],
+    errors: &mut Vec<String>,
+) {
+    let profile_name = display::profile_str(profile.identifier());
+    for (comid_idx, comid) in comids.iter().enumerate() {
+        let Some(attest_key_triples) = &comid.triples.attest_key_triples else {
+            continue;
+        };
+
+        for (triple_idx, triple) in attest_key_triples.iter().enumerate() {
+            if !profile.attest_key_triple_valid(triple) {
+                errors.push(format!(
+                    "comids[{comid_idx}].attest-key-triples[{triple_idx}]: failed profile-specific validation for {profile_name}"
                 ));
             }
         }
