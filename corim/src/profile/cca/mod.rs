@@ -549,6 +549,7 @@ impl Profile for CcaPlatformProfile {
             return software_component_count == 0
                 && platform_config_count == 0
                 && manufacturing_config_count == 0
+                && rotpk_count == triple.measurements().len()
                 && valid_rotpk_group(triple.measurements());
         }
 
