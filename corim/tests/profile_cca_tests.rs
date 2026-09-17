@@ -143,8 +143,34 @@ fn platform_match_defers_for_non_cca_mkey() {
 #[test]
 fn platform_match_rejects_invalid_cca_structures() {
     let profile = CcaPlatformProfile::new();
-    let reference = measurement_with_mkey("cca.software-component", &[0x11, 0x22, 0x33]);
+    let reference = measurement_with_mkey("cca.rotpk.CM.2.3", &[0x11, 0x22, 0x33]);
     let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
+fn platform_match_rejects_different_software_component_signer_id() {
+    let profile = CcaPlatformProfile::new();
+    let reference =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xAA; 32]);
+    let evidence =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xBB; 32]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
+fn platform_match_rejects_different_rotpk_key() {
+    let profile = CcaPlatformProfile::new();
+    let reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xBB; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
