@@ -301,6 +301,19 @@ pub trait Profile {
         None
     }
 
+    /// Validate profile-specific constraints across the measurements in a
+    /// single reference triple before per-measurement appraisal begins.
+    ///
+    /// Use this when the profile has requirements that cannot be checked from
+    /// one `(reference, evidence)` measurement pair alone, such as a mandatory
+    /// measurement that must appear somewhere in the reference triple. Return
+    /// `false` to make the whole reference triple ineligible for profile-aware
+    /// matching. Profiles without cross-measurement requirements can use the
+    /// default implementation.
+    fn reference_measurements_valid(&self, _measurements: &[MeasurementMap]) -> bool {
+        true
+    }
+
     /// Render an `extra_entries` key/value pair for `--diagnose` output.
     ///
     /// Called by the diagnose walker when it encounters a profile-defined

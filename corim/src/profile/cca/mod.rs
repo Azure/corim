@@ -27,14 +27,25 @@
 
 use crate::nostd_prelude::*;
 use crate::profile::{MatchContext, Profile};
-use crate::types::common::MeasuredElement;
+use crate::types::common::{CryptoKey, MeasuredElement};
 use crate::types::corim::ProfileChoice;
-use crate::types::measurement::MeasurementMap;
+use crate::types::measurement::{MeasurementMap, MeasurementValuesMap};
 
 /// Profile URI for CCA Platform endorsements.
 pub const CCA_PLATFORM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_platform#1.0.0";
 /// Profile URI for CCA Realm endorsements.
 pub const CCA_REALM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_realm#1.0.0";
+
+/// Maximum ROTPK array index from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
+const CCA_ROTPK_MAX_INDEX: u8 = 7;
+/// Maximum ROTPK slot index from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
+const CCA_ROTPK_MAX_SLOT: u8 = 5;
+/// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
+const CCA_HASH_SIZE_256: usize = 32;
+/// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
+const CCA_HASH_SIZE_384: usize = 48;
+/// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
+const CCA_HASH_SIZE_512: usize = 64;
 
 /// Recognize a CCA Platform measurement key, per draft-ydb-rats-cca-endorsements-04.
 pub fn is_cca_platform_mkey(name: &str) -> bool {
@@ -54,10 +65,21 @@ pub fn is_cca_platform_mkey(name: &str) -> bool {
                 return false;
             }
             matches!(family, Some("CM") | Some("DM"))
-                && matches!(idx, Some("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"))
-                && matches!(slot, Some("0" | "1" | "2" | "3" | "4" | "5"))
+                && one_digit_at_most(idx, CCA_ROTPK_MAX_INDEX)
+                && one_digit_at_most(slot, CCA_ROTPK_MAX_SLOT)
         }
     }
+}
+
+fn one_digit_at_most(value: Option<&str>, max: u8) -> bool {
+    let Some(value) = value else {
+        return false;
+    };
+
+    let [digit] = value.as_bytes() else {
+        return false;
+    };
+    digit.is_ascii_digit() && digit - b'0' <= max
 }
 
 /// Recognize a CCA Realm measurement key.
@@ -75,6 +97,19 @@ fn mkey_name(mkey: &Option<MeasuredElement>) -> Option<String> {
     }
 }
 
+fn has_single_signer_key(mval: &MeasurementValuesMap) -> bool {
+    mval.cryptokeys.as_ref().is_some_and(|keys| {
+        keys.len() == 1
+            && keys.iter().all(|k| match k {
+                CryptoKey::Bytes(b) => matches!(
+                    b.len(),
+                    CCA_HASH_SIZE_256 | CCA_HASH_SIZE_384 | CCA_HASH_SIZE_512
+                ),
+                _ => false,
+            })
+    })
+}
+
 fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
     if m.authorized_by.is_some() {
         return false;
@@ -86,26 +121,10 @@ fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
 
     match mkey.as_str() {
         "cca.software-component" => {
-            m.mval.digests.as_ref().is_some_and(|d| !d.is_empty())
-                && m.mval.cryptokeys.as_ref().is_some_and(|keys| {
-                    keys.len() == 1
-                        && keys.iter().all(|k| match k {
-                            crate::types::common::CryptoKey::Bytes(b) => {
-                                matches!(b.len(), 32 | 48 | 64)
-                            }
-                            _ => false,
-                        })
-                })
+            m.mval.digests.as_ref().is_some_and(|d| !d.is_empty()) && has_single_signer_key(&m.mval)
         }
         "cca.platform-config" | "cca.platform-manufacturing-config" => m.mval.raw_value.is_some(),
-        _ if is_cca_platform_mkey(&mkey) => m.mval.cryptokeys.as_ref().is_some_and(|keys| {
-            !keys.is_empty()
-                && keys.len() == 1
-                && keys.iter().all(|k| match k {
-                    crate::types::common::CryptoKey::Bytes(b) => matches!(b.len(), 32 | 48 | 64),
-                    _ => false,
-                })
-        }),
+        _ if is_cca_platform_mkey(&mkey) => has_single_signer_key(&m.mval),
         _ => false,
     }
 }
@@ -128,12 +147,14 @@ fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
     }
 }
 
-#[derive(Debug)]
+/// Profile implementation for Arm CCA Platform endorsements.
+#[derive(Clone, Debug, PartialEq)]
 pub struct CcaPlatformProfile {
     id: ProfileChoice,
 }
 
 impl CcaPlatformProfile {
+    /// Construct a new CCA Platform profile instance.
     pub fn new() -> Self {
         Self {
             id: ProfileChoice::Uri(CCA_PLATFORM_PROFILE_URI.into()),
@@ -147,12 +168,14 @@ impl Default for CcaPlatformProfile {
     }
 }
 
-#[derive(Debug)]
+/// Profile implementation for Arm CCA Realm endorsements.
+#[derive(Clone, Debug, PartialEq)]
 pub struct CcaRealmProfile {
     id: ProfileChoice,
 }
 
 impl CcaRealmProfile {
+    /// Construct a new CCA Realm profile instance.
     pub fn new() -> Self {
         Self {
             id: ProfileChoice::Uri(CCA_REALM_PROFILE_URI.into()),
@@ -199,6 +222,24 @@ impl Profile for CcaPlatformProfile {
 impl Profile for CcaRealmProfile {
     fn identifier(&self) -> &ProfileChoice {
         &self.id
+    }
+
+    fn reference_measurements_valid(&self, measurements: &[MeasurementMap]) -> bool {
+        let mut has_realm_measurement = false;
+        let mut has_rim = false;
+
+        for measurement in measurements {
+            let Some(mkey) = mkey_name(&measurement.mkey) else {
+                continue;
+            };
+
+            if is_cca_realm_mkey(&mkey) {
+                has_realm_measurement = true;
+                has_rim |= mkey == "cca.rim";
+            }
+        }
+
+        !has_realm_measurement || has_rim
     }
 
     fn match_measurement(

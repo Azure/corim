@@ -341,6 +341,10 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     let mut corroborated = Vec::new();
 
     for triple in ref_triples {
+        if profile.is_some_and(|p| !p.reference_measurements_valid(triple.measurements())) {
+            continue;
+        }
+
         for ev in evidence {
             if !environment_matches(triple.environment(), &ev.environment) {
                 continue;

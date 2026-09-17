@@ -10,7 +10,10 @@ use corim::profile::cca::{
 use corim::profile::{MatchContext, Profile};
 use corim::types::common::{CryptoKey, MeasuredElement};
 use corim::types::corim::ProfileChoice;
+use corim::types::environment::EnvironmentMap;
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, RawValueChoice};
+use corim::types::triples::ReferenceTriple;
+use corim::validate::{match_reference_values_with_profile, EvidenceClaim};
 
 fn measurement_with_mkey(mkey: &str, digest_val: &[u8]) -> MeasurementMap {
     MeasurementMap {
@@ -126,6 +129,18 @@ fn platform_match_rejects_mkey_mismatch() {
 }
 
 #[test]
+fn platform_match_defers_for_non_cca_mkey() {
+    let profile = CcaPlatformProfile::new();
+    let reference = measurement_with_mkey("tee.something", &[0x11, 0x22, 0x33]);
+    let evidence = measurement_with_mkey("tee.something", &[0x11, 0x22, 0x33]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        None
+    );
+}
+
+#[test]
 fn platform_match_rejects_invalid_cca_structures() {
     let profile = CcaPlatformProfile::new();
     let reference = measurement_with_mkey("cca.software-component", &[0x11, 0x22, 0x33]);
@@ -179,6 +194,66 @@ fn realm_match_rejects_raw_value_violation() {
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
         Some(false)
+    );
+}
+
+#[test]
+fn realm_profile_rejects_reference_triple_without_mandatory_rim() {
+    let profile = CcaRealmProfile::new();
+    let rem = measurement_with_mkey("cca.rem0", &[0x11, 0x22, 0x33]);
+    let triples = vec![ReferenceTriple::new(
+        EnvironmentMap::for_class("ACME", "Realm"),
+        vec![rem.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Realm"),
+        measurements: vec![rem],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
+fn realm_profile_accepts_reference_triple_with_mandatory_rim() {
+    let profile = CcaRealmProfile::new();
+    let rim = measurement_with_mkey("cca.rim", &[0xAA, 0xBB, 0xCC]);
+    let rem = measurement_with_mkey("cca.rem0", &[0x11, 0x22, 0x33]);
+    let triples = vec![ReferenceTriple::new(
+        EnvironmentMap::for_class("ACME", "Realm"),
+        vec![rim.clone(), rem.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Realm"),
+        measurements: vec![rim, rem],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].measurements.len(), 2);
+}
+
+#[test]
+fn realm_match_defers_for_non_cca_mkey() {
+    let profile = CcaRealmProfile::new();
+    let reference = measurement_with_mkey("tee.something", &[0x11, 0x22, 0x33]);
+    let evidence = measurement_with_mkey("tee.something", &[0x11, 0x22, 0x33]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        None
     );
 }
 
