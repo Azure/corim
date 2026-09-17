@@ -40,30 +40,42 @@ use crate::types::measurement::{
 use crate::types::triples::ReferenceTriple;
 use crate::validate::EvidenceClaim;
 
-/// Profile URI for CCA Platform endorsements.
+/// Profile URI for CCA Platform endorsements
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.1).
 pub const CCA_PLATFORM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_platform#1.0.0";
-/// Profile URI for CCA Realm endorsements.
+/// Profile URI for CCA Realm endorsements
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.1).
 pub const CCA_REALM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_realm#1.0.0";
 
-/// CCA Platform software-component measurement key.
+/// CCA Platform software-component measurement key
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.3.1).
 pub const CCA_MKEY_SOFTWARE_COMPONENT: &str = "cca.software-component";
-/// CCA Platform configuration measurement key.
+/// CCA Platform configuration measurement key
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.3.2).
 pub const CCA_MKEY_PLATFORM_CONFIG: &str = "cca.platform-config";
-/// CCA Platform manufacturing configuration measurement key.
+/// CCA Platform manufacturing configuration measurement key
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.3.4).
 pub const CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG: &str = "cca.platform-manufacturing-config";
-/// Prefix for CCA Platform ROTPK measurement keys.
+/// Prefix for CCA Platform ROTPK measurement keys
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.3.3).
 pub const CCA_MKEY_ROTPK_PREFIX: &str = "cca.rotpk.";
-/// CCA Realm initial measurement key.
+/// CCA Realm initial measurement key
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_RIM: &str = "cca.rim";
-/// CCA Realm extended measurement key for bank 0.
+/// CCA Realm extended measurement key for bank 0
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_REM0: &str = "cca.rem0";
-/// CCA Realm extended measurement key for bank 1.
+/// CCA Realm extended measurement key for bank 1
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_REM1: &str = "cca.rem1";
-/// CCA Realm extended measurement key for bank 2.
+/// CCA Realm extended measurement key for bank 2
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_REM2: &str = "cca.rem2";
-/// CCA Realm extended measurement key for bank 3.
+/// CCA Realm extended measurement key for bank 3
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_REM3: &str = "cca.rem3";
-/// CCA Realm personalization value measurement key.
+/// CCA Realm personalization value measurement key
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.3).
 pub const CCA_MKEY_RPV: &str = "cca.rpv";
 
 /// Maximum ROTPK array index from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
@@ -615,21 +627,19 @@ impl Profile for CcaRealmProfile {
 
         for measurement in triple.measurements() {
             let Some(mkey) = mkey_name(&measurement.mkey) else {
-                continue;
+                return false;
             };
 
-            if is_cca_realm_mkey(&mkey) {
-                if !is_valid_cca_realm_measurement(measurement) {
+            if !is_cca_realm_mkey(&mkey) || !is_valid_cca_realm_measurement(measurement) {
+                return false;
+            }
+            // §3.2.2: the environment class-id carries the RIM, so the
+            // mandatory `cca.rim` measurement MUST report the same value.
+            if mkey == CCA_MKEY_RIM {
+                if !realm_rim_matches_environment(triple.environment(), measurement) {
                     return false;
                 }
-                // §3.2.2: the environment class-id carries the RIM, so the
-                // mandatory `cca.rim` measurement MUST report the same value.
-                if mkey == CCA_MKEY_RIM {
-                    if !realm_rim_matches_environment(triple.environment(), measurement) {
-                        return false;
-                    }
-                    has_rim = true;
-                }
+                has_rim = true;
             }
         }
 

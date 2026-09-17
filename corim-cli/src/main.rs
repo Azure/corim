@@ -431,6 +431,7 @@ fn validate_profile_reference_triples(
     comids: &[corim::types::comid::ComidTag],
     errors: &mut Vec<String>,
 ) {
+    let profile_name = display::profile_str(profile.identifier());
     for (comid_idx, comid) in comids.iter().enumerate() {
         let Some(reference_triples) = &comid.triples.reference_triples else {
             continue;
@@ -439,7 +440,7 @@ fn validate_profile_reference_triples(
         for (triple_idx, triple) in reference_triples.iter().enumerate() {
             if !profile.reference_triple_valid(triple) {
                 errors.push(format!(
-                    "comids[{comid_idx}].reference-triples[{triple_idx}]: failed profile-specific validation"
+                    "comids[{comid_idx}].reference-triples[{triple_idx}]: failed profile-specific validation for {profile_name}"
                 ));
             }
         }

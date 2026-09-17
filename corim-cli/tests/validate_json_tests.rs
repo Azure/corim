@@ -245,7 +245,8 @@ fn validate_rejects_invalid_cca_platform_profile_reference_triples() {
     assert!(
         v["errors"].as_array().unwrap().iter().any(|error| error
             .as_str()
-            .is_some_and(|s| s.contains("failed profile-specific validation"))),
+            .is_some_and(|s| s.contains("failed profile-specific validation")
+                && s.contains("tag:arm.com,2025:endorsements/cca_platform#1.0.0"))),
         "expected profile-specific validation error, got: {v}"
     );
 }
