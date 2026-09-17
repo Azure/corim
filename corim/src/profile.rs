@@ -319,6 +319,18 @@ pub trait Profile {
         true
     }
 
+    /// Validate profile-specific constraints over one evidence claim before
+    /// it is matched against any reference triple.
+    ///
+    /// Use this when evidence produced for a profile must satisfy identity or
+    /// shape requirements that are stricter than the generic CoRIM environment
+    /// matching rules. Return `false` to make the evidence claim ineligible for
+    /// profile-aware matching. Profiles without evidence-level requirements can
+    /// use the default implementation.
+    fn evidence_claim_valid(&self, _claim: &crate::validate::EvidenceClaim) -> bool {
+        true
+    }
+
     /// Render an `extra_entries` key/value pair for `--diagnose` output.
     ///
     /// Called by the diagnose walker when it encounters a profile-defined

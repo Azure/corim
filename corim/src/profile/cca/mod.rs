@@ -38,6 +38,7 @@ use crate::types::measurement::{
     Digest, DigestAlg, MeasurementMap, MeasurementValuesMap, RawValueChoice,
 };
 use crate::types::triples::ReferenceTriple;
+use crate::validate::EvidenceClaim;
 
 /// Profile URI for CCA Platform endorsements.
 pub const CCA_PLATFORM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_platform#1.0.0";
@@ -444,6 +445,15 @@ fn is_valid_cca_platform_environment(environment: &EnvironmentMap) -> bool {
     }
 }
 
+fn is_valid_cca_platform_evidence_environment(environment: &EnvironmentMap) -> bool {
+    is_valid_cca_platform_environment(environment)
+        && matches!(
+            &environment.instance,
+            Some(InstanceIdChoice::Ueid(ueid))
+                if ueid.len() == CCA_INSTANCE_ID_SIZE && ueid[0] == CCA_INSTANCE_ID_RAND_TYPE
+        )
+}
+
 /// The subject of a CCA Realm triple is the RIM itself, encoded as
 /// `#6.560(cca-hash-type)` in `environment.class.class-id`
 /// (draft-ydb-rats-cca-endorsements-04 §3.2.2). The same value is also
@@ -562,6 +572,10 @@ impl Profile for CcaPlatformProfile {
             && manufacturing_config_count <= 1
     }
 
+    fn evidence_claim_valid(&self, claim: &EvidenceClaim) -> bool {
+        is_valid_cca_platform_evidence_environment(&claim.environment)
+    }
+
     fn match_measurement(
         &self,
         reference: &MeasurementMap,
@@ -620,6 +634,10 @@ impl Profile for CcaRealmProfile {
         }
 
         has_rim && !has_duplicate_mkeys(triple.measurements(), is_cca_realm_mkey)
+    }
+
+    fn evidence_claim_valid(&self, claim: &EvidenceClaim) -> bool {
+        is_valid_cca_realm_environment(&claim.environment)
     }
 
     fn match_measurement(

@@ -91,6 +91,16 @@ fn platform_environment() -> EnvironmentMap {
     environment_with_class_id(&[0x5A; 32])
 }
 
+fn platform_evidence_environment() -> EnvironmentMap {
+    let mut environment = platform_environment();
+    environment.instance = Some(InstanceIdChoice::Ueid({
+        let mut ueid = vec![0x42; 33];
+        ueid[0] = 0x01;
+        ueid
+    }));
+    environment
+}
+
 /// Realm triples carry the RIM itself as `class-id`
 /// (draft-ydb-rats-cca-endorsements-04 §3.2.2).
 fn realm_environment(rim: &[u8]) -> EnvironmentMap {
@@ -256,7 +266,7 @@ fn platform_match_rejects_masked_config_evidence() {
 
 fn platform_evidence() -> Vec<EvidenceClaim> {
     vec![EvidenceClaim {
-        environment: platform_environment(),
+        environment: platform_evidence_environment(),
         measurements: vec![
             software_component_measurement("cca.software-component", &[0x11; 32], &[0xAA; 32]),
             raw_value_measurement("cca.platform-config", &[0xAF, 0xFF]),
@@ -366,7 +376,7 @@ fn platform_profile_accepts_standalone_rotpk_triple() {
         vec![rotpk.clone()],
     )];
     let evidence = vec![EvidenceClaim {
-        environment: platform_environment(),
+        environment: platform_evidence_environment(),
         measurements: vec![raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32])],
     }];
 
@@ -390,7 +400,7 @@ fn platform_profile_accepts_rotpk_triple_for_one_array_entry() {
         vec![first.clone(), second.clone()],
     )];
     let evidence = vec![EvidenceClaim {
-        environment: platform_environment(),
+        environment: platform_evidence_environment(),
         measurements: vec![
             raw_value_measurement("cca.rotpk.CM.2.0", &[0xAA; 32]),
             raw_value_measurement("cca.rotpk.CM.2.1", &[0xBB; 32]),
@@ -421,7 +431,7 @@ fn platform_profile_rejects_rotpk_mixed_array_entries() {
             measurements.clone(),
         )];
         let evidence = vec![EvidenceClaim {
-            environment: platform_environment(),
+            environment: platform_evidence_environment(),
             measurements,
         }];
 
@@ -445,7 +455,7 @@ fn platform_profile_rejects_rotpk_mixed_with_unknown_measurement() {
         vec![rotpk, measurement_with_mkey("tee.something", &[0x11; 32])],
     )];
     let evidence = vec![EvidenceClaim {
-        environment: platform_environment(),
+        environment: platform_evidence_environment(),
         measurements: vec![raw_value_measurement("cca.rotpk.CM.2.0", &[0xAA; 32])],
     }];
 
@@ -515,6 +525,58 @@ fn platform_profile_rejects_triple_with_non_ueid_instance() {
     )];
     let evidence = vec![EvidenceClaim {
         environment,
+        measurements: platform_evidence().remove(0).measurements,
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
+fn platform_profile_rejects_evidence_without_instance() {
+    let profile = CcaPlatformProfile::new();
+    let triples = vec![ReferenceTriple::new(
+        platform_environment(),
+        vec![
+            software_component_measurement("cca.software-component", &[0x11; 32], &[0xAA; 32]),
+            masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]),
+        ],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: platform_environment(),
+        measurements: platform_evidence().remove(0).measurements,
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
+fn platform_profile_rejects_evidence_with_non_ueid_instance() {
+    let profile = CcaPlatformProfile::new();
+    let triples = vec![ReferenceTriple::new(
+        platform_environment(),
+        vec![
+            software_component_measurement("cca.software-component", &[0x11; 32], &[0xAA; 32]),
+            masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]),
+        ],
+    )];
+    let mut evidence_environment = platform_environment();
+    evidence_environment.instance = Some(InstanceIdChoice::Bytes(vec![0x01; 33]));
+    let evidence = vec![EvidenceClaim {
+        environment: evidence_environment,
         measurements: platform_evidence().remove(0).measurements,
     }];
 
@@ -792,6 +854,35 @@ fn realm_profile_rejects_malformed_rim_in_reference_triple() {
         ),
         0
     );
+}
+
+#[test]
+fn realm_profile_rejects_evidence_with_instance() {
+    let profile = CcaRealmProfile::new();
+    let rim_value = [0xAA; 32];
+    let triples = vec![ReferenceTriple::new(
+        realm_environment(&rim_value),
+        vec![measurement_with_mkey("cca.rim", &rim_value)],
+    )];
+    let mut evidence_environment = realm_environment(&rim_value);
+    evidence_environment.instance = Some(InstanceIdChoice::Ueid({
+        let mut ueid = vec![0x42; 33];
+        ueid[0] = 0x01;
+        ueid
+    }));
+    let evidence = vec![EvidenceClaim {
+        environment: evidence_environment,
+        measurements: vec![measurement_with_mkey("cca.rim", &rim_value)],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
 }
 
 #[test]
