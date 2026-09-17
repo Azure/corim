@@ -47,6 +47,8 @@ const CCA_HASH_SIZE_256: usize = 32;
 const CCA_HASH_SIZE_384: usize = 48;
 /// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
 const CCA_HASH_SIZE_512: usize = 64;
+/// CCA Realm personalization value size in bytes from draft-ydb-rats-cca-endorsements-04 §3.2.3.
+const CCA_RPV_SIZE: usize = 64;
 
 /// Recognize a CCA Platform measurement key, per draft-ydb-rats-cca-endorsements-04.
 pub fn is_cca_platform_mkey(name: &str) -> bool {
@@ -168,8 +170,8 @@ fn is_bytes_raw_value(mval: &MeasurementValuesMap) -> bool {
     matches!(mval.raw_value, Some(RawValueChoice::Bytes(_)))
 }
 
-fn has_raw_value(mval: &MeasurementValuesMap) -> bool {
-    mval.raw_value.is_some()
+fn is_bytes_raw_value_of_len(mval: &MeasurementValuesMap, len: usize) -> bool {
+    matches!(&mval.raw_value, Some(RawValueChoice::Bytes(bytes)) if bytes.len() == len)
 }
 
 fn is_cca_software_component_mval(mval: &MeasurementValuesMap) -> bool {
@@ -191,7 +193,7 @@ fn is_cca_masked_config_reference_mval(mval: &MeasurementValuesMap) -> bool {
 }
 
 fn is_cca_raw_config_evidence_mval(mval: &MeasurementValuesMap) -> bool {
-    has_no_mval_fields_except(mval, false, false, true, false, false) && has_raw_value(mval)
+    has_no_mval_fields_except(mval, false, false, true, false, false) && is_bytes_raw_value(mval)
 }
 
 fn is_cca_realm_digest_mval(mval: &MeasurementValuesMap) -> bool {
@@ -199,7 +201,8 @@ fn is_cca_realm_digest_mval(mval: &MeasurementValuesMap) -> bool {
 }
 
 fn is_cca_rpv_mval(mval: &MeasurementValuesMap) -> bool {
-    has_no_mval_fields_except(mval, false, false, true, false, false) && is_bytes_raw_value(mval)
+    has_no_mval_fields_except(mval, false, false, true, false, false)
+        && is_bytes_raw_value_of_len(mval, CCA_RPV_SIZE)
 }
 
 fn is_valid_cca_platform_reference_measurement(m: &MeasurementMap) -> bool {
@@ -264,13 +267,9 @@ fn raw_value_matches_with_reference_mask(
     evidence: &Option<RawValueChoice>,
 ) -> bool {
     match (reference, evidence) {
-        (Some(RawValueChoice::Masked { value, mask }), Some(RawValueChoice::Bytes(evidence)))
-        | (
-            Some(RawValueChoice::Masked { value, mask }),
-            Some(RawValueChoice::Masked {
-                value: evidence, ..
-            }),
-        ) => masked_bytes_match(value, evidence, mask),
+        (Some(RawValueChoice::Masked { value, mask }), Some(RawValueChoice::Bytes(evidence))) => {
+            masked_bytes_match(value, evidence, mask)
+        }
         _ => reference == evidence,
     }
 }
@@ -350,6 +349,32 @@ impl Profile for CcaPlatformProfile {
         &self.id
     }
 
+    fn reference_measurements_valid(&self, measurements: &[MeasurementMap]) -> bool {
+        let mut platform_config_count = 0usize;
+        let mut manufacturing_config_count = 0usize;
+
+        for measurement in measurements {
+            let Some(mkey) = mkey_name(&measurement.mkey) else {
+                continue;
+            };
+
+            if !is_cca_platform_mkey(&mkey) {
+                continue;
+            }
+            if !is_valid_cca_platform_reference_measurement(measurement) {
+                return false;
+            }
+
+            match mkey.as_str() {
+                "cca.platform-config" => platform_config_count += 1,
+                "cca.platform-manufacturing-config" => manufacturing_config_count += 1,
+                _ => {}
+            }
+        }
+
+        platform_config_count <= 1 && manufacturing_config_count <= 1
+    }
+
     fn match_measurement(
         &self,
         reference: &MeasurementMap,
@@ -389,6 +414,9 @@ impl Profile for CcaRealmProfile {
             };
 
             if is_cca_realm_mkey(&mkey) {
+                if !is_valid_cca_realm_measurement(measurement) {
+                    return false;
+                }
                 has_rim |= mkey == "cca.rim";
             }
         }
