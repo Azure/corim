@@ -437,6 +437,29 @@ fn platform_profile_rejects_rotpk_mixed_array_entries() {
 }
 
 #[test]
+fn platform_profile_rejects_rotpk_mixed_with_unknown_measurement() {
+    let profile = CcaPlatformProfile::new();
+    let rotpk = rotpk_measurement("cca.rotpk.CM.2.0", &[0xAA; 32]);
+    let triples = vec![ReferenceTriple::new(
+        platform_environment(),
+        vec![rotpk, measurement_with_mkey("tee.something", &[0x11; 32])],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: platform_environment(),
+        measurements: vec![raw_value_measurement("cca.rotpk.CM.2.0", &[0xAA; 32])],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
 fn platform_profile_rejects_rotpk_mixed_with_platform_measurements() {
     let profile = CcaPlatformProfile::new();
 
