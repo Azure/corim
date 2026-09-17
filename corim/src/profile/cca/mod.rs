@@ -25,7 +25,6 @@
 //! - providing diagnosis labels for those names,
 //! - enforcing the CCA-specific measurement-map shapes.
 
-use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
 use crate::profile::{MatchContext, Profile};
 use crate::types::common::MeasuredElement;
@@ -55,12 +54,8 @@ pub fn is_cca_platform_mkey(name: &str) -> bool {
                 return false;
             }
             matches!(family, Some("CM") | Some("DM"))
-                && idx
-                    .and_then(|s| s.parse::<u8>().ok())
-                    .is_some_and(|n| n <= 7)
-                && slot
-                    .and_then(|s| s.parse::<u8>().ok())
-                    .is_some_and(|n| n <= 5)
+                && matches!(idx, Some("0" | "1" | "2" | "3" | "4" | "5" | "6" | "7"))
+                && matches!(slot, Some("0" | "1" | "2" | "3" | "4" | "5"))
         }
     }
 }
@@ -68,13 +63,8 @@ pub fn is_cca_platform_mkey(name: &str) -> bool {
 /// Recognize a CCA Realm measurement key.
 pub fn is_cca_realm_mkey(name: &str) -> bool {
     match name {
-        "cca.rim" | "cca.rpv" => true,
-        _ => {
-            let Some(rest) = name.strip_prefix("cca.rem") else {
-                return false;
-            };
-            rest.parse::<u8>().is_ok_and(|n| n <= 3)
-        }
+        "cca.rim" | "cca.rem0" | "cca.rem1" | "cca.rem2" | "cca.rem3" | "cca.rpv" => true,
+        _ => false,
     }
 }
 
@@ -86,6 +76,10 @@ fn mkey_name(mkey: &Option<MeasuredElement>) -> Option<String> {
 }
 
 fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
+    if m.authorized_by.is_some() {
+        return false;
+    }
+
     let Some(mkey) = mkey_name(&m.mkey) else {
         return false;
     };
@@ -94,7 +88,7 @@ fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
         "cca.software-component" => {
             m.mval.digests.as_ref().is_some_and(|d| !d.is_empty())
                 && m.mval.cryptokeys.as_ref().is_some_and(|keys| {
-                    !keys.is_empty()
+                    keys.len() == 1
                         && keys.iter().all(|k| match k {
                             crate::types::common::CryptoKey::Bytes(b) => {
                                 matches!(b.len(), 32 | 48 | 64)
@@ -117,6 +111,10 @@ fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
 }
 
 fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
+    if m.authorized_by.is_some() {
+        return false;
+    }
+
     let Some(mkey) = mkey_name(&m.mkey) else {
         return false;
     };
@@ -196,13 +194,6 @@ impl Profile for CcaPlatformProfile {
 
         Some(crate::validate::core_fields_match(reference, evidence))
     }
-
-    fn diagnose_mval_entry(&self, _key: i64, value: &Value) -> Option<String> {
-        match value {
-            Value::Text(s) if is_cca_platform_mkey(s) => Some(format!("{} = {}", s, s)),
-            _ => None,
-        }
-    }
 }
 
 impl Profile for CcaRealmProfile {
@@ -230,12 +221,5 @@ impl Profile for CcaRealmProfile {
         }
 
         Some(crate::validate::core_fields_match(reference, evidence))
-    }
-
-    fn diagnose_mval_entry(&self, _key: i64, value: &Value) -> Option<String> {
-        match value {
-            Value::Text(s) if is_cca_realm_mkey(s) => Some(format!("{} = {}", s, s)),
-            _ => None,
-        }
     }
 }
