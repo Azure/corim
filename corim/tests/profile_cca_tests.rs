@@ -369,6 +369,59 @@ fn platform_profile_accepts_standalone_rotpk_triple() {
 }
 
 #[test]
+fn platform_profile_accepts_rotpk_triple_for_one_array_entry() {
+    let profile = CcaPlatformProfile::new();
+    let first = rotpk_measurement("cca.rotpk.CM.2.0", &[0xAA; 32]);
+    let second = rotpk_measurement("cca.rotpk.CM.2.1", &[0xBB; 32]);
+    let triples = vec![ReferenceTriple::new(
+        platform_environment(),
+        vec![first.clone(), second.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: platform_environment(),
+        measurements: vec![first, second],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert_eq!(claims.len(), 1);
+    assert_eq!(claims[0].measurements.len(), 2);
+}
+
+#[test]
+fn platform_profile_rejects_rotpk_mixed_array_entries() {
+    let profile = CcaPlatformProfile::new();
+    let first = rotpk_measurement("cca.rotpk.CM.2.0", &[0xAA; 32]);
+    let second = rotpk_measurement("cca.rotpk.CM.3.0", &[0xBB; 32]);
+    let third = rotpk_measurement("cca.rotpk.DM.2.1", &[0xCC; 32]);
+
+    for measurements in [vec![first.clone(), second], vec![first.clone(), third]] {
+        let triples = vec![ReferenceTriple::new(
+            platform_environment(),
+            measurements.clone(),
+        )];
+        let evidence = vec![EvidenceClaim {
+            environment: platform_environment(),
+            measurements,
+        }];
+
+        let claims = match_reference_values_with_profile(
+            &triples,
+            &evidence,
+            Some(&profile),
+            &MatchContext::new(),
+        );
+
+        assert!(claims.is_empty());
+    }
+}
+
+#[test]
 fn platform_profile_rejects_rotpk_mixed_with_platform_measurements() {
     let profile = CcaPlatformProfile::new();
 

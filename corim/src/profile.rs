@@ -190,11 +190,11 @@ pub mod psa;
 /// Minimal Arm CCA endorsements profile support for
 /// `draft-ydb-rats-cca-endorsements-04`.
 ///
-/// The draft primarily introduces CCA Platform / Realm profile URIs and
-/// the characteristic `mkey` names used for measurements. The core crate
-/// already knows how to compare the underlying `digests` / `raw-value`
-/// fields, so this module focuses on profile identification and
-/// enforcement that the `mkey` names belong to the CCA profile.
+/// The module recognizes CCA Platform / Realm profile URIs and measurement
+/// keys, validates CCA-specific measurement shapes and environment subject
+/// identifiers, enforces triple-level cardinality and linkage constraints,
+/// and adds matching semantics for CCA cryptokeys and masked configuration
+/// reference values that the generic matcher deliberately does not handle.
 #[cfg(feature = "profile-cca")]
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-cca")))]
 pub mod cca;
