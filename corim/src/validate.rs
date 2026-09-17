@@ -315,9 +315,15 @@ pub struct EvidenceClaim {
 /// - `None` from the profile — defer to the default per-pair logic
 ///   (the same comparison performed by [`match_reference_values`]).
 ///
-/// The profile is consulted independently for each (reference, evidence)
-/// pair within a triple. Pass `None` for `profile` to get behavior
-/// identical to [`match_reference_values`].
+/// Before any per-pair matching, the profile's
+/// [`Profile::reference_triple_valid`] hook is called once for each
+/// reference triple. A `false` result skips that whole triple. The default
+/// hook returns `true`. For each candidate evidence claim, the profile's
+/// [`Profile::evidence_claim_valid`] hook is also called before generic
+/// environment matching; `false` skips that evidence claim. The default hook
+/// returns `true`, so profiles with no triple- or evidence-level rules behave
+/// as if only per-pair matching were customized. Pass `None` for `profile` to
+/// get behavior identical to [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
 ///
@@ -341,7 +347,15 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     let mut corroborated = Vec::new();
 
     for triple in ref_triples {
+        if profile.is_some_and(|p| !p.reference_triple_valid(triple)) {
+            continue;
+        }
+
         for ev in evidence {
+            if profile.is_some_and(|p| !p.evidence_claim_valid(ev)) {
+                continue;
+            }
+
             if !environment_matches(triple.environment(), &ev.environment) {
                 continue;
             }
@@ -414,9 +428,10 @@ pub fn apply_endorsement_series(
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
-/// [`Profile::match_measurement`] hook when comparing each series
-/// `condition` entry against evidence. Per-pair semantics are identical
-/// to those of [`match_reference_values_with_profile`].
+/// [`Profile::evidence_claim_valid`] hook before generic environment
+/// matching and [`Profile::match_measurement`] hook when comparing each
+/// series `condition` entry against evidence. Per-pair semantics are
+/// identical to those of [`match_reference_values_with_profile`].
 ///
 /// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
 /// to [`apply_endorsement_series`].
@@ -433,6 +448,7 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
 
         let matching_evidence: Vec<_> = evidence
             .iter()
+            .filter(|ev| profile.is_none_or(|p| p.evidence_claim_valid(ev)))
             .filter(|ev| environment_matches(&condition.environment, &ev.environment))
             .collect();
 

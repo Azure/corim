@@ -30,6 +30,7 @@
 //! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-03` |
 //! | `profile-azure`   | `azure` (feature-gated)                       | Azure `tcbstatus` example extension     |
 //! | `profile-psa`     | `psa` (feature-gated)                         | Arm PSA `psa-cert-num` (draft-corim-11) |
+//! | `profile-cca`     | `cca` (feature-gated)                         | Arm CCA endorsements (draft-ydb-rats-cca-endorsements-04) |
 //!
 //! Third-party profiles are first-class — the [`Profile`](crate::profile::Profile) trait is
 //! public and stable, and out-of-tree crates may publish their own
@@ -157,6 +158,7 @@ use crate::cbor::value::Value;
 use crate::types::common::CborTime;
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
+use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 
 /// First-party Intel CoRIM profile (`draft-cds-rats-intel-corim-profile`).
 ///
@@ -184,6 +186,18 @@ pub mod azure;
 #[cfg(feature = "profile-psa")]
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-psa")))]
 pub mod psa;
+
+/// Minimal Arm CCA endorsements profile support for
+/// `draft-ydb-rats-cca-endorsements-04`.
+///
+/// The module recognizes CCA Platform / Realm profile URIs and measurement
+/// keys, validates CCA-specific measurement shapes and environment subject
+/// identifiers, enforces triple-level cardinality and linkage constraints,
+/// and adds matching semantics for CCA cryptokeys and masked configuration
+/// reference values that the generic matcher deliberately does not handle.
+#[cfg(feature = "profile-cca")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-cca")))]
+pub mod cca;
 
 // ---------------------------------------------------------------------------
 // MatchContext
@@ -286,6 +300,50 @@ pub trait Profile {
         _ctx: &MatchContext,
     ) -> Option<bool> {
         None
+    }
+
+    /// Validate profile-specific constraints over a whole reference
+    /// triple before per-measurement appraisal begins.
+    ///
+    /// Use this when the profile has requirements that cannot be checked from
+    /// one `(reference, evidence)` measurement pair alone — a mandatory
+    /// measurement that must appear somewhere in the triple, a cardinality
+    /// constraint across measurements, or a constraint on the triple's
+    /// [`environment`][crate::types::triples::ReferenceTriple::environment]
+    /// such as a profile-defined subject identifier that must be present
+    /// and consistent with the measurements. Return `false` to make the
+    /// whole reference triple ineligible for profile-aware matching.
+    /// Profiles without triple-level requirements can use the default
+    /// implementation.
+    fn reference_triple_valid(&self, _triple: &ReferenceTriple) -> bool {
+        true
+    }
+
+    /// Validate profile-specific constraints over an attestation-key
+    /// triple.
+    ///
+    /// Use this when the profile places stricter requirements on
+    /// `attest-key-triple-record` than the generic
+    /// [`AttestKeyTriple::valid`][crate::types::triples::AttestKeyTriple]
+    /// check (a non-empty key list) — for example a profile-defined subject
+    /// identifier that must be present on the triple's environment, or a
+    /// constraint on the number or encoding of the verification keys.
+    /// Return `false` to reject the triple. Profiles without triple-level
+    /// requirements can use the default implementation.
+    fn attest_key_triple_valid(&self, _triple: &AttestKeyTriple) -> bool {
+        true
+    }
+
+    /// Validate profile-specific constraints over one evidence claim before
+    /// it is matched against any reference triple.
+    ///
+    /// Use this when evidence produced for a profile must satisfy identity or
+    /// shape requirements that are stricter than the generic CoRIM environment
+    /// matching rules. Return `false` to make the evidence claim ineligible for
+    /// profile-aware matching. Profiles without evidence-level requirements can
+    /// use the default implementation.
+    fn evidence_claim_valid(&self, _claim: &crate::validate::EvidenceClaim) -> bool {
+        true
     }
 
     /// Render an `extra_entries` key/value pair for `--diagnose` output.
