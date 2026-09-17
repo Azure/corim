@@ -158,7 +158,7 @@ use crate::cbor::value::Value;
 use crate::types::common::CborTime;
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
-use crate::types::triples::ReferenceTriple;
+use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 
 /// First-party Intel CoRIM profile (`draft-cds-rats-intel-corim-profile`).
 ///
@@ -316,6 +316,21 @@ pub trait Profile {
     /// Profiles without triple-level requirements can use the default
     /// implementation.
     fn reference_triple_valid(&self, _triple: &ReferenceTriple) -> bool {
+        true
+    }
+
+    /// Validate profile-specific constraints over an attestation-key
+    /// triple.
+    ///
+    /// Use this when the profile places stricter requirements on
+    /// `attest-key-triple-record` than the generic
+    /// [`AttestKeyTriple::valid`][crate::types::triples::AttestKeyTriple]
+    /// check (a non-empty key list) — for example a profile-defined subject
+    /// identifier that must be present on the triple's environment, or a
+    /// constraint on the number or encoding of the verification keys.
+    /// Return `false` to reject the triple. Profiles without triple-level
+    /// requirements can use the default implementation.
+    fn attest_key_triple_valid(&self, _triple: &AttestKeyTriple) -> bool {
         true
     }
 

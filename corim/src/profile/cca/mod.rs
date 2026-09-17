@@ -37,7 +37,7 @@ use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{
     Digest, DigestAlg, MeasurementMap, MeasurementValuesMap, RawValueChoice,
 };
-use crate::types::triples::ReferenceTriple;
+use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 use crate::validate::EvidenceClaim;
 
 /// Profile URI for CCA Platform endorsements
@@ -586,6 +586,15 @@ impl Profile for CcaPlatformProfile {
 
     fn evidence_claim_valid(&self, claim: &EvidenceClaim) -> bool {
         is_valid_cca_platform_evidence_environment(&claim.environment)
+    }
+
+    /// §3.1.4: the IAK verification key endorsement MUST identify both the
+    /// Implementation and Instance and MUST carry exactly one key, encoded
+    /// as `tagged-pkix-base64-key-type` (`#6.554`).
+    fn attest_key_triple_valid(&self, triple: &AttestKeyTriple) -> bool {
+        is_valid_cca_platform_environment(triple.environment())
+            && triple.environment().instance.is_some()
+            && matches!(triple.keys(), [CryptoKey::PkixBase64Key(_)])
     }
 
     fn match_measurement(
