@@ -206,6 +206,68 @@ fn platform_match_accepts_masked_config_reference_against_unmasked_evidence() {
 }
 
 #[test]
+fn platform_match_rejects_masked_config_evidence() {
+    let profile = CcaPlatformProfile::new();
+    let reference =
+        masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]);
+    let evidence =
+        masked_raw_value_measurement("cca.platform-config", &[0xAF, 0xFF], &[0xFF, 0xFF]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
+fn platform_profile_rejects_duplicate_config_measurements() {
+    let profile = CcaPlatformProfile::new();
+    let config = masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]);
+    let triples = vec![ReferenceTriple::new(
+        EnvironmentMap::for_class("ACME", "Platform"),
+        vec![config.clone(), config.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Platform"),
+        measurements: vec![raw_value_measurement("cca.platform-config", &[0xAF, 0xFF])],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
+fn platform_profile_rejects_malformed_reference_measurement_in_triple() {
+    let profile = CcaPlatformProfile::new();
+    let mut malformed_rotpk = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    malformed_rotpk.mval.raw_value = Some(RawValueChoice::Bytes(vec![0xCC; 32]));
+    let config = masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]);
+    let triples = vec![ReferenceTriple::new(
+        EnvironmentMap::for_class("ACME", "Platform"),
+        vec![malformed_rotpk, config.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Platform"),
+        measurements: vec![raw_value_measurement("cca.platform-config", &[0xAF, 0xFF])],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
+}
+
+#[test]
 fn platform_match_rejects_unmasked_config_reference() {
     let profile = CcaPlatformProfile::new();
     let reference = raw_value_measurement("cca.platform-config", &[0xAA, 0xBB]);
@@ -302,8 +364,20 @@ fn platform_match_rejects_authorized_by() {
 #[test]
 fn realm_match_rejects_raw_value_violation() {
     let profile = CcaRealmProfile::new();
-    let reference = raw_value_measurement("cca.rpv", b"abc");
+    let reference = raw_value_measurement("cca.rpv", &[0xAA; 64]);
     let evidence = measurement_with_mkey("cca.rpv", b"def");
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
+fn realm_match_rejects_short_rpv() {
+    let profile = CcaRealmProfile::new();
+    let reference = raw_value_measurement("cca.rpv", b"abc");
+    let evidence = raw_value_measurement("cca.rpv", b"abc");
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
@@ -380,6 +454,31 @@ fn realm_profile_accepts_reference_triple_with_mandatory_rim() {
 
     assert_eq!(claims.len(), 1);
     assert_eq!(claims[0].measurements.len(), 2);
+}
+
+#[test]
+fn realm_profile_rejects_malformed_rim_in_reference_triple() {
+    let profile = CcaRealmProfile::new();
+    let mut rim = measurement_with_mkey("cca.rim", &[0xAA; 32]);
+    rim.authorized_by = Some(vec![CryptoKey::Bytes(vec![0xCC; 32])]);
+    let rem = measurement_with_mkey("cca.rem0", &[0x11; 32]);
+    let triples = vec![ReferenceTriple::new(
+        EnvironmentMap::for_class("ACME", "Realm"),
+        vec![rim, rem.clone()],
+    )];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Realm"),
+        measurements: vec![rem],
+    }];
+
+    let claims = match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(&profile),
+        &MatchContext::new(),
+    );
+
+    assert!(claims.is_empty());
 }
 
 #[test]
