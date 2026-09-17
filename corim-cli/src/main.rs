@@ -364,6 +364,10 @@ decoded via compat::decode_comid_from_tcg_bstr",
         }
     }
 
+    if let Some(profile) = profile_for_render {
+        validate_profile_reference_triples(profile, &comid_tags, &mut errors);
+    }
+
     // Baseline conformance mode: compare the (valid) input against a
     // known-good baseline and exit on the conformance result.
     if let Some(baseline_path) = &cli.baseline {
@@ -419,6 +423,26 @@ decoded via compat::decode_comid_from_tcg_bstr",
 
     if !errors.is_empty() {
         process::exit(2);
+    }
+}
+
+fn validate_profile_reference_triples(
+    profile: &(dyn corim::profile::Profile + Send + Sync),
+    comids: &[corim::types::comid::ComidTag],
+    errors: &mut Vec<String>,
+) {
+    for (comid_idx, comid) in comids.iter().enumerate() {
+        let Some(reference_triples) = &comid.triples.reference_triples else {
+            continue;
+        };
+
+        for (triple_idx, triple) in reference_triples.iter().enumerate() {
+            if !profile.reference_triple_valid(triple) {
+                errors.push(format!(
+                    "comids[{comid_idx}].reference-triples[{triple_idx}]: failed profile-specific validation"
+                ));
+            }
+        }
     }
 }
 
