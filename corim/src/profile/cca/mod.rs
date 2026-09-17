@@ -22,15 +22,20 @@
 //!
 //! - identifying the CCA profile URI,
 //! - validating the CCA-specific `mkey` names,
-//! - enforcing the CCA-specific measurement-map shapes.
+//! - enforcing the CCA-specific measurement-map shapes,
+//! - enforcing the triple-level constraints: the environment subject
+//!   (Platform Implementation ID / Realm RIM) and the measurement
+//!   cardinality a reference triple must satisfy.
 
 use crate::nostd_prelude::*;
 use crate::profile::{MatchContext, Profile};
-use crate::types::common::{CryptoKey, MeasuredElement};
+use crate::types::common::{ClassIdChoice, CryptoKey, InstanceIdChoice, MeasuredElement};
 use crate::types::corim::ProfileChoice;
+use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{
     Digest, DigestAlg, MeasurementMap, MeasurementValuesMap, RawValueChoice,
 };
+use crate::types::triples::ReferenceTriple;
 
 /// Profile URI for CCA Platform endorsements.
 pub const CCA_PLATFORM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_platform#1.0.0";
@@ -49,6 +54,13 @@ const CCA_HASH_SIZE_384: usize = 48;
 const CCA_HASH_SIZE_512: usize = 64;
 /// CCA Realm personalization value size in bytes from draft-ydb-rats-cca-endorsements-04 §3.2.3.
 const CCA_RPV_SIZE: usize = 64;
+/// CCA Platform Implementation ID size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.2.
+const CCA_IMPLEMENTATION_ID_SIZE: usize = 32;
+/// CCA Platform Instance ID (UEID) size in bytes, including the type byte,
+/// from draft-ydb-rats-cca-endorsements-04 §3.1.2.
+const CCA_INSTANCE_ID_SIZE: usize = 33;
+/// UEID `RAND` type byte required by draft-ydb-rats-cca-endorsements-04 §3.1.2.
+const CCA_INSTANCE_ID_RAND_TYPE: u8 = 0x01;
 
 /// Recognize a CCA Platform measurement key, per draft-ydb-rats-cca-endorsements-04.
 pub fn is_cca_platform_mkey(name: &str) -> bool {
@@ -302,6 +314,68 @@ fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
     }
 }
 
+fn has_duplicate_mkeys(measurements: &[MeasurementMap], recognized: fn(&str) -> bool) -> bool {
+    measurements.iter().enumerate().any(|(i, measurement)| {
+        let Some(mkey) = mkey_name(&measurement.mkey) else {
+            return false;
+        };
+        if !recognized(&mkey) {
+            return false;
+        }
+        measurements
+            .iter()
+            .skip(i + 1)
+            .any(|other| mkey_name(&other.mkey).as_ref() == Some(&mkey))
+    })
+}
+
+fn class_id_bytes(environment: &EnvironmentMap) -> Option<&[u8]> {
+    match environment.class.as_ref()?.class_id.as_ref()? {
+        ClassIdChoice::Bytes(bytes) => Some(bytes),
+        _ => None,
+    }
+}
+
+/// The subject of a CCA Platform triple is the Implementation ID, encoded as
+/// `#6.560(bytes .size 32)` in `environment.class.class-id`, optionally
+/// narrowed to a single instance by a `#6.550` UEID
+/// (draft-ydb-rats-cca-endorsements-04 §3.1.2).
+fn is_valid_cca_platform_environment(environment: &EnvironmentMap) -> bool {
+    let Some(impl_id) = class_id_bytes(environment) else {
+        return false;
+    };
+    if impl_id.len() != CCA_IMPLEMENTATION_ID_SIZE {
+        return false;
+    }
+
+    match &environment.instance {
+        None => true,
+        Some(InstanceIdChoice::Ueid(ueid)) => {
+            ueid.len() == CCA_INSTANCE_ID_SIZE && ueid[0] == CCA_INSTANCE_ID_RAND_TYPE
+        }
+        Some(_) => false,
+    }
+}
+
+/// The subject of a CCA Realm triple is the RIM itself, encoded as
+/// `#6.560(cca-hash-type)` in `environment.class.class-id`
+/// (draft-ydb-rats-cca-endorsements-04 §3.2.2). The same value is also
+/// carried as the mandatory `cca.rim` digest, so the two MUST agree.
+fn is_valid_cca_realm_environment(environment: &EnvironmentMap) -> bool {
+    environment.instance.is_none()
+        && class_id_bytes(environment).is_some_and(|rim| is_cca_hash_size(rim.len()))
+}
+
+fn realm_rim_matches_environment(environment: &EnvironmentMap, rim: &MeasurementMap) -> bool {
+    let Some(class_rim) = class_id_bytes(environment) else {
+        return false;
+    };
+    rim.mval
+        .digests
+        .as_ref()
+        .is_some_and(|digests| digests.iter().any(|digest| digest.value() == class_rim))
+}
+
 /// Profile implementation for Arm CCA Platform endorsements.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CcaPlatformProfile {
@@ -349,11 +423,17 @@ impl Profile for CcaPlatformProfile {
         &self.id
     }
 
-    fn reference_measurements_valid(&self, measurements: &[MeasurementMap]) -> bool {
+    fn reference_triple_valid(&self, triple: &ReferenceTriple) -> bool {
+        if !is_valid_cca_platform_environment(triple.environment()) {
+            return false;
+        }
+
+        let mut software_component_count = 0usize;
         let mut platform_config_count = 0usize;
         let mut manufacturing_config_count = 0usize;
+        let mut rotpk_count = 0usize;
 
-        for measurement in measurements {
+        for measurement in triple.measurements() {
             let Some(mkey) = mkey_name(&measurement.mkey) else {
                 continue;
             };
@@ -366,13 +446,29 @@ impl Profile for CcaPlatformProfile {
             }
 
             match mkey.as_str() {
+                "cca.software-component" => software_component_count += 1,
                 "cca.platform-config" => platform_config_count += 1,
                 "cca.platform-manufacturing-config" => manufacturing_config_count += 1,
-                _ => {}
+                _ => rotpk_count += 1,
             }
         }
 
-        platform_config_count <= 1 && manufacturing_config_count <= 1
+        // §3.1.3.3: each ROTPK array entry is carried in its own reference
+        // triple, so a ROTPK triple describes no other platform measurement.
+        if rotpk_count > 0 {
+            return software_component_count == 0
+                && platform_config_count == 0
+                && manufacturing_config_count == 0
+                && !has_duplicate_mkeys(triple.measurements(), is_cca_platform_mkey);
+        }
+
+        // §3.1.3: a single reference triple MUST completely describe the CCA
+        // Platform measurements — a mandatory platform configuration
+        // (§3.1.3.2, "only one") and the platform software components
+        // (§3.1.3.1), plus at most one manufacturing configuration (§3.1.3.4).
+        software_component_count >= 1
+            && platform_config_count == 1
+            && manufacturing_config_count <= 1
     }
 
     fn match_measurement(
@@ -405,10 +501,14 @@ impl Profile for CcaRealmProfile {
         &self.id
     }
 
-    fn reference_measurements_valid(&self, measurements: &[MeasurementMap]) -> bool {
+    fn reference_triple_valid(&self, triple: &ReferenceTriple) -> bool {
+        if !is_valid_cca_realm_environment(triple.environment()) {
+            return false;
+        }
+
         let mut has_rim = false;
 
-        for measurement in measurements {
+        for measurement in triple.measurements() {
             let Some(mkey) = mkey_name(&measurement.mkey) else {
                 continue;
             };
@@ -417,11 +517,18 @@ impl Profile for CcaRealmProfile {
                 if !is_valid_cca_realm_measurement(measurement) {
                     return false;
                 }
-                has_rim |= mkey == "cca.rim";
+                // §3.2.2: the environment class-id carries the RIM, so the
+                // mandatory `cca.rim` measurement MUST report the same value.
+                if mkey == "cca.rim" {
+                    if !realm_rim_matches_environment(triple.environment(), measurement) {
+                        return false;
+                    }
+                    has_rim = true;
+                }
             }
         }
 
-        has_rim
+        has_rim && !has_duplicate_mkeys(triple.measurements(), is_cca_realm_mkey)
     }
 
     fn match_measurement(
