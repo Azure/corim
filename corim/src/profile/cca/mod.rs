@@ -62,10 +62,10 @@ pub fn is_cca_platform_mkey(name: &str) -> bool {
 
 /// Recognize a CCA Realm measurement key.
 pub fn is_cca_realm_mkey(name: &str) -> bool {
-    match name {
-        "cca.rim" | "cca.rem0" | "cca.rem1" | "cca.rem2" | "cca.rem3" | "cca.rpv" => true,
-        _ => false,
-    }
+    matches!(
+        name,
+        "cca.rim" | "cca.rem0" | "cca.rem1" | "cca.rem2" | "cca.rem3" | "cca.rpv"
+    )
 }
 
 fn mkey_name(mkey: &Option<MeasuredElement>) -> Option<String> {
