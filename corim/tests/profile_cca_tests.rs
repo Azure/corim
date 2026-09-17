@@ -3,7 +3,6 @@
 
 #![cfg(feature = "profile-cca")]
 
-use corim::cbor::value::Value;
 use corim::profile::cca::{
     is_cca_platform_mkey, is_cca_realm_mkey, CcaPlatformProfile, CcaRealmProfile,
     CCA_PLATFORM_PROFILE_URI, CCA_REALM_PROFILE_URI,
@@ -86,6 +85,8 @@ fn recognized_platform_mkeys_include_software_component_and_config() {
     assert!(!is_cca_platform_mkey("cca.unknown"));
     assert!(!is_cca_platform_mkey("cca.rotpk.CM.8.0"));
     assert!(!is_cca_platform_mkey("cca.rotpk.CM.2.6"));
+    assert!(!is_cca_platform_mkey("cca.rotpk.CM.02.3"));
+    assert!(!is_cca_platform_mkey("cca.rotpk.CM.2.03"));
 }
 
 #[test]
@@ -95,6 +96,7 @@ fn recognized_realm_mkeys_include_rim_rem_and_rpv() {
     assert!(is_cca_realm_mkey("cca.rem3"));
     assert!(is_cca_realm_mkey("cca.rpv"));
     assert!(!is_cca_realm_mkey("cca.rem10"));
+    assert!(!is_cca_realm_mkey("cca.rem00"));
 }
 
 #[test]
@@ -136,6 +138,39 @@ fn platform_match_rejects_invalid_cca_structures() {
 }
 
 #[test]
+fn platform_match_rejects_multiple_software_component_signer_ids() {
+    let profile = CcaPlatformProfile::new();
+    let mut reference =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xAA; 32]);
+    reference
+        .mval
+        .cryptokeys
+        .as_mut()
+        .unwrap()
+        .push(CryptoKey::Bytes(vec![0xBB; 32]));
+    let evidence =
+        software_component_measurement("cca.software-component", &[0x11, 0x22, 0x33], &[0xAA; 32]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
+fn platform_match_rejects_authorized_by() {
+    let profile = CcaPlatformProfile::new();
+    let mut reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    reference.authorized_by = Some(vec![CryptoKey::Bytes(vec![0xCC; 32])]);
+    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
+    );
+}
+
+#[test]
 fn realm_match_rejects_raw_value_violation() {
     let profile = CcaRealmProfile::new();
     let reference = raw_value_measurement("cca.rpv", b"abc");
@@ -148,12 +183,26 @@ fn realm_match_rejects_raw_value_violation() {
 }
 
 #[test]
-fn diagnosis_uses_cca_names_for_known_platform_mkeys() {
-    let profile = CcaPlatformProfile::new();
-    let key = Value::Text("cca.software-component".into());
+fn realm_match_rejects_authorized_by() {
+    let profile = CcaRealmProfile::new();
+    let reference = measurement_with_mkey("cca.rim", &[0x11, 0x22, 0x33]);
+    let mut evidence = measurement_with_mkey("cca.rim", &[0x11, 0x22, 0x33]);
+    evidence.authorized_by = Some(vec![CryptoKey::Bytes(vec![0xCC; 32])]);
+
     assert_eq!(
-        profile.diagnose_mval_entry(0, &key),
-        Some("cca.software-component = cca.software-component".into())
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(false)
     );
-    assert_eq!(profile.diagnose_mval_entry(99, &Value::Integer(42)), None);
+}
+
+#[test]
+fn diagnosis_does_not_treat_mkeys_as_mval_extensions() {
+    let profile = CcaPlatformProfile::new();
+    assert_eq!(
+        profile.diagnose_mval_entry(
+            -999,
+            &corim::cbor::value::Value::Text("cca.software-component".into())
+        ),
+        None
+    );
 }
