@@ -23,7 +23,8 @@
 //! - identifying the CCA profile URI,
 //! - validating the CCA-specific `mkey` names,
 //! - enforcing the CCA-specific measurement-map shapes,
-//! - matching cryptokeys and masked configuration reference values,
+//! - matching cryptokeys, ROTPK raw evidence, and masked configuration
+//!   reference values,
 //! - enforcing the triple-level constraints: the environment subject
 //!   (Platform Implementation ID / Realm RIM) and the measurement
 //!   cardinality a reference triple must satisfy.
@@ -158,16 +159,21 @@ fn mkey_name(mkey: &Option<MeasuredElement>) -> Option<String> {
 }
 
 fn has_single_signer_key(mval: &MeasurementValuesMap) -> bool {
-    mval.cryptokeys.as_ref().is_some_and(|keys| {
-        keys.len() == 1
-            && keys.iter().all(|k| match k {
-                CryptoKey::Bytes(b) => matches!(
-                    b.len(),
-                    CCA_HASH_SIZE_256 | CCA_HASH_SIZE_384 | CCA_HASH_SIZE_512
-                ),
-                _ => false,
-            })
-    })
+    single_signer_key_bytes(mval).is_some_and(|bytes| is_cca_hash_size(bytes.len()))
+}
+
+fn single_signer_key_bytes(mval: &MeasurementValuesMap) -> Option<&[u8]> {
+    match mval.cryptokeys.as_ref()?.as_slice() {
+        [CryptoKey::Bytes(bytes)] => Some(bytes),
+        _ => None,
+    }
+}
+
+fn raw_value_bytes(mval: &MeasurementValuesMap) -> Option<&[u8]> {
+    match &mval.raw_value {
+        Some(RawValueChoice::Bytes(bytes)) => Some(bytes),
+        _ => None,
+    }
 }
 
 fn has_no_mval_fields_except(
@@ -224,11 +230,11 @@ fn is_masked_raw_value(mval: &MeasurementValuesMap) -> bool {
 }
 
 fn is_bytes_raw_value(mval: &MeasurementValuesMap) -> bool {
-    matches!(mval.raw_value, Some(RawValueChoice::Bytes(_)))
+    raw_value_bytes(mval).is_some()
 }
 
 fn is_bytes_raw_value_of_len(mval: &MeasurementValuesMap, len: usize) -> bool {
-    matches!(&mval.raw_value, Some(RawValueChoice::Bytes(bytes)) if bytes.len() == len)
+    raw_value_bytes(mval).is_some_and(|bytes| bytes.len() == len)
 }
 
 fn is_cca_software_component_mval(mval: &MeasurementValuesMap) -> bool {
@@ -243,6 +249,11 @@ fn is_cca_software_component_mval(mval: &MeasurementValuesMap) -> bool {
 
 fn is_cca_rotpk_mval(mval: &MeasurementValuesMap) -> bool {
     has_no_mval_fields_except(mval, false, false, false, false, true) && has_single_signer_key(mval)
+}
+
+fn is_cca_rotpk_evidence_mval(mval: &MeasurementValuesMap) -> bool {
+    has_no_mval_fields_except(mval, false, false, true, false, false)
+        && raw_value_bytes(mval).is_some_and(|bytes| is_cca_hash_size(bytes.len()))
 }
 
 fn is_cca_masked_config_reference_mval(mval: &MeasurementValuesMap) -> bool {
@@ -276,7 +287,7 @@ fn is_valid_cca_platform_reference_measurement(m: &MeasurementMap) -> bool {
         CCA_MKEY_PLATFORM_CONFIG | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => {
             is_cca_masked_config_reference_mval(&m.mval)
         }
-        _ if is_cca_platform_mkey(&mkey) => is_cca_rotpk_mval(&m.mval),
+        _ if parse_rotpk_mkey(&mkey).is_some() => is_cca_rotpk_mval(&m.mval),
         _ => false,
     }
 }
@@ -295,7 +306,7 @@ fn is_valid_cca_platform_evidence_measurement(m: &MeasurementMap) -> bool {
         CCA_MKEY_PLATFORM_CONFIG | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => {
             is_cca_raw_config_evidence_mval(&m.mval)
         }
-        _ if is_cca_platform_mkey(&mkey) => is_cca_rotpk_mval(&m.mval),
+        _ if parse_rotpk_mkey(&mkey).is_some() => is_cca_rotpk_evidence_mval(&m.mval),
         _ => false,
     }
 }
@@ -311,6 +322,9 @@ fn cca_platform_measurements_match(reference: &MeasurementMap, evidence: &Measur
                 &reference.mval.raw_value,
                 &evidence.mval.raw_value,
             )
+        }
+        _ if parse_rotpk_mkey(&mkey).is_some() => {
+            single_signer_key_bytes(&reference.mval) == raw_value_bytes(&evidence.mval)
         }
         _ => {
             crate::validate::core_fields_match(reference, evidence)

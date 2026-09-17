@@ -181,11 +181,23 @@ fn platform_match_defers_for_non_cca_mkey() {
 fn platform_match_rejects_invalid_cca_structures() {
     let profile = CcaPlatformProfile::new();
     let reference = measurement_with_mkey("cca.rotpk.CM.2.3", &[0x11, 0x22, 0x33]);
-    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    let evidence = raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
         Some(false)
+    );
+}
+
+#[test]
+fn platform_match_accepts_rotpk_reference_against_raw_value_evidence() {
+    let profile = CcaPlatformProfile::new();
+    let reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    let evidence = raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+
+    assert_eq!(
+        profile.match_measurement(&reference, &evidence, &MatchContext::new()),
+        Some(true)
     );
 }
 
@@ -207,7 +219,7 @@ fn platform_match_rejects_different_software_component_signer_id() {
 fn platform_match_rejects_different_rotpk_key() {
     let profile = CcaPlatformProfile::new();
     let reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
-    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xBB; 32]);
+    let evidence = raw_value_measurement("cca.rotpk.CM.2.3", &[0xBB; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
@@ -355,7 +367,7 @@ fn platform_profile_accepts_standalone_rotpk_triple() {
     )];
     let evidence = vec![EvidenceClaim {
         environment: platform_environment(),
-        measurements: vec![rotpk],
+        measurements: vec![raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32])],
     }];
 
     let claims = match_reference_values_with_profile(
@@ -379,7 +391,10 @@ fn platform_profile_accepts_rotpk_triple_for_one_array_entry() {
     )];
     let evidence = vec![EvidenceClaim {
         environment: platform_environment(),
-        measurements: vec![first, second],
+        measurements: vec![
+            raw_value_measurement("cca.rotpk.CM.2.0", &[0xAA; 32]),
+            raw_value_measurement("cca.rotpk.CM.2.1", &[0xBB; 32]),
+        ],
     }];
 
     let claims = match_reference_values_with_profile(
@@ -562,7 +577,7 @@ fn platform_match_rejects_rotpk_extra_mval_field() {
     let profile = CcaPlatformProfile::new();
     let mut reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
     reference.mval.raw_value = Some(RawValueChoice::Bytes(vec![0xCC; 32]));
-    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    let evidence = raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
@@ -595,7 +610,7 @@ fn platform_match_rejects_authorized_by() {
     let profile = CcaPlatformProfile::new();
     let mut reference = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
     reference.authorized_by = Some(vec![CryptoKey::Bytes(vec![0xCC; 32])]);
-    let evidence = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
+    let evidence = raw_value_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
 
     assert_eq!(
         profile.match_measurement(&reference, &evidence, &MatchContext::new()),
