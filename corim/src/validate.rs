@@ -315,9 +315,12 @@ pub struct EvidenceClaim {
 /// - `None` from the profile — defer to the default per-pair logic
 ///   (the same comparison performed by [`match_reference_values`]).
 ///
-/// The profile is consulted independently for each (reference, evidence)
-/// pair within a triple. Pass `None` for `profile` to get behavior
-/// identical to [`match_reference_values`].
+/// Before any per-pair matching, the profile's
+/// [`Profile::reference_triple_valid`] hook is called once for each
+/// reference triple. A `false` result skips that whole triple. The default
+/// hook returns `true`, so profiles with no triple-level rules behave as
+/// if only per-pair matching were customized. Pass `None` for `profile` to
+/// get behavior identical to [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
 ///

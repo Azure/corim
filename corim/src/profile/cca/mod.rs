@@ -17,12 +17,13 @@
 //! - Realm: `cca.rim`, `cca.rem0`..`cca.rem3`, `cca.rpv`
 //!
 //! The core crate already knows how to compare most underlying CBOR value
-//! shapes (`digests`, `raw-value`, etc.) for these maps, so this minimal
-//! profile support focuses on:
+//! shapes (`digests`, `raw-value`, etc.) for these maps. This profile adds
+//! CCA-specific checks for fields the generic matcher does not own, including:
 //!
 //! - identifying the CCA profile URI,
 //! - validating the CCA-specific `mkey` names,
 //! - enforcing the CCA-specific measurement-map shapes,
+//! - matching cryptokeys and masked configuration reference values,
 //! - enforcing the triple-level constraints: the environment subject
 //!   (Platform Implementation ID / Realm RIM) and the measurement
 //!   cardinality a reference triple must satisfy.
@@ -41,6 +42,27 @@ use crate::types::triples::ReferenceTriple;
 pub const CCA_PLATFORM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_platform#1.0.0";
 /// Profile URI for CCA Realm endorsements.
 pub const CCA_REALM_PROFILE_URI: &str = "tag:arm.com,2025:endorsements/cca_realm#1.0.0";
+
+/// CCA Platform software-component measurement key.
+pub const CCA_MKEY_SOFTWARE_COMPONENT: &str = "cca.software-component";
+/// CCA Platform configuration measurement key.
+pub const CCA_MKEY_PLATFORM_CONFIG: &str = "cca.platform-config";
+/// CCA Platform manufacturing configuration measurement key.
+pub const CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG: &str = "cca.platform-manufacturing-config";
+/// Prefix for CCA Platform ROTPK measurement keys.
+pub const CCA_MKEY_ROTPK_PREFIX: &str = "cca.rotpk.";
+/// CCA Realm initial measurement key.
+pub const CCA_MKEY_RIM: &str = "cca.rim";
+/// CCA Realm extended measurement key for bank 0.
+pub const CCA_MKEY_REM0: &str = "cca.rem0";
+/// CCA Realm extended measurement key for bank 1.
+pub const CCA_MKEY_REM1: &str = "cca.rem1";
+/// CCA Realm extended measurement key for bank 2.
+pub const CCA_MKEY_REM2: &str = "cca.rem2";
+/// CCA Realm extended measurement key for bank 3.
+pub const CCA_MKEY_REM3: &str = "cca.rem3";
+/// CCA Realm personalization value measurement key.
+pub const CCA_MKEY_RPV: &str = "cca.rpv";
 
 /// Maximum ROTPK array index from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
 const CCA_ROTPK_MAX_INDEX: u8 = 7;
@@ -62,46 +84,69 @@ const CCA_INSTANCE_ID_SIZE: usize = 33;
 /// UEID `RAND` type byte required by draft-ydb-rats-cca-endorsements-04 §3.1.2.
 const CCA_INSTANCE_ID_RAND_TYPE: u8 = 0x01;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RotpkFamily {
+    Cm,
+    Dm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct RotpkMkey {
+    family: RotpkFamily,
+    index: u8,
+    slot: u8,
+}
+
 /// Recognize a CCA Platform measurement key, per draft-ydb-rats-cca-endorsements-04.
 pub fn is_cca_platform_mkey(name: &str) -> bool {
     match name {
-        "cca.software-component" | "cca.platform-config" | "cca.platform-manufacturing-config" => {
-            true
-        }
-        _ => {
-            let Some(rest) = name.strip_prefix("cca.rotpk.") else {
-                return false;
-            };
-            let mut parts = rest.split('.');
-            let family = parts.next();
-            let idx = parts.next();
-            let slot = parts.next();
-            if parts.next().is_some() {
-                return false;
-            }
-            matches!(family, Some("CM") | Some("DM"))
-                && one_digit_at_most(idx, CCA_ROTPK_MAX_INDEX)
-                && one_digit_at_most(slot, CCA_ROTPK_MAX_SLOT)
-        }
+        CCA_MKEY_SOFTWARE_COMPONENT
+        | CCA_MKEY_PLATFORM_CONFIG
+        | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => true,
+        _ => parse_rotpk_mkey(name).is_some(),
     }
 }
 
-fn one_digit_at_most(value: Option<&str>, max: u8) -> bool {
-    let Some(value) = value else {
-        return false;
-    };
+fn one_digit_at_most(value: Option<&str>, max: u8) -> Option<u8> {
+    let value = value?;
 
     let [digit] = value.as_bytes() else {
-        return false;
+        return None;
     };
-    digit.is_ascii_digit() && digit - b'0' <= max
+    if !digit.is_ascii_digit() {
+        return None;
+    }
+
+    let value = digit - b'0';
+    (value <= max).then_some(value)
+}
+
+fn parse_rotpk_mkey(name: &str) -> Option<RotpkMkey> {
+    let rest = name.strip_prefix(CCA_MKEY_ROTPK_PREFIX)?;
+    let mut parts = rest.split('.');
+    let family = match parts.next()? {
+        "CM" => RotpkFamily::Cm,
+        "DM" => RotpkFamily::Dm,
+        _ => return None,
+    };
+    let index = one_digit_at_most(parts.next(), CCA_ROTPK_MAX_INDEX)?;
+    let slot = one_digit_at_most(parts.next(), CCA_ROTPK_MAX_SLOT)?;
+    if parts.next().is_some() {
+        return None;
+    }
+
+    Some(RotpkMkey {
+        family,
+        index,
+        slot,
+    })
 }
 
 /// Recognize a CCA Realm measurement key.
 pub fn is_cca_realm_mkey(name: &str) -> bool {
     matches!(
         name,
-        "cca.rim" | "cca.rem0" | "cca.rem1" | "cca.rem2" | "cca.rem3" | "cca.rpv"
+        CCA_MKEY_RIM | CCA_MKEY_REM0 | CCA_MKEY_REM1 | CCA_MKEY_REM2 | CCA_MKEY_REM3 | CCA_MKEY_RPV
     )
 }
 
@@ -227,8 +272,8 @@ fn is_valid_cca_platform_reference_measurement(m: &MeasurementMap) -> bool {
     };
 
     match mkey.as_str() {
-        "cca.software-component" => is_cca_software_component_mval(&m.mval),
-        "cca.platform-config" | "cca.platform-manufacturing-config" => {
+        CCA_MKEY_SOFTWARE_COMPONENT => is_cca_software_component_mval(&m.mval),
+        CCA_MKEY_PLATFORM_CONFIG | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => {
             is_cca_masked_config_reference_mval(&m.mval)
         }
         _ if is_cca_platform_mkey(&mkey) => is_cca_rotpk_mval(&m.mval),
@@ -246,8 +291,8 @@ fn is_valid_cca_platform_evidence_measurement(m: &MeasurementMap) -> bool {
     };
 
     match mkey.as_str() {
-        "cca.software-component" => is_cca_software_component_mval(&m.mval),
-        "cca.platform-config" | "cca.platform-manufacturing-config" => {
+        CCA_MKEY_SOFTWARE_COMPONENT => is_cca_software_component_mval(&m.mval),
+        CCA_MKEY_PLATFORM_CONFIG | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => {
             is_cca_raw_config_evidence_mval(&m.mval)
         }
         _ if is_cca_platform_mkey(&mkey) => is_cca_rotpk_mval(&m.mval),
@@ -261,7 +306,7 @@ fn cca_platform_measurements_match(reference: &MeasurementMap, evidence: &Measur
     };
 
     match mkey.as_str() {
-        "cca.platform-config" | "cca.platform-manufacturing-config" => {
+        CCA_MKEY_PLATFORM_CONFIG | CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => {
             raw_value_matches_with_reference_mask(
                 &reference.mval.raw_value,
                 &evidence.mval.raw_value,
@@ -306,12 +351,40 @@ fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
     };
 
     match mkey.as_str() {
-        "cca.rim" | "cca.rem0" | "cca.rem1" | "cca.rem2" | "cca.rem3" => {
+        CCA_MKEY_RIM | CCA_MKEY_REM0 | CCA_MKEY_REM1 | CCA_MKEY_REM2 | CCA_MKEY_REM3 => {
             is_cca_realm_digest_mval(&m.mval)
         }
-        "cca.rpv" => is_cca_rpv_mval(&m.mval),
+        CCA_MKEY_RPV => is_cca_rpv_mval(&m.mval),
         _ => false,
     }
+}
+
+fn valid_rotpk_group(measurements: &[MeasurementMap]) -> bool {
+    let mut group = None;
+    let mut slots = [false; (CCA_ROTPK_MAX_SLOT as usize) + 1];
+
+    for measurement in measurements {
+        let Some(mkey) = mkey_name(&measurement.mkey) else {
+            continue;
+        };
+        let Some(rotpk) = parse_rotpk_mkey(&mkey) else {
+            continue;
+        };
+
+        let current_group = (rotpk.family, rotpk.index);
+        if group.is_some_and(|group| group != current_group) {
+            return false;
+        }
+        group = Some(current_group);
+
+        let slot = usize::from(rotpk.slot);
+        if slots[slot] {
+            return false;
+        }
+        slots[slot] = true;
+    }
+
+    true
 }
 
 fn has_duplicate_mkeys(measurements: &[MeasurementMap], recognized: fn(&str) -> bool) -> bool {
@@ -449,9 +522,9 @@ impl Profile for CcaPlatformProfile {
             }
 
             match mkey.as_str() {
-                "cca.software-component" => software_component_count += 1,
-                "cca.platform-config" => platform_config_count += 1,
-                "cca.platform-manufacturing-config" => manufacturing_config_count += 1,
+                CCA_MKEY_SOFTWARE_COMPONENT => software_component_count += 1,
+                CCA_MKEY_PLATFORM_CONFIG => platform_config_count += 1,
+                CCA_MKEY_PLATFORM_MANUFACTURING_CONFIG => manufacturing_config_count += 1,
                 _ => rotpk_count += 1,
             }
         }
@@ -462,7 +535,7 @@ impl Profile for CcaPlatformProfile {
             return software_component_count == 0
                 && platform_config_count == 0
                 && manufacturing_config_count == 0
-                && !has_duplicate_mkeys(triple.measurements(), is_cca_platform_mkey);
+                && valid_rotpk_group(triple.measurements());
         }
 
         // §3.1.3: a single reference triple MUST completely describe the CCA
@@ -522,7 +595,7 @@ impl Profile for CcaRealmProfile {
                 }
                 // §3.2.2: the environment class-id carries the RIM, so the
                 // mandatory `cca.rim` measurement MUST report the same value.
-                if mkey == "cca.rim" {
+                if mkey == CCA_MKEY_RIM {
                     if !realm_rim_matches_environment(triple.environment(), measurement) {
                         return false;
                     }
