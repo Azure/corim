@@ -22,7 +22,6 @@
 //!
 //! - identifying the CCA profile URI,
 //! - validating the CCA-specific `mkey` names,
-//! - providing diagnosis labels for those names,
 //! - enforcing the CCA-specific measurement-map shapes.
 
 use crate::nostd_prelude::*;
@@ -129,6 +128,11 @@ fn is_valid_cca_platform_measurement(m: &MeasurementMap) -> bool {
     }
 }
 
+fn cca_platform_measurements_match(reference: &MeasurementMap, evidence: &MeasurementMap) -> bool {
+    crate::validate::core_fields_match(reference, evidence)
+        && reference.mval.cryptokeys == evidence.mval.cryptokeys
+}
+
 fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
     if m.authorized_by.is_some() {
         return false;
@@ -215,7 +219,7 @@ impl Profile for CcaPlatformProfile {
             return Some(false);
         }
 
-        Some(crate::validate::core_fields_match(reference, evidence))
+        Some(cca_platform_measurements_match(reference, evidence))
     }
 }
 
