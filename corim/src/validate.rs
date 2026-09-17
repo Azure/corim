@@ -318,8 +318,11 @@ pub struct EvidenceClaim {
 /// Before any per-pair matching, the profile's
 /// [`Profile::reference_triple_valid`] hook is called once for each
 /// reference triple. A `false` result skips that whole triple. The default
-/// hook returns `true`, so profiles with no triple-level rules behave as
-/// if only per-pair matching were customized. Pass `None` for `profile` to
+/// hook returns `true`. For each candidate evidence claim, the profile's
+/// [`Profile::evidence_claim_valid`] hook is also called before generic
+/// environment matching; `false` skips that evidence claim. The default hook
+/// returns `true`, so profiles with no triple- or evidence-level rules behave
+/// as if only per-pair matching were customized. Pass `None` for `profile` to
 /// get behavior identical to [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
@@ -349,6 +352,10 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
         }
 
         for ev in evidence {
+            if profile.is_some_and(|p| !p.evidence_claim_valid(ev)) {
+                continue;
+            }
+
             if !environment_matches(triple.environment(), &ev.environment) {
                 continue;
             }
