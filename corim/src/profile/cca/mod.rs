@@ -366,6 +366,9 @@ fn is_valid_cca_realm_environment(environment: &EnvironmentMap) -> bool {
         && class_id_bytes(environment).is_some_and(|rim| is_cca_hash_size(rim.len()))
 }
 
+/// The `cca.rim` measurement may report the RIM under more than one hash
+/// algorithm, and the class-id carries exactly one of those values, so one
+/// matching digest is what the linkage requires.
 fn realm_rim_matches_environment(environment: &EnvironmentMap, rim: &MeasurementMap) -> bool {
     let Some(class_rim) = class_id_bytes(environment) else {
         return false;
