@@ -22,6 +22,10 @@ versions.
   `x5chain` printed the full certificate hex (~10 KB). Long values are
   now elided in the text report; `--format json` still carries them in
   full.
+- **Baseline comparison skipped TCG bare-tag CoMIDs.** Supported bare
+  byte-string entries now use the same compatibility-aware CoMID decoder
+  as other consumers, so digest and structural changes are reported
+  instead of silently treating both documents as identical.
 
 ### Added
 
