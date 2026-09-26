@@ -14,11 +14,11 @@ env:
 
 jobs:
   build:
-    name: Build & Test
+    name: Build & Test (${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, nightly]
+        rust: ['1.85.0', stable, nightly]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -37,17 +37,29 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build (workspace, all features)
-        run: cargo build --workspace --all-features
+        run: cargo build --workspace --all-features --locked
 
       - name: Test (workspace, all features)
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
-      # Library-only no_std build. corim-cli requires std, so scope to -p corim.
-      - name: Build (corim, no-default-features, no_std + alloc)
-        run: cargo build -p corim --no-default-features
-
-      - name: Build (corim, no-default-features + profile-intel)
-        run: cargo build -p corim --no-default-features --features profile-intel
+      # Keep these library-only: the CLI enables std through feature unification.
+      # Build every profile subset so one profile cannot hide another's missing imports.
+      - name: Build (corim, no_std + alloc, every profile combination)
+        shell: bash
+        run: |
+          for features in \
+            "" \
+            "profile-intel" \
+            "profile-azure" \
+            "profile-psa" \
+            "profile-intel,profile-azure" \
+            "profile-intel,profile-psa" \
+            "profile-azure,profile-psa" \
+            "profile-intel,profile-azure,profile-psa"; do
+            echo "::group::no_std profiles: ${features:-none}"
+            cargo build -p corim --no-default-features --features "$features" --locked
+            echo "::endgroup::"
+          done
 
   fmt:
     name: Formatting
