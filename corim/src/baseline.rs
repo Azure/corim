@@ -31,7 +31,7 @@
 use crate::cbor::value::{to_value, Value};
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
-use crate::types::corim::{ConciseTagChoice, CorimMap, CorimMetaMap};
+use crate::types::corim::{CorimMap, CorimMetaMap};
 use crate::types::measurement::{
     Digest, DigestAlg, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
@@ -548,16 +548,15 @@ fn opt_int(v: Option<i64>) -> Option<Value> {
 }
 
 /// Decode the CoMID tags of a CoRIM into `(tag-id, ComidTag)` pairs,
-/// preserving order. Non-CoMID tags and undecodable entries are skipped
+/// preserving order and accepting the supported TCG bare-bstr forms.
+/// Non-CoMID tags and undecodable entries are skipped
 /// (the CLI validates both inputs before calling `compare`).
 fn decode_comids(corim: &CorimMap) -> Vec<(String, ComidTag)> {
     let mut out = Vec::new();
     for (i, tag) in corim.tags.iter().enumerate() {
-        if let ConciseTagChoice::Comid(bytes) = tag {
-            if let Ok(comid) = crate::cbor::decode::<ComidTag>(bytes) {
-                let id = tag_id_string(&comid, i);
-                out.push((id, comid));
-            }
+        if let Ok(comid) = tag.as_comid() {
+            let id = tag_id_string(&comid, i);
+            out.push((id, comid));
         }
     }
     out
