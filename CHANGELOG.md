@@ -10,6 +10,10 @@ versions.
 
 ### Fixed
 
+- **Azure profile failed to compile without `std`.** The `profile-azure`
+  feature now imports `String` through the crate's `alloc` prelude. CI
+  checks every first-party profile combination without default features
+  on Rust 1.85, stable, and nightly.
 - **Baseline comparison skipped CoRIM and CoMID metadata.** `compare`
   only looked at `profile`, `corim-id`, and the triples, so a changed
   `rim-validity`, `entities`, or `dependent-rims`, or a changed CoMID
