@@ -17,10 +17,17 @@
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
 pub mod constants;
+mod limits;
 pub mod minimal;
 mod minimal_backend;
 
 pub mod value;
+
+pub(crate) use limits::DecodeBudget;
+pub use limits::{
+    DecodeLimits, DecodeSession, DEFAULT_MAX_INPUT_BYTES, DEFAULT_MAX_VALUES, MAX_COLLECTION_ITEMS,
+    MAX_DECODE_DEPTH,
+};
 
 use crate::error::{DecodeError, EncodeError};
 use serde::{de::DeserializeOwned, Serialize};
@@ -52,4 +59,17 @@ pub fn encode<T: Serialize>(value: &T) -> Result<Vec<u8>, EncodeError> {
 /// Convenience: decode using the default codec.
 pub fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
     DefaultCodec::decode(bytes)
+}
+
+/// Decode with explicit parser limits (RFC 8949 §10).
+///
+/// Byte strings remain opaque at this level. Use limits-aware document APIs
+/// when embedded CBOR must share the outer document's budget. Arbitrary
+/// allocations/recursive decoding in user `Deserialize` code are not bounded.
+/// Existing [`decode`] uses [`DecodeLimits::default`].
+pub fn decode_with_limits<T: DeserializeOwned>(
+    bytes: &[u8],
+    limits: &DecodeLimits,
+) -> Result<T, DecodeError> {
+    DecodeBudget::new(limits)?.decode(bytes)
 }

@@ -344,6 +344,40 @@ impl Serialize for ProtectedCorimHeaderMap {
 impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
+        let mut budget = cbor::DecodeBudget::new(&cbor::DecodeLimits::default())
+            .map_err(serde::de::Error::custom)?;
+        Self::from_value_with_budget(val, &mut budget)
+    }
+}
+
+impl ProtectedCorimHeaderMap {
+    pub(crate) fn decode_with_budget(
+        bytes: &[u8],
+        budget: &mut cbor::DecodeBudget,
+    ) -> Result<Self, crate::DecodeError> {
+        let val = budget.decode_value(bytes)?;
+        let result = Self::from_value_with_budget::<serde::de::value::Error>(val, budget);
+        budget.check()?;
+        result.map_err(|e| crate::DecodeError::InvalidStructure(e.to_string()))
+    }
+
+    /// Decode this header and its embedded corim-meta with shared limits.
+    ///
+    /// Prefer this to generic Serde decoding when the header and metadata must
+    /// share custom budgets. Generic `cbor::decode_with_limits::<Self>` limits
+    /// the outer CBOR only; Serde has no operation-context parameter, so its
+    /// nested corim-meta decode uses a separate default budget.
+    pub fn decode_with_limits(
+        bytes: &[u8],
+        limits: &cbor::DecodeLimits,
+    ) -> Result<Self, crate::DecodeError> {
+        Self::decode_with_budget(bytes, &mut cbor::DecodeBudget::new(limits)?)
+    }
+
+    fn from_value_with_budget<E: serde::de::Error>(
+        val: Value,
+        budget: &mut cbor::DecodeBudget,
+    ) -> Result<Self, E> {
         let map = match val {
             Value::Map(m) => m,
             _ => {
@@ -453,9 +487,12 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match cbor::decode::<CorimMetaMap>(&b) {
+                            match budget.decode::<CorimMetaMap>(&b) {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
+                                }
+                                Err(e @ crate::DecodeError::LimitExceeded { .. }) => {
+                                    return Err(serde::de::Error::custom(e));
                                 }
                                 Err(_) => {
                                     // Store the raw bytes in extra for forward-compat;

@@ -42,19 +42,6 @@ impl CborCodec for MinimalCodec {
     }
 
     fn decode<T: DeserializeOwned>(bytes: &[u8]) -> Result<T, DecodeError> {
-        // Step 1: Decode CBOR bytes into a Value tree (preserves tags)
-        let mut reader = super::minimal::SliceReader::new(bytes);
-        let val = super::minimal::decode_value(&mut reader)
-            .map_err(|e| DecodeError::Deserialization(e.to_string()))?;
-
-        // Step 2: Deserialize Value into T via serde.
-        // Tags are preserved in the Value tree. The value_de module
-        // presents Value::Tag as a 2-element seq to the serde visitor.
-        // Types that expect tags (Tagged<T>, type-choice enums) handle
-        // this correctly because their Deserialize impls go through
-        // Value::deserialize which calls deserialize_any, and our
-        // ValueDeserializer presents the tag data appropriately.
-        let result = value_de::from_value(val).map_err(DecodeError::Deserialization)?;
-        Ok(result)
+        super::decode_with_limits(bytes, &super::DecodeLimits::default())
     }
 }
