@@ -148,6 +148,9 @@ pub fn build_sig_structure1(
 ///
 /// Produces `#6.18([protected, unprotected, payload, signature])`.
 pub fn encode_signed_corim(signed: &CoseSign1Corim) -> Result<Vec<u8>, crate::EncodeError> {
+    let unprotected = Value::Map(signed.unprotected.clone());
+    cbor::map_keys::check(&unprotected)
+        .map_err(|e| crate::EncodeError::Serialization(e.to_string()))?;
     let payload_val = match &signed.payload {
         Some(p) => Value::Bytes(p.clone()),
         None => Value::Null,
@@ -155,7 +158,7 @@ pub fn encode_signed_corim(signed: &CoseSign1Corim) -> Result<Vec<u8>, crate::En
 
     let arr = Value::Array(vec![
         Value::Bytes(signed.protected_header_bytes.clone()),
-        Value::Map(signed.unprotected.clone()),
+        unprotected,
         payload_val,
         Value::Bytes(signed.signature.clone()),
     ]);
@@ -244,6 +247,11 @@ fn decode_signed_budget(
         }
     };
 
+    // Do not allow duplicate maps to disappear when a non-standard payload or
+    // signature type is tolerated below. Byte strings stay opaque here.
+    for part in &arr {
+        cbor::map_keys::check(part)?;
+    }
     let mut it = arr.into_iter();
     let protected_val = it.next().ok_or_else(|| {
         DecodeError::InvalidStructure("COSE_Sign1 missing protected header".into())
@@ -273,7 +281,15 @@ fn decode_signed_budget(
 
     // [1] unprotected: map (tolerate non-map values from non-standard producers)
     let unprotected = match unprotected_val {
-        Value::Map(m) => m,
+        map @ Value::Map(_) => {
+            cbor::map_keys::check(&map)?;
+            // Safe: preceding pattern establishes the map variant.
+            if let Value::Map(m) = map {
+                m
+            } else {
+                unreachable!()
+            }
+        }
         _ => {
             // Some producers emit non-standard unprotected headers;
             // treat as empty for forward compatibility.

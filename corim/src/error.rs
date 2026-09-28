@@ -20,6 +20,12 @@ pub enum EncodeError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// A schema map repeats an integer or text key (RFC 8949 §5.6).
+    #[error("duplicate map key: {key}")]
+    DuplicateKey {
+        /// Diagnostic representation of the repeated label.
+        key: String,
+    },
     /// Bytes remain after an item at a single-document boundary (RFC 8949 §3).
     #[error("trailing CBOR data: {remaining} byte(s) after the first item")]
     TrailingData {

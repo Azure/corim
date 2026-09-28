@@ -178,6 +178,9 @@ impl DecodeBudget {
             return Err(e);
         }
         if let Ok(value) = value {
+            if self.inspect_framing && !matches!(context, ScanContext::Document) {
+                super::map_keys::check(&value)?;
+            }
             self.inspect_value(&value, context, depth)?;
         }
         Ok(())
@@ -201,6 +204,14 @@ impl DecodeBudget {
         match value {
             Value::Tag(TAG_SIGNED_CORIM, inner) if matches!(context, ScanContext::Document) => {
                 if let Value::Array(parts) = inner.as_ref() {
+                    if self.inspect_framing {
+                        // Even tolerated malformed slots and surplus array
+                        // elements must not hide duplicate maps. Actual bstr
+                        // contents remain opaque until schema-dispatched below.
+                        for part in parts {
+                            super::map_keys::check(part)?;
+                        }
+                    }
                     // Only the header/payload slots are CBOR-in-bstr. Inspect
                     // even malformed envelopes so diagnostics cannot reset budgets.
                     let mut hash = false;
@@ -216,6 +227,9 @@ impl DecodeBudget {
                             return Err(e);
                         }
                         if let Ok(header) = header {
+                            if self.inspect_framing {
+                                super::map_keys::check_header(&header)?;
+                            }
                             if let Value::Map(fields) = &header {
                                 hash = fields.iter().any(|(k, _)| {
                                     k == &Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))
@@ -248,6 +262,13 @@ impl DecodeBudget {
             }
             Value::Tag(_, inner) => self.inspect_value(inner, ScanContext::Opaque, depth + 1)?,
             Value::Map(fields) => {
+                if self.inspect_framing {
+                    if matches!(context, ScanContext::Header) {
+                        super::map_keys::check_header(value)?;
+                    } else {
+                        super::map_keys::check(value)?;
+                    }
+                }
                 for (k, v) in fields {
                     if matches!(context, ScanContext::Header)
                         && k == &Value::Integer(i128::from(COSE_HEADER_CORIM_META))
@@ -414,6 +435,15 @@ impl DecodeBudget {
         Ok((typed, rest))
     }
 
+    pub(crate) fn decode_schema_exact<T: DeserializeOwned>(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<T, DecodeError> {
+        let value = self.decode_value_exact(bytes)?;
+        super::map_keys::check(&value)?;
+        minimal_backend::value_de::from_value(value).map_err(DecodeError::Deserialization)
+    }
+
     pub(crate) fn decode<T: DeserializeOwned>(&mut self, bytes: &[u8]) -> Result<T, DecodeError> {
         let value = self.decode_value(bytes)?;
         minimal_backend::value_de::from_value(value).map_err(DecodeError::Deserialization)
@@ -436,6 +466,7 @@ impl DecodeBudget {
             Value::Tag(TAG_CORIM, inner) => inner.as_ref(),
             other => other,
         };
+        super::map_keys::check(map)?;
         if let Value::Map(fields) = map {
             for (key, value) in fields {
                 if key != &Value::Integer(i128::from(CORIM_KEY_TAGS)) {
@@ -451,6 +482,9 @@ impl DecodeBudget {
                         if let Value::Bytes(bytes) = body {
                             let result = self.decode_value_exact(bytes);
                             self.check()?;
+                            if let Ok(ref value) = result {
+                                super::map_keys::check(value)?;
+                            }
                             if let Err(e @ DecodeError::TrailingData { .. }) = result {
                                 return Err(e);
                             }

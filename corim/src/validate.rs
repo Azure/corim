@@ -54,7 +54,9 @@ pub fn check_decode_limits(
 /// Check single-item framing at known document and embedded-CBOR boundaries.
 ///
 /// Unlike [`check_decode_limits`], rejects trailing bytes after a successfully
-/// parsed item (RFC 8949 §3). Enforces the same resource limits. Other syntax
+/// parsed item (RFC 8949 §3), and duplicate integer/text labels in schema maps
+/// (RFC 8949 §5.6), retaining the protected-header flat-CWT legacy exception.
+/// Enforces the same resource limits. Other syntax
 /// and semantic errors are intentionally left to validation/diagnostic APIs.
 /// Opaque signatures, certificates and declared hash payloads are not decoded.
 pub fn check_document_framing(
@@ -243,13 +245,14 @@ pub(crate) fn decode_and_validate_budget(
             }
             ConciseTagChoice::Coswid(coswid_bytes) => {
                 // Try structured decode; fall back to opaque count
-                match budget.decode_exact::<ConciseSwidTag>(coswid_bytes) {
+                match budget.decode_schema_exact::<ConciseSwidTag>(coswid_bytes) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
                     }
                     Err(e @ crate::DecodeError::LimitExceeded { .. }) => return Err(e.into()),
                     Err(e @ crate::DecodeError::TrailingData { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::DuplicateKey { .. }) => return Err(e.into()),
                     Err(_) => coswid_opaque_count += 1,
                 }
             }

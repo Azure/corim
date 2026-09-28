@@ -4,7 +4,7 @@
 //! Schema-level duplicate rejection; generic CBOR Value remains lossless.
 
 use corim::builder::{ComidBuilder, CorimBuilder};
-use corim::cbor::{self, value::Value};
+use corim::cbor::{self, constants as c, value::Value};
 use corim::types::common::TagIdChoice;
 use corim::types::corim::{ConciseTagChoice, CorimId, CorimMap};
 use corim::types::coswid::{ConciseSwidTag, SwidEntity};
@@ -323,7 +323,13 @@ fn duplicate_metadata_signer_cannot_fall_back_to_opaque_with_valid_cwt() {
     assert!(control.protected.corim_meta.is_some());
     m.push(field);
     h.last_mut().unwrap().1 = Value::Bytes(cbor::encode(&Value::Map(m)).unwrap());
-    assert!(decode_signed_corim(&signed(&cbor::encode(&Value::Map(h)).unwrap())).is_err());
+    let bytes = cbor::encode(&Value::Map(h)).unwrap();
+    for error in [
+        Header::decode_with_limits(&bytes, &cbor::DecodeLimits::default()).unwrap_err(),
+        decode_signed_corim(&signed(&bytes)).unwrap_err(),
+    ] {
+        assert!(matches!(error, corim::DecodeError::DuplicateKey { .. }));
+    }
 }
 
 #[test]
@@ -346,5 +352,160 @@ fn duplicate_coswid_key_cannot_fall_back_to_opaque_in_unsigned_validator() {
     m.push((int(SWID_KEY_TAG_ID), value(&swid.tag_id)));
     *corim.tags.last_mut().unwrap() =
         ConciseTagChoice::Coswid(cbor::encode(&Value::Map(m)).unwrap());
-    assert!(decode_and_validate_full_at(&wrap(&corim), 0).is_err());
+    assert!(matches!(
+        decode_and_validate_full_at(&wrap(&corim), 0),
+        Err(corim::ValidationError::Decode(
+            corim::DecodeError::DuplicateKey { .. }
+        ))
+    ));
+}
+
+// Handcraft aliases rather than letting the encoder canonicalize integer keys.
+fn wire_alias(base: Entries, key: i64, ai: u8, width: usize, reverse: bool) -> Vec<u8> {
+    let repeated = base.iter().find(|(k, _)| *k == int(key)).unwrap().clone();
+    let mut bytes = vec![(c::MAJOR_MAP << 5) | u8::try_from(base.len() + 1).unwrap()];
+    let last = base.len();
+    for (index, (k, v)) in base.into_iter().chain([repeated]).enumerate() {
+        if k == int(key) && ((index == last) != reverse) {
+            bytes.push((c::MAJOR_UNSIGNED << 5) | ai);
+            bytes.extend_from_slice(&u64::try_from(key).unwrap().to_be_bytes()[8 - width..]);
+        } else {
+            bytes.extend(cbor::encode(&k).unwrap());
+        }
+        bytes.extend(cbor::encode(&v).unwrap());
+    }
+    bytes
+}
+
+#[test]
+fn numeric_key_aliases_reject_at_schema_boundaries_but_value_preserves_pairs() {
+    for (ai, width) in [
+        (c::AI_ONE_BYTE, 1),
+        (c::AI_TWO_BYTES, 2),
+        (c::AI_FOUR_BYTES, 4),
+        (c::AI_EIGHT_BYTES, 8),
+    ] {
+        for reverse in [false, true] {
+            for (kind, base, key) in [
+                ("macro", entries(&sample_corim()), CORIM_KEY_ID),
+                ("header", entries(&header()), COSE_HEADER_ALG),
+                ("cwt", entries(&CwtClaims::new("issuer")), CWT_CLAIM_ISS),
+            ] {
+                let mut expected = base.clone();
+                expected.push(base.iter().find(|(k, _)| *k == int(key)).unwrap().clone());
+                let bytes = wire_alias(base, key, ai, width, reverse);
+                assert_eq!(cbor::decode::<Value>(&bytes).unwrap(), Value::Map(expected));
+                let error = match kind {
+                    "macro" => cbor::decode::<CorimMap>(&bytes).unwrap_err(),
+                    "header" => {
+                        Header::decode_with_limits(&bytes, &Default::default()).unwrap_err()
+                    }
+                    _ => cbor::decode::<CwtClaims>(&bytes).unwrap_err(),
+                };
+                assert!(error.to_string().contains("duplicate"), "{kind}: {error}");
+            }
+        }
+    }
+}
+
+#[test]
+fn absent_macro_field_is_reserved_for_the_typed_field_not_extras() {
+    let mut mval = MeasurementValuesMap::default();
+    mval.extra_entries
+        .insert(MVAL_KEY_SVN, value(&SvnChoice::ExactValue(1)));
+    assert!(cbor::encode(&mval).is_err());
+    mval.extra_entries.clear();
+    mval.svn = Some(SvnChoice::ExactValue(1));
+    assert_eq!(decode::<MeasurementValuesMap>(&value(&mval)).unwrap(), mval);
+}
+
+#[test]
+fn cwt_reserved_extras_reject_even_when_optional_fields_are_absent() {
+    for key in [CWT_CLAIM_ISS, CWT_CLAIM_SUB, CWT_CLAIM_EXP, CWT_CLAIM_NBF] {
+        let mut claims = CwtClaims::new("issuer");
+        assert_eq!((&claims.sub, claims.exp, claims.nbf), (&None, None, None));
+        claims.extra.insert(ClaimKey::Int(key), Value::Null);
+        assert!(cbor::encode(&claims).is_err(), "reserved key {key}");
+    }
+    let mut claims = CwtClaims::new("issuer");
+    claims
+        .extra
+        .insert(ClaimKey::Text("1".into()), text("distinct"));
+    assert_eq!(decode::<CwtClaims>(&value(&claims)).unwrap(), claims);
+}
+
+#[test]
+fn optional_header_fields_reject_populated_extra_collisions() {
+    let mut h = header();
+    h.kid = Some(vec![4]);
+    h.x5u = Some("https://example.com/cert".into());
+    h.payload_hash_alg = Some(7);
+    h.payload_preimage_content_type = Some(CORIM_CONTENT_TYPE.into());
+    h.payload_location = Some("https://example.com/rim".into());
+    h.corim_meta = Some(
+        decode(&Value::Map(vec![(
+            int(META_KEY_SIGNER),
+            Value::Map(vec![(int(SIGNER_KEY_NAME), text("issuer"))]),
+        )]))
+        .unwrap(),
+    );
+    for (key, v) in entries(&h) {
+        let Value::Integer(key) = key else {
+            panic!("integer label")
+        };
+        let mut collision = h.clone();
+        collision.extra.insert(i64::try_from(key).unwrap(), v);
+        assert!(cbor::encode(&collision).is_err(), "populated key {key}");
+    }
+}
+
+#[test]
+fn malformed_metadata_remains_a_raw_extra_when_typed_metadata_is_absent() {
+    let mut h = header();
+    h.extra.insert(
+        COSE_HEADER_CORIM_META,
+        Value::Bytes(cbor::encode(&Value::Null).unwrap()),
+    );
+    let bytes = cbor::encode(&h).unwrap();
+    let parsed = Header::decode_with_limits(&bytes, &Default::default()).unwrap();
+    assert_eq!(parsed, h);
+    assert!(parsed.corim_meta.is_none());
+    let envelope = decode_signed_corim(&signed(&bytes)).unwrap();
+    assert_eq!(envelope.protected, h);
+    assert_eq!(envelope.protected_header_bytes, bytes);
+}
+
+#[test]
+fn unprotected_duplicate_integer_and_text_labels_reject_on_encode_and_decode() {
+    let clean = decode_signed_corim(&signed(&cbor::encode(&header()).unwrap())).unwrap();
+    // The protected-header alg/iss exception must not apply to unprotected maps.
+    for key in [int(COSE_HEADER_ALG), text("1")] {
+        for (a, b) in [(int(-7), text("issuer")), (text("issuer"), int(-7))] {
+            let mut envelope = clean.clone();
+            envelope.unprotected = vec![(key.clone(), a), (key.clone(), b)];
+            assert!(encode_signed_corim(&envelope).is_err());
+            let bytes = cbor::encode(&Value::Tag(
+                TAG_SIGNED_CORIM,
+                Box::new(Value::Array(vec![
+                    Value::Bytes(envelope.protected_header_bytes),
+                    Value::Map(envelope.unprotected),
+                    Value::Null,
+                    Value::Bytes(envelope.signature),
+                ])),
+            ))
+            .unwrap();
+            assert!(matches!(
+                decode_signed_corim(&bytes),
+                Err(corim::DecodeError::DuplicateKey { .. })
+            ));
+        }
+    }
+}
+
+#[test]
+fn unprotected_integer_and_text_labels_with_same_spelling_are_distinct() {
+    let mut envelope = decode_signed_corim(&signed(&cbor::encode(&header()).unwrap())).unwrap();
+    envelope.unprotected = vec![(int(COSE_HEADER_ALG), int(-7)), (text("1"), text("issuer"))];
+    let bytes = encode_signed_corim(&envelope).unwrap();
+    assert_eq!(decode_signed_corim(&bytes).unwrap(), envelope);
 }

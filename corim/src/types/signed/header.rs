@@ -251,6 +251,38 @@ impl Serialize for ProtectedCorimHeaderMap {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
 
+        // Only collisions with emitted fields are rejected here: a raw,
+        // malformed corim-meta may intentionally be retained in extra.
+        for (key, present) in [
+            (COSE_HEADER_ALG, true),
+            (COSE_HEADER_CONTENT_TYPE, self.content_type.is_some()),
+            (COSE_HEADER_CORIM_META, self.corim_meta.is_some()),
+            (COSE_HEADER_CWT_CLAIMS, self.cwt_claims.is_some()),
+            (COSE_HEADER_KID, self.kid.is_some()),
+            (COSE_HEADER_X5BAG, self.x5bag.is_some()),
+            (COSE_HEADER_X5CHAIN, self.x5chain.is_some()),
+            (COSE_HEADER_X5T, self.x5t.is_some()),
+            (COSE_HEADER_X5U, self.x5u.is_some()),
+            (
+                COSE_HEADER_PAYLOAD_HASH_ALG,
+                self.payload_hash_alg.is_some(),
+            ),
+            (
+                COSE_HEADER_PAYLOAD_PREIMAGE_CT,
+                self.payload_preimage_content_type.is_some(),
+            ),
+            (
+                COSE_HEADER_PAYLOAD_LOCATION,
+                self.payload_location.is_some(),
+            ),
+        ] {
+            if present && self.extra.contains_key(&key) {
+                return Err(serde::ser::Error::custom(format!(
+                    "extra header key {key} collides with a modeled field"
+                )));
+            }
+        }
+
         let mut count = 1; // alg is required
         if self.content_type.is_some() {
             count += 1;
@@ -356,6 +388,7 @@ impl ProtectedCorimHeaderMap {
         budget: &mut cbor::DecodeBudget,
     ) -> Result<Self, crate::DecodeError> {
         let val = budget.decode_value_exact(bytes)?;
+        cbor::map_keys::check_header(&val)?;
         let mut nested_error = None;
         let result =
             Self::from_value_with_budget::<serde::de::value::Error>(val, budget, &mut nested_error);
@@ -384,6 +417,7 @@ impl ProtectedCorimHeaderMap {
         budget: &mut cbor::DecodeBudget,
         nested_error: &mut Option<crate::DecodeError>,
     ) -> Result<Self, E> {
+        cbor::map_keys::check_header(&val).map_err(serde::de::Error::custom)?;
         let map = match val {
             Value::Map(m) => m,
             _ => {
@@ -448,7 +482,7 @@ impl ProtectedCorimHeaderMap {
                     }
                 }
                 CWT_CLAIM_SUB => {
-                    // Key 2: CWT `sub` (tstr) or COSE `kid` (bstr).
+                    // Key 2: CWT `sub` (tstr) or COSE `crit` (array).
                     match v {
                         Value::Text(t) => {
                             cwt_sub = Some(t);
@@ -493,14 +527,17 @@ impl ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match budget.decode_exact::<CorimMetaMap>(&b) {
+                            match budget.decode_schema_exact::<CorimMetaMap>(&b) {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
                                 }
                                 Err(e @ crate::DecodeError::LimitExceeded { .. }) => {
                                     return Err(serde::de::Error::custom(e));
                                 }
-                                Err(e @ crate::DecodeError::TrailingData { .. }) => {
+                                Err(
+                                    e @ (crate::DecodeError::TrailingData { .. }
+                                    | crate::DecodeError::DuplicateKey { .. }),
+                                ) => {
                                     let message = e.to_string();
                                     *nested_error = Some(e);
                                     return Err(serde::de::Error::custom(message));
