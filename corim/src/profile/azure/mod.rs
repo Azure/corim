@@ -10,6 +10,7 @@
 //! - `OutOfDate`
 
 use crate::cbor::value::Value;
+use crate::nostd_prelude::*;
 use crate::profile::{MatchContext, Profile};
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;

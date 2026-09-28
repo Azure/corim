@@ -10,6 +10,10 @@ versions.
 
 ### Fixed
 
+- **Azure profile failed to compile without `std`.** The `profile-azure`
+  feature now imports `String` through the crate's `alloc` prelude. CI
+  checks every first-party profile combination without default features
+  on Rust 1.85, stable, and nightly.
 - **Ambiguous duplicate map keys.** Schema maps now reject repeated
   integer/text labels instead of silently overwriting values, including
   skipped extension keys, optional null fields, integrity-register IDs,
