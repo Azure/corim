@@ -10,6 +10,10 @@ versions.
 
 ### Fixed
 
+- **Azure profile failed to compile without `std`.** The `profile-azure`
+  feature now imports `String` through the crate's `alloc` prelude. CI
+  checks every first-party profile combination without default features
+  on Rust 1.85, stable, and nightly.
 - **CBOR input-triggered panics.** Byte/text strings with overflowing
   declared lengths now return a decode error, and map keys containing
   integers outside the CBOR range return an encode error instead of
