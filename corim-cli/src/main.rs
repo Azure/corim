@@ -177,9 +177,9 @@ fn run_validate(cli: ValidateArgs) {
     }
 
     // Check the original input before compatibility peeling or decode fallback
-    // can discard resource-limit failures, including embedded unsigned tags.
+    // can discard framing or resource-limit failures, including embedded tags.
     if let Err(e) =
-        corim::validate::check_decode_limits(&bytes, &corim::cbor::DecodeLimits::default())
+        corim::validate::check_document_framing(&bytes, &corim::cbor::DecodeLimits::default())
     {
         eprintln!("FAIL: Cannot decode as CoRIM");
         eprintln!("  CBOR decode error: {e}");
@@ -244,7 +244,7 @@ fn run_validate(cli: ValidateArgs) {
         None => {
             // Try unsigned CoRIM (tag 501)
             let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
-                match corim::cbor::decode(&bytes) {
+                match corim::cbor::decode_exact(&bytes) {
                     Ok(t) => t,
                     Err(e) => {
                         eprintln!("FAIL: Cannot decode as CoRIM");
@@ -312,7 +312,7 @@ fn run_validate(cli: ValidateArgs) {
     for (i, tag) in corim.tags.iter().enumerate() {
         match tag {
             corim::types::corim::ConciseTagChoice::Comid(comid_bytes) => {
-                match corim::cbor::decode::<corim::types::comid::ComidTag>(comid_bytes) {
+                match corim::cbor::decode_exact::<corim::types::comid::ComidTag>(comid_bytes) {
                     Ok(comid) => {
                         // Validate triples non-empty
                         let t = &comid.triples;
@@ -527,9 +527,10 @@ fn try_decode_signed(
 
     // Decode the inner CoRIM from the (possibly synthesized) tagged payload
     let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
-        match corim::cbor::decode(payload_bytes) {
+        match corim::cbor::decode_exact(payload_bytes) {
             Ok(t) => t,
-            Err(e @ corim::error::DecodeError::LimitExceeded { .. }) => {
+            Err(e @ corim::error::DecodeError::LimitExceeded { .. })
+            | Err(e @ corim::error::DecodeError::TrailingData { .. }) => {
                 return Some(Err(SignedDecodeResult::Failed(e.to_string())));
             }
             Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),

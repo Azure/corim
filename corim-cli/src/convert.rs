@@ -68,7 +68,7 @@ pub fn run(args: ConvertArgs) {
 
 fn run_impl(args: ConvertArgs) -> Result<(), String> {
     let bytes = crate::input::read_document(args.file.as_deref())?;
-    corim::validate::check_decode_limits(&bytes, &corim::cbor::DecodeLimits::default())
+    corim::validate::check_document_framing(&bytes, &corim::cbor::DecodeLimits::default())
         .map_err(|e| format!("not a tag-501 unsigned CoRIM: {e}"))?;
 
     // Peel legacy `#6.500` / `#6.502` outer wrappers (TCG / NVIDIA
@@ -101,8 +101,8 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
         peeled.as_bytes()
     };
 
-    let tagged: corim::cbor::value::Tagged<CorimMap> =
-        corim::cbor::decode(inner).map_err(|e| format!("not a tag-501 unsigned CoRIM: {e}"))?;
+    let tagged: corim::cbor::value::Tagged<CorimMap> = corim::cbor::decode_exact(inner)
+        .map_err(|e| format!("not a tag-501 unsigned CoRIM: {e}"))?;
     if tagged.tag != corim::types::tags::TAG_CORIM {
         return Err(format!(
             "expected CBOR tag {} (unsigned CoRIM), found tag {}",
@@ -179,7 +179,7 @@ fn build_template(corim: &CorimMap) -> Result<JsonValue, String> {
     for (i, tag) in corim.tags.iter().enumerate() {
         match tag {
             ConciseTagChoice::Comid(inner) => {
-                let comid: ComidTag = corim::cbor::decode(inner)
+                let comid: ComidTag = corim::cbor::decode_exact(inner)
                     .map_err(|e| format!("tags[{i}] (CoMID) decode: {e}"))?;
                 comids.push(typed_to_prose(&comid, Root::Comid)?);
             }
@@ -189,12 +189,12 @@ fn build_template(corim: &CorimMap) -> Result<JsonValue, String> {
                 comids.push(typed_to_prose(&comid, Root::Comid)?);
             }
             ConciseTagChoice::Coswid(inner) => {
-                let sw: ConciseSwidTag = corim::cbor::decode(inner)
+                let sw: ConciseSwidTag = corim::cbor::decode_exact(inner)
                     .map_err(|e| format!("tags[{i}] (CoSWID) decode: {e}"))?;
                 coswids.push(typed_to_prose(&sw, Root::Coswid)?);
             }
             ConciseTagChoice::Cotl(inner) => {
-                let tl: ConciseTlTag = corim::cbor::decode(inner)
+                let tl: ConciseTlTag = corim::cbor::decode_exact(inner)
                     .map_err(|e| format!("tags[{i}] (CoTL) decode: {e}"))?;
                 cotls.push(typed_to_prose(&tl, Root::Cotl)?);
             }

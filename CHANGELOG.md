@@ -29,6 +29,20 @@ versions.
 
 ### Added
 
+- **Explicit exact and prefix CBOR decoding.** `cbor::decode_exact` rejects
+  trailing bytes; `cbor::decode_prefix` returns the decoded item and a
+  borrowed, unparsed remainder. Both have limits-aware variants and
+  shared-session equivalents. Legacy `decode` / `decode_with_limits`
+  retain first-item behavior in 0.2.x, with documentation recommending
+  migration; no compiler deprecation warnings are added.
+- **Single-item document framing.** CoRIM envelopes, protected headers,
+  metadata, payloads, and tag bodies now reject trailing CBOR data,
+  including through TCG compatibility and CLI/diagnostic paths. Framing
+  failures cannot become successful opaque-content fallbacks. Signatures,
+  certificates, hash payloads, and unknown extension byte strings remain
+  opaque. `check_document_framing` is an inspection preflight, not a
+  replacement for semantic validation; `check_decode_limits` remains
+  resource-only.
 - **Bounded CBOR decoding.** `DecodeLimits` defaults to 16 MiB per input,
   64 enclosing arrays/maps/tags, 1,000,000 aggregate decoded values, and
   2,000,000 entries per collection. Depth and collection ceilings cannot

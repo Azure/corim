@@ -140,7 +140,7 @@ fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
         });
     }
 
-    corim::validate::check_decode_limits(&raw, &corim::cbor::DecodeLimits::default())
+    corim::validate::check_document_framing(&raw, &corim::cbor::DecodeLimits::default())
         .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
 
     // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
@@ -163,7 +163,8 @@ fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
                 source_unsigned_desc: "unsigned CoRIM",
             })
         }
-        Err(e @ corim::error::DecodeError::LimitExceeded { .. }) => {
+        Err(e @ corim::error::DecodeError::LimitExceeded { .. })
+        | Err(e @ corim::error::DecodeError::TrailingData { .. }) => {
             Err(format!("baseline is not a valid CoRIM: {e}"))
         }
         Err(_) => {

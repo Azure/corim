@@ -223,6 +223,11 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
         return Err("unsigned CoRIM is empty".into());
     }
 
+    // Enforce document framing on the original bytes without adding semantic
+    // validation to the signing workflow or rewriting the signed payload.
+    corim::validate::check_document_framing(&unsigned, &corim::cbor::DecodeLimits::default())
+        .map_err(|e| format!("unsigned CoRIM framing: {e}"))?;
+
     let alg = parse_alg(&args.alg)?;
 
     let aad = match &args.external_aad {

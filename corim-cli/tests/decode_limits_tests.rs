@@ -183,8 +183,8 @@ fn oversized_piped_stdin_fails_with_and_without_dash() {
 
 #[test]
 fn input_at_size_limit_is_not_rejected_by_reader() {
-    // The existing decoder accepts a first item with trailing bytes. This test
-    // only pins the inclusive reader boundary, not a new trailing-data policy.
+    // The reader accepts exactly the limit; exact EDN parsing then rejects
+    // the appended bytes. This distinguishes framing from input-size failure.
     let file = InputFile::new(&[0xf6]);
     File::options()
         .write(true)
@@ -193,12 +193,8 @@ fn input_at_size_limit_is_not_rejected_by_reader() {
         .set_len(u64::try_from(DecodeLimits::default().max_input_bytes).unwrap())
         .unwrap();
     let output = run(&["validate", file.path(), "--edn"]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(output.stdout, b"null\n");
+    assert_failure(&output, "trailing CBOR data");
+    assert!(!String::from_utf8_lossy(&output.stderr).contains("input exceeds maximum size"));
 }
 
 #[test]

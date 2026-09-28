@@ -24,6 +24,8 @@ use corim::types::tags::{TAG_COMID, TAG_COSWID, TAG_COTL, TAG_SIGNED_CORIM};
 /// the CoRIM library so anything that round-trips through the library
 /// will render cleanly here.
 pub fn render(bytes: &[u8]) -> Result<String, String> {
+    corim::validate::check_document_framing(bytes, &DecodeLimits::default())
+        .map_err(|e| format!("CBOR decode failed: {e}"))?;
     let mut renderer = Renderer::new().map_err(|e| e.to_string())?;
     let v = renderer
         .decode(bytes, 0)
@@ -85,7 +87,7 @@ impl Renderer {
     }
 
     fn decode(&mut self, bytes: &[u8], nesting: usize) -> Result<Value, DecodeError> {
-        self.session.decode_nested(bytes, nesting)
+        self.session.decode_nested_exact(bytes, nesting)
     }
 
     fn write_value(
@@ -157,7 +159,8 @@ impl Renderer {
                         )?;
                         out.push_str(">>");
                     }
-                    Err(e @ DecodeError::LimitExceeded { .. }) => return Err(e),
+                    Err(e @ DecodeError::LimitExceeded { .. })
+                    | Err(e @ DecodeError::TrailingData { .. }) => return Err(e),
                     Err(_) => write_hex(b, out),
                 },
                 (Ctx::CoseSign1Array, 2, Value::Bytes(b)) if !hash_payload => {
@@ -232,7 +235,7 @@ impl Renderer {
         Ok(())
     }
 
-    /// Syntax failures retain the raw hex fallback; resource failures are fatal.
+    /// Syntax failures retain the raw hex fallback; framing and resource failures are fatal.
     fn write_embedded_bstr(
         &mut self,
         b: &[u8],
@@ -247,7 +250,8 @@ impl Renderer {
                 self.write_value(&v, depth, nesting + 1, ctx, out)?;
                 out.push_str(">>");
             }
-            Err(e @ DecodeError::LimitExceeded { .. }) => return Err(e),
+            Err(e @ DecodeError::LimitExceeded { .. })
+            | Err(e @ DecodeError::TrailingData { .. }) => return Err(e),
             Err(_) => write_hex(b, out),
         }
         Ok(())

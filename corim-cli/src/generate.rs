@@ -298,8 +298,10 @@ pub(crate) fn build_corim_from_template(
         corim::validate::decode_and_validate(&bytes)
             .map_err(|e| format!("post-build validation failed: {e}"))?;
     } else {
-        corim::cbor::decode::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(&bytes)
-            .map_err(|e| format!("post-build decode failed: {e}"))?;
+        corim::cbor::decode_exact::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(
+            &bytes,
+        )
+        .map_err(|e| format!("post-build decode failed: {e}"))?;
     }
 
     Ok(bytes)
