@@ -14,6 +14,10 @@ versions.
   feature now imports `String` through the crate's `alloc` prelude. CI
   checks every first-party profile combination without default features
   on Rust 1.85, stable, and nightly.
+- **CBOR input-triggered panics.** Byte/text strings with overflowing
+  declared lengths now return a decode error, and map keys containing
+  integers outside the CBOR range return an encode error instead of
+  panicking. Valid encodings and public API signatures are unchanged.
 - **Baseline comparison skipped CoRIM and CoMID metadata.** `compare`
   only looked at `profile`, `corim-id`, and the triples, so a changed
   `rim-validity`, `entities`, or `dependent-rims`, or a changed CoMID
@@ -29,6 +33,38 @@ versions.
 
 ### Added
 
+- **Explicit exact and prefix CBOR decoding.** `cbor::decode_exact` rejects
+  trailing bytes; `cbor::decode_prefix` returns the decoded item and a
+  borrowed, unparsed remainder. Both have limits-aware variants and
+  shared-session equivalents. Legacy `decode` / `decode_with_limits`
+  retain first-item behavior in 0.2.x, with documentation recommending
+  migration; no compiler deprecation warnings are added.
+- **Single-item document framing.** CoRIM envelopes, protected headers,
+  metadata, payloads, and tag bodies now reject trailing CBOR data,
+  including through TCG compatibility and CLI/diagnostic paths. Framing
+  failures cannot become successful opaque-content fallbacks. Signatures,
+  certificates, hash payloads, and unknown extension byte strings remain
+  opaque. `check_document_framing` is an inspection preflight, not a
+  replacement for semantic validation; `check_decode_limits` remains
+  resource-only.
+- **Bounded CBOR decoding.** `DecodeLimits` defaults to 16 MiB per input,
+  64 enclosing arrays/maps/tags, 1,000,000 aggregate decoded values, and
+  2,000,000 entries per collection. Depth and collection ceilings cannot
+  be raised; trusted callers may adjust byte/value budgets. Existing
+  decoding APIs now use these defaults; previously accepted oversized or
+  excessively nested inputs are rejected.
+- **Explicit shared decode sessions.** `cbor::decode_with_limits` and
+  `DecodeSession` provide additive resource control without changing
+  `CborCodec` requirements. Failed syntax attempts consume their actual
+  value budget; resource failures remain fatal for the session. Signed,
+  unsigned, protected-header, and payload limits-aware entry points share
+  budgets across their embedded CBOR. Generic Serde decoding does not
+  propagate custom limits into arbitrary nested `Deserialize` calls;
+  use the document/header entry points for those operations.
+- **Bounded CLI reads and diagnostics.** File/stdin inputs are read with
+  a 16 MiB cap. Diagnostic and EDN embedded decodes share resource budgets;
+  limit failures cannot silently become successful opaque-byte fallbacks.
+  Declared hash-envelope payloads remain opaque digests, not CBOR.
 - **`extract --header`.** Extracts the COSE protected header instead of the
   payload — the exact `bstr` contents that go into `Sig_structure1`, so the
   bytes can be re-verified. `--header --json` emits the decoded header using
