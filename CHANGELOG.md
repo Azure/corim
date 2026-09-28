@@ -10,6 +10,24 @@ versions.
 
 ### Fixed
 
+- **Ambiguous duplicate map keys.** Schema maps now reject repeated
+  integer/text labels instead of silently overwriting values, including
+  skipped extension keys, optional null fields, integrity-register IDs,
+  and COSE header maps. Metadata and CoSWID duplicates cannot become
+  successful opaque fallbacks. Generic `Value` decoding still preserves
+  every pair for inspection.
+- **Typed/extension serialization collisions.** Generated map serializers
+  and CWT claim serializers reject extension keys reserved for modeled
+  fields. Protected headers reject extras that collide with emitted
+  fields, while retaining existing raw-metadata compatibility behavior.
+- **Narrow flat-CWT compatibility exception.** Protected-header decoding
+  permits exactly one of each disjoint pair, in either order: key 1
+  integer algorithm/text issuer; key 2 array crit/text subject; key 4
+  byte-string kid/numeric expiry; key 5 byte-string IV/numeric not-before.
+  Repeated roles, int/float time duplicates, other mixtures, and third
+  occurrences are rejected. This is a decode-only legacy exception, not
+  standard-compliant CBOR. Typed header serialization uses nested CWT
+  claims; envelope re-encoding still preserves original protected bytes.
 - **CBOR input-triggered panics.** Byte/text strings with overflowing
   declared lengths now return a decode error, and map keys containing
   integers outside the CBOR range return an encode error instead of
