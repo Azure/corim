@@ -5,10 +5,12 @@
 
 use corim::baseline::{compare, MismatchKind};
 use corim::builder::{ComidBuilder, CorimBuilder};
+use corim::cbor::{self, value::Tagged, value::Value};
 use corim::types::common::{MeasuredElement, TagIdChoice};
-use corim::types::corim::{CorimId, CorimMap};
+use corim::types::corim::{ConciseTagChoice, CorimId, CorimMap};
 use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
+use corim::types::tags::{TAG_COMID, TAG_CORIM};
 use corim::types::triples::ReferenceTriple;
 
 /// Build a one-CoMID, one-reference-triple CoRIM with a single MRTD
@@ -44,6 +46,77 @@ fn corim_with(digest: Vec<u8>, svn: SvnChoice, mkey: &str) -> CorimMap {
         .build_bytes()
         .unwrap();
     corim::validate::decode_and_validate(&bytes).unwrap().0
+}
+
+/// Decode a TCG wire form: bare bstr containing either a map or #6.506(map).
+fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
+    let mut corim = corim.clone();
+    for tag in &mut corim.tags {
+        if let ConciseTagChoice::Comid(bytes) = tag {
+            let inner = if tagged_inner {
+                let map: Value = cbor::decode(bytes).unwrap();
+                cbor::encode(&Value::Tag(TAG_COMID, Box::new(map))).unwrap()
+            } else {
+                bytes.clone()
+            };
+            *tag = cbor::decode(&cbor::encode(&Value::Bytes(inner)).unwrap()).unwrap();
+        }
+    }
+    let bytes = cbor::encode(&Tagged {
+        tag: TAG_CORIM,
+        value: corim,
+    })
+    .unwrap();
+    let validated = corim::validate::decode_and_validate_full_at(&bytes, 0).unwrap();
+    assert_eq!(validated.comids.len(), 1);
+    validated.corim
+}
+
+#[test]
+fn tcg_and_canonical_comids_compare_identically() {
+    let canonical = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let expected = compare(&canonical, &canonical);
+    for tagged_inner in [false, true] {
+        let tcg = tcg_corim(&canonical, tagged_inner);
+        assert_eq!(compare(&tcg, &canonical), expected);
+        assert_eq!(compare(&canonical, &tcg), expected);
+    }
+}
+
+#[test]
+fn tcg_comid_digest_changes_are_reported() {
+    let base = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let input = corim_with(vec![0xBB; 48], SvnChoice::MinValue(1), "MRTD");
+    let expected = compare(&input, &base);
+    assert_eq!(expected.value_differences.len(), 1);
+    for baseline_tagged in [false, true] {
+        for input_tagged in [false, true] {
+            assert_eq!(
+                compare(
+                    &tcg_corim(&input, input_tagged),
+                    &tcg_corim(&base, baseline_tagged)
+                ),
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn tcg_comid_svn_type_changes_are_structural() {
+    let base = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let input = corim_with(vec![0xAA; 48], SvnChoice::ExactValue(1), "MRTD");
+    let expected = compare(&input, &base);
+    assert!(!expected.is_conformant());
+    for tagged_inner in [false, true] {
+        assert_eq!(
+            compare(
+                &tcg_corim(&input, tagged_inner),
+                &tcg_corim(&base, tagged_inner)
+            ),
+            expected
+        );
+    }
 }
 
 #[test]
