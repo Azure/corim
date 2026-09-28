@@ -190,8 +190,16 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                     #(#temp_decls)*
                     #extras_decl
                     let mut __had_any_entry = false;
+                    // RFC 8949 §5.6: duplicate keys cannot have last-one-wins
+                    // semantics, including unknown keys and optional nulls.
+                    let mut __seen_keys = alloc::collections::BTreeSet::new();
 
                     while let Some(key) = map.next_key::<i64>()? {
+                        if !__seen_keys.insert(key) {
+                            return Err(serde::de::Error::custom(format!(
+                                "duplicate map key {key}"
+                            )));
+                        }
                         __had_any_entry = true;
                         match key {
                             #(#match_arms)*

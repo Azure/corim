@@ -37,6 +37,35 @@ use crate::Validate;
 /// untrusted input.
 pub const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
 
+/// Check resource budgets across a CoRIM's embedded CBOR (RFC 8949 §10).
+///
+/// This resource-only pass is intended for diagnostic/inspection consumers:
+/// malformed CBOR or invalid document structure is NOT rejected here. Use
+/// validation APIs for semantic validation. Limit failures are always fatal.
+/// Outer data, protected headers, corim-meta, and inline payload/tag bodies
+/// share one value budget; signatures, certificates and hashes stay opaque.
+pub fn check_decode_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document(bytes)
+}
+
+/// Check single-item framing at known document and embedded-CBOR boundaries.
+///
+/// Unlike [`check_decode_limits`], rejects trailing bytes after a successfully
+/// parsed item (RFC 8949 §3), and duplicate integer/text labels in schema maps
+/// (RFC 8949 §5.6), retaining the protected-header flat-CWT legacy exception.
+/// Enforces the same resource limits. Other syntax
+/// and semantic errors are intentionally left to validation/diagnostic APIs.
+/// Opaque signatures, certificates and declared hash payloads are not decoded.
+pub fn check_document_framing(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document_framing(bytes)
+}
+
 /// Result of decoding and validating a CoRIM document.
 ///
 /// Contains the decoded `CorimMap` and all extracted/validated tags.
@@ -142,35 +171,48 @@ fn decode_and_validate_full_impl(
     bytes: &[u8],
     now_epoch_secs: i64,
 ) -> Result<ValidatedCorim, ValidationError> {
-    if bytes.len() > MAX_PAYLOAD_SIZE {
+    decode_and_validate_full_at_with_limits(bytes, now_epoch_secs, &cbor::DecodeLimits::default())
+}
+
+/// Decode and validate with an explicit clock and resource limits (RFC 8949 §10).
+/// The outer map and every embedded tag share one aggregate value budget.
+/// Existing validation APIs use the same path with default limits.
+pub fn decode_and_validate_full_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    decode_and_validate_budget(bytes, now_epoch_secs, &mut budget)
+}
+
+pub(crate) fn decode_and_validate_budget(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    if bytes.len() > budget.limits.max_input_bytes {
         return Err(ValidationError::PayloadTooLarge {
             size: bytes.len(),
-            max: MAX_PAYLOAD_SIZE,
+            max: budget.limits.max_input_bytes,
         });
     }
-    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
-    // present (TCG Endorsement spec / NVIDIA producers). See
-    // `crate::compat::peel_tcg_wrappers`.
-    let peeled = crate::compat::peel_tcg_wrappers(bytes).map_err(ValidationError::Decode)?;
-    let bytes = peeled.as_bytes();
-    // Decode interop: if the input is a bare `corim-map` (no #6.501 wrapper),
-    // synthesize the wrapper so strict decode succeeds. Same producer family
-    // as above (TCG-style implementations omit the inner tag because the
-    // outer #6.500/#6.502 historically provided disambiguation).
-    let wrapped = crate::compat::wrap_bare_corim_map(bytes);
-    let bytes = wrapped.as_bytes();
-    // Decode the tag-501 wrapped CoRIM
-    let tagged: cbor::value::Tagged<CorimMap> =
-        cbor::decode(bytes).map_err(ValidationError::Decode)?;
-    if tagged.tag != TAG_CORIM {
-        return Err(ValidationError::Decode(
-            crate::error::DecodeError::UnexpectedTag {
+    // Peel in the already-budgeted tree: wrappers count toward depth/work.
+    let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
+    let map = match value {
+        cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
+        map @ cbor::value::Value::Map(_) => map,
+        cbor::value::Value::Tag(found, _) => {
+            return Err(crate::DecodeError::UnexpectedTag {
                 expected: TAG_CORIM,
-                found: tagged.tag,
-            },
-        ));
-    }
-    let corim = tagged.value;
+                found,
+            }
+            .into())
+        }
+        _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
+    };
+    let corim: CorimMap =
+        cbor::value::from_value(&map).map_err(crate::DecodeError::Deserialization)?;
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
@@ -192,23 +234,25 @@ fn decode_and_validate_full_impl(
     for tag in &corim.tags {
         match tag {
             ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = cbor::decode(comid_bytes).map_err(ValidationError::Decode)?;
+                let comid: ComidTag = budget.decode_exact(comid_bytes)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag =
-                    cbor::decode(cotl_bytes).map_err(ValidationError::Decode)?;
+                let cotl: ConciseTlTag = budget.decode_exact(cotl_bytes)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
             ConciseTagChoice::Coswid(coswid_bytes) => {
                 // Try structured decode; fall back to opaque count
-                match cbor::decode::<ConciseSwidTag>(coswid_bytes) {
+                match budget.decode_schema_exact::<ConciseSwidTag>(coswid_bytes) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
                     }
+                    Err(e @ crate::DecodeError::LimitExceeded { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::TrailingData { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::DuplicateKey { .. }) => return Err(e.into()),
                     Err(_) => coswid_opaque_count += 1,
                 }
             }
@@ -219,7 +263,7 @@ fn decode_and_validate_full_impl(
                 // tag-tolerant compat decoder; failure here is fatal because
                 // we have no other interpretation for a bare bstr in this
                 // position.
-                let comid = crate::compat::decode_comid_from_tcg_bstr(bytes)
+                let comid = crate::compat::decode_comid_with_budget(bytes, budget)
                     .map_err(ValidationError::Decode)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
