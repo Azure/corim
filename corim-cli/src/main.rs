@@ -3,8 +3,6 @@
 
 //! CLI tool for validating and inspecting CoRIM documents.
 
-use std::fs;
-use std::io::{self, Read};
 use std::process;
 
 use clap::{Parser, Subcommand};
@@ -14,6 +12,7 @@ mod convert;
 mod display;
 mod edn;
 mod generate;
+mod input;
 mod jsonfmt;
 mod prose;
 mod sign;
@@ -134,7 +133,7 @@ fn main() {
 }
 
 fn run_validate(cli: ValidateArgs) {
-    let bytes = match read_input(&cli.file) {
+    let bytes = match input::read_input(cli.file.as_deref()) {
         Ok(b) => b,
         Err(e) => {
             eprintln!("Error reading input: {}", e);
@@ -175,6 +174,16 @@ fn run_validate(cli: ValidateArgs) {
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
+    }
+
+    // Check the original input before compatibility peeling or decode fallback
+    // can discard resource-limit failures, including embedded unsigned tags.
+    if let Err(e) =
+        corim::validate::check_decode_limits(&bytes, &corim::cbor::DecodeLimits::default())
+    {
+        eprintln!("FAIL: Cannot decode as CoRIM");
+        eprintln!("  CBOR decode error: {e}");
+        process::exit(2);
     }
 
     // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers
@@ -501,6 +510,10 @@ fn try_decode_signed(
         signature: signed.signature.clone(),
     };
 
+    if signed.protected.is_hash_envelope() {
+        return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info))));
+    }
+
     let payload = match &signed.payload {
         Some(p) => p,
         None => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
@@ -516,6 +529,9 @@ fn try_decode_signed(
     let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
         match corim::cbor::decode(payload_bytes) {
             Ok(t) => t,
+            Err(e @ corim::error::DecodeError::LimitExceeded { .. }) => {
+                return Some(Err(SignedDecodeResult::Failed(e.to_string())));
+            }
             Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
         };
 
@@ -645,17 +661,6 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
         indent
     );
     println!();
-}
-
-fn read_input(path: &Option<String>) -> io::Result<Vec<u8>> {
-    match path {
-        Some(p) if p != "-" => fs::read(p),
-        _ => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            Ok(buf)
-        }
-    }
 }
 
 #[allow(clippy::too_many_arguments)]

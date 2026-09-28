@@ -29,6 +29,24 @@ versions.
 
 ### Added
 
+- **Bounded CBOR decoding.** `DecodeLimits` defaults to 16 MiB per input,
+  64 enclosing arrays/maps/tags, 1,000,000 aggregate decoded values, and
+  2,000,000 entries per collection. Depth and collection ceilings cannot
+  be raised; trusted callers may adjust byte/value budgets. Existing
+  decoding APIs now use these defaults; previously accepted oversized or
+  excessively nested inputs are rejected.
+- **Explicit shared decode sessions.** `cbor::decode_with_limits` and
+  `DecodeSession` provide additive resource control without changing
+  `CborCodec` requirements. Failed syntax attempts consume their actual
+  value budget; resource failures remain fatal for the session. Signed,
+  unsigned, protected-header, and payload limits-aware entry points share
+  budgets across their embedded CBOR. Generic Serde decoding does not
+  propagate custom limits into arbitrary nested `Deserialize` calls;
+  use the document/header entry points for those operations.
+- **Bounded CLI reads and diagnostics.** File/stdin inputs are read with
+  a 16 MiB cap. Diagnostic and EDN embedded decodes share resource budgets;
+  limit failures cannot silently become successful opaque-byte fallbacks.
+  Declared hash-envelope payloads remain opaque digests, not CBOR.
 - **`extract --header`.** Extracts the COSE protected header instead of the
   payload — the exact `bstr` contents that go into `Sig_structure1`, so the
   bytes can be re-verified. `--header --json` emits the decoded header using

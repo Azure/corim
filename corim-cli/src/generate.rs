@@ -124,8 +124,14 @@ pub fn run(args: GenerateArgs) {
 }
 
 fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
-    let template_str = fs::read_to_string(&args.template)
+    let template_bytes = crate::input::read_file(&args.template)
         .map_err(|e| format!("reading template {}: {e}", args.template))?;
+    let template_str = String::from_utf8(template_bytes).map_err(|_| {
+        format!(
+            "reading template {}: stream did not contain valid UTF-8",
+            args.template
+        )
+    })?;
     let template: serde_json::Value =
         serde_json::from_str(&template_str).map_err(|e| format!("parsing template JSON: {e}"))?;
 

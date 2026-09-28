@@ -14,17 +14,24 @@
 //! - Inside a decoded COSE protected header, key `8` is the
 //!   `corim-meta` bstr (`bstr .cbor corim-meta-map`); it is also unwrapped.
 
-use corim::cbor::minimal::{decode_value, SliceReader};
 use corim::cbor::value::Value;
+use corim::cbor::{DecodeLimits, DecodeSession};
+use corim::error::DecodeError;
+use corim::types::signed::{COSE_HEADER_CORIM_META, COSE_HEADER_PAYLOAD_HASH_ALG};
+use corim::types::tags::{TAG_COMID, TAG_COSWID, TAG_COTL, TAG_SIGNED_CORIM};
 
 /// Render a CBOR byte string as EDN. The decoder is the same one used by
 /// the CoRIM library so anything that round-trips through the library
 /// will render cleanly here.
 pub fn render(bytes: &[u8]) -> Result<String, String> {
-    let mut reader = SliceReader::new(bytes);
-    let v = decode_value(&mut reader).map_err(|e| format!("CBOR decode failed: {}", e))?;
+    let mut renderer = Renderer::new().map_err(|e| e.to_string())?;
+    let v = renderer
+        .decode(bytes, 0)
+        .map_err(|e| format!("CBOR decode failed: {e}"))?;
     let mut out = String::new();
-    write_value(&v, 0, Ctx::Top, &mut out);
+    renderer
+        .write_value(&v, 0, 0, Ctx::Top, &mut out)
+        .map_err(|e| format!("CBOR decode failed: {e}"))?;
     out.push('\n');
     Ok(out)
 }
@@ -34,8 +41,8 @@ pub fn render(bytes: &[u8]) -> Result<String, String> {
 enum Ctx {
     Top,
     /// Inside a `#6.18(array)` — elements 0 (protected) and 2 (payload)
-    /// are bstr-wrapped CBOR; track the index so we can unwrap them.
-    CoseSign1Array(usize),
+    /// are bstr-wrapped CBOR.
+    CoseSign1Array,
     /// Inside a CBOR map that is itself the decoded COSE protected
     /// header (i.e. element 0 of a `#6.18` array). Key 8 (`corim-meta`)
     /// is bstr-wrapped CBOR.
@@ -50,135 +57,207 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
-fn write_value(v: &Value, depth: usize, ctx: Ctx, out: &mut String) {
-    match v {
-        Value::Integer(n) => out.push_str(&n.to_string()),
-        Value::Text(s) => {
-            out.push('"');
-            out.push_str(&corim::cbor::value::escape_text(s));
-            out.push('"');
+/// One budget spans the outer value and every embedded decode, regardless of
+/// schema position. `nesting` is separate from visual indentation: tags and
+/// embedded byte strings consume depth even when they render on the same line.
+struct Renderer {
+    limits: DecodeLimits,
+    session: DecodeSession,
+}
+
+impl Renderer {
+    fn new() -> Result<Self, DecodeError> {
+        let limits = DecodeLimits::default();
+        Ok(Self {
+            session: DecodeSession::new(&limits)?,
+            limits,
+        })
+    }
+
+    fn check_depth(&self, nesting: usize) -> Result<(), DecodeError> {
+        if nesting > self.limits.max_depth {
+            return Err(DecodeError::LimitExceeded {
+                resource: "depth",
+                limit: self.limits.max_depth,
+            });
         }
-        Value::Bytes(b) => {
-            out.push_str("h'");
-            for byte in b {
-                out.push_str(&format!("{:02x}", byte));
+        Ok(())
+    }
+
+    fn decode(&mut self, bytes: &[u8], nesting: usize) -> Result<Value, DecodeError> {
+        self.session.decode_nested(bytes, nesting)
+    }
+
+    fn write_value(
+        &mut self,
+        v: &Value,
+        depth: usize,
+        nesting: usize,
+        ctx: Ctx,
+        out: &mut String,
+    ) -> Result<(), DecodeError> {
+        self.check_depth(nesting)?;
+        match v {
+            Value::Integer(n) => out.push_str(&n.to_string()),
+            Value::Text(s) => {
+                out.push('"');
+                out.push_str(&corim::cbor::value::escape_text(s));
+                out.push('"');
             }
-            out.push('\'');
-        }
-        Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
-        Value::Null => out.push_str("null"),
-        Value::Float(f) => {
-            if f.is_nan() {
-                out.push_str("NaN");
-            } else if f.is_infinite() {
-                out.push_str(if *f > 0.0 { "Infinity" } else { "-Infinity" });
-            } else {
-                out.push_str(&format!("{}_3", f));
+            Value::Bytes(b) => write_hex(b, out),
+            Value::Bool(b) => out.push_str(if *b { "true" } else { "false" }),
+            Value::Null => out.push_str("null"),
+            Value::Float(f) => {
+                if f.is_nan() {
+                    out.push_str("NaN");
+                } else if f.is_infinite() {
+                    out.push_str(if *f > 0.0 { "Infinity" } else { "-Infinity" });
+                } else {
+                    out.push_str(&format!("{}_3", f));
+                }
             }
+            Value::Array(items) => self.write_array(items, depth, nesting, ctx, out)?,
+            Value::Map(entries) => self.write_map(entries, depth, nesting, ctx, out)?,
+            Value::Tag(tag, inner) => self.write_tag(*tag, inner, depth, nesting, out)?,
         }
-        Value::Array(items) => write_array(items, depth, ctx, out),
-        Value::Map(entries) => write_map(entries, depth, ctx, out),
-        Value::Tag(tag, inner) => write_tag(*tag, inner, depth, ctx, out),
+        Ok(())
     }
-}
 
-fn write_array(items: &[Value], depth: usize, ctx: Ctx, out: &mut String) {
-    if items.is_empty() {
-        out.push_str("[]");
-        return;
-    }
-    out.push_str("[\n");
-    for (i, item) in items.iter().enumerate() {
-        indent(out, depth + 1);
-        if matches!(ctx, Ctx::CoseSign1Array(_)) {
-            // Render with bstr-unwrap for COSE_Sign1 elements 0 and 2.
-            write_value_in_cose_elem(item, depth + 1, i, out);
-        } else {
-            write_value(item, depth + 1, Ctx::Top, out);
+    fn write_array(
+        &mut self,
+        items: &[Value],
+        depth: usize,
+        nesting: usize,
+        ctx: Ctx,
+        out: &mut String,
+    ) -> Result<(), DecodeError> {
+        if items.is_empty() {
+            out.push_str("[]");
+            return Ok(());
         }
-        if i + 1 < items.len() {
-            out.push(',');
-        }
-        out.push('\n');
-    }
-    indent(out, depth);
-    out.push(']');
-}
-
-/// Render an element of a `#6.18(array)` body, with bstr-unwrap for
-/// elements 0 (protected header) and 2 (payload). Element 1 is the
-/// unprotected map (rendered as a normal map). Element 3 is the signature.
-fn write_value_in_cose_elem(v: &Value, depth: usize, idx: usize, out: &mut String) {
-    match (idx, v) {
-        // protected header bstr
-        (0, Value::Bytes(b)) => write_embedded_bstr(b, depth, Ctx::ProtectedHeaderMap, out),
-        // payload bstr (could be #6.501(corim-map) or a hash digest)
-        (2, Value::Bytes(b)) => write_embedded_bstr(b, depth, Ctx::Top, out),
-        _ => write_value(v, depth, Ctx::Top, out),
-    }
-}
-
-fn write_map(entries: &[(Value, Value)], depth: usize, ctx: Ctx, out: &mut String) {
-    if entries.is_empty() {
-        out.push_str("{}");
-        return;
-    }
-    out.push_str("{\n");
-    for (i, (k, v)) in entries.iter().enumerate() {
-        indent(out, depth + 1);
-        write_value(k, depth + 1, Ctx::Top, out);
-        out.push_str(": ");
-        // Inside a COSE protected-header map, key 8 is corim-meta bstr.
-        if ctx == Ctx::ProtectedHeaderMap {
-            if let (Value::Integer(8), Value::Bytes(b)) = (k, v) {
-                write_embedded_bstr(b, depth + 1, Ctx::Top, out);
-            } else {
-                write_value(v, depth + 1, Ctx::Top, out);
+        out.push_str("[\n");
+        let mut hash_payload = false;
+        for (i, item) in items.iter().enumerate() {
+            indent(out, depth + 1);
+            match (ctx, i, item) {
+                (Ctx::CoseSign1Array, 0, Value::Bytes(b)) => match self.decode(b, nesting + 2) {
+                    Ok(header) => {
+                        if let Value::Map(fields) = &header {
+                            hash_payload = fields.iter().any(|(k, _)| {
+                                k == &Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))
+                            });
+                        }
+                        out.push_str("<<");
+                        self.write_value(
+                            &header,
+                            depth + 1,
+                            nesting + 2,
+                            Ctx::ProtectedHeaderMap,
+                            out,
+                        )?;
+                        out.push_str(">>");
+                    }
+                    Err(e @ DecodeError::LimitExceeded { .. }) => return Err(e),
+                    Err(_) => write_hex(b, out),
+                },
+                (Ctx::CoseSign1Array, 2, Value::Bytes(b)) if !hash_payload => {
+                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Top, out)?;
+                }
+                _ => self.write_value(item, depth + 1, nesting + 1, Ctx::Top, out)?,
             }
-        } else {
-            write_value(v, depth + 1, Ctx::Top, out);
-        }
-        if i + 1 < entries.len() {
-            out.push(',');
-        }
-        out.push('\n');
-    }
-    indent(out, depth);
-    out.push('}');
-}
-
-fn write_tag(tag: u64, inner: &Value, depth: usize, _ctx: Ctx, out: &mut String) {
-    out.push_str(&format!("#6.{}(", tag));
-    match (tag, inner) {
-        // concise-mid / concise-swid / concise-tl tags wrap embedded CBOR
-        (505 | 506 | 508, Value::Bytes(b)) => {
-            write_embedded_bstr(b, depth, Ctx::Top, out);
-        }
-        // COSE_Sign1 — descend with the special array context
-        (18, Value::Array(items)) => {
-            write_array(items, depth, Ctx::CoseSign1Array(0), out);
-        }
-        _ => write_value(inner, depth, Ctx::Top, out),
-    }
-    out.push(')');
-}
-
-/// Try to decode `b` as CBOR and emit it as `<<...>>`. If decoding fails
-/// fall back to the raw `h'...'` form so the renderer never lies.
-fn write_embedded_bstr(b: &[u8], depth: usize, ctx: Ctx, out: &mut String) {
-    let mut reader = SliceReader::new(b);
-    match decode_value(&mut reader) {
-        Ok(v) => {
-            out.push_str("<<");
-            write_value(&v, depth, ctx, out);
-            out.push_str(">>");
-        }
-        Err(_) => {
-            out.push_str("h'");
-            for byte in b {
-                out.push_str(&format!("{:02x}", byte));
+            if i + 1 < items.len() {
+                out.push(',');
             }
-            out.push('\'');
+            out.push('\n');
         }
+        indent(out, depth);
+        out.push(']');
+        Ok(())
     }
+
+    fn write_map(
+        &mut self,
+        entries: &[(Value, Value)],
+        depth: usize,
+        nesting: usize,
+        ctx: Ctx,
+        out: &mut String,
+    ) -> Result<(), DecodeError> {
+        if entries.is_empty() {
+            out.push_str("{}");
+            return Ok(());
+        }
+        out.push_str("{\n");
+        for (i, (k, v)) in entries.iter().enumerate() {
+            indent(out, depth + 1);
+            self.write_value(k, depth + 1, nesting + 1, Ctx::Top, out)?;
+            out.push_str(": ");
+            match (ctx, k, v) {
+                (Ctx::ProtectedHeaderMap, Value::Integer(key), Value::Bytes(b))
+                    if *key == i128::from(COSE_HEADER_CORIM_META) =>
+                {
+                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Top, out)?;
+                }
+                _ => self.write_value(v, depth + 1, nesting + 1, Ctx::Top, out)?,
+            }
+            if i + 1 < entries.len() {
+                out.push(',');
+            }
+            out.push('\n');
+        }
+        indent(out, depth);
+        out.push('}');
+        Ok(())
+    }
+
+    fn write_tag(
+        &mut self,
+        tag: u64,
+        inner: &Value,
+        depth: usize,
+        nesting: usize,
+        out: &mut String,
+    ) -> Result<(), DecodeError> {
+        out.push_str(&format!("#6.{}(", tag));
+        match (tag, inner) {
+            (TAG_COSWID | TAG_COMID | TAG_COTL, Value::Bytes(b)) => {
+                self.write_embedded_bstr(b, depth, nesting + 1, Ctx::Top, out)?;
+            }
+            (TAG_SIGNED_CORIM, Value::Array(_)) => {
+                self.write_value(inner, depth, nesting + 1, Ctx::CoseSign1Array, out)?;
+            }
+            _ => self.write_value(inner, depth, nesting + 1, Ctx::Top, out)?,
+        }
+        out.push(')');
+        Ok(())
+    }
+
+    /// Syntax failures retain the raw hex fallback; resource failures are fatal.
+    fn write_embedded_bstr(
+        &mut self,
+        b: &[u8],
+        depth: usize,
+        nesting: usize,
+        ctx: Ctx,
+        out: &mut String,
+    ) -> Result<(), DecodeError> {
+        match self.decode(b, nesting + 1) {
+            Ok(v) => {
+                out.push_str("<<");
+                self.write_value(&v, depth, nesting + 1, ctx, out)?;
+                out.push_str(">>");
+            }
+            Err(e @ DecodeError::LimitExceeded { .. }) => return Err(e),
+            Err(_) => write_hex(b, out),
+        }
+        Ok(())
+    }
+}
+
+fn write_hex(bytes: &[u8], out: &mut String) {
+    out.push_str("h'");
+    for byte in bytes {
+        out.push_str(&format!("{byte:02x}"));
+    }
+    out.push('\'');
 }
