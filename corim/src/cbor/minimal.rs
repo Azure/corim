@@ -165,6 +165,11 @@ impl<'a> SliceReader<'a> {
         Self { data, pos: 0 }
     }
 
+    /// Borrow the unconsumed suffix without reparsing or copying.
+    pub(crate) fn remaining(&self) -> &'a [u8] {
+        &self.data[self.pos..]
+    }
+
     fn read_u8(&mut self) -> Result<u8, CborError> {
         if self.pos >= self.data.len() {
             return Err(CborError::Eof);

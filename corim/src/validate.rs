@@ -51,6 +51,19 @@ pub fn check_decode_limits(
     cbor::DecodeBudget::new(limits)?.inspect_document(bytes)
 }
 
+/// Check single-item framing at known document and embedded-CBOR boundaries.
+///
+/// Unlike [`check_decode_limits`], rejects trailing bytes after a successfully
+/// parsed item (RFC 8949 §3). Enforces the same resource limits. Other syntax
+/// and semantic errors are intentionally left to validation/diagnostic APIs.
+/// Opaque signatures, certificates and declared hash payloads are not decoded.
+pub fn check_document_framing(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document_framing(bytes)
+}
+
 /// Result of decoding and validating a CoRIM document.
 ///
 /// Contains the decoded `CorimMap` and all extracted/validated tags.
@@ -183,7 +196,7 @@ pub(crate) fn decode_and_validate_budget(
         });
     }
     // Peel in the already-budgeted tree: wrappers count toward depth/work.
-    let value = crate::compat::peel_value(budget.decode_value(bytes)?);
+    let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
     let map = match value {
         cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
         map @ cbor::value::Value::Map(_) => map,
@@ -219,23 +232,24 @@ pub(crate) fn decode_and_validate_budget(
     for tag in &corim.tags {
         match tag {
             ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = budget.decode(comid_bytes)?;
+                let comid: ComidTag = budget.decode_exact(comid_bytes)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag = budget.decode(cotl_bytes)?;
+                let cotl: ConciseTlTag = budget.decode_exact(cotl_bytes)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
             ConciseTagChoice::Coswid(coswid_bytes) => {
                 // Try structured decode; fall back to opaque count
-                match budget.decode::<ConciseSwidTag>(coswid_bytes) {
+                match budget.decode_exact::<ConciseSwidTag>(coswid_bytes) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
                     }
                     Err(e @ crate::DecodeError::LimitExceeded { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::TrailingData { .. }) => return Err(e.into()),
                     Err(_) => coswid_opaque_count += 1,
                 }
             }

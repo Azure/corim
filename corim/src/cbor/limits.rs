@@ -60,6 +60,7 @@ pub(crate) struct DecodeBudget {
     pub(crate) limits: DecodeLimits,
     remaining: usize,
     failure: Option<(&'static str, usize)>,
+    inspect_framing: bool,
 }
 
 /// An operation-local decoder sharing limits across multiple embedded items.
@@ -83,10 +84,41 @@ impl DecodeSession {
         })
     }
 
-    /// Decode another item, charging the same aggregate value budget.
+    /// Legacy first-item decoding, charging the same aggregate value budget.
     /// Byte strings remain opaque unless explicitly decoded in this session.
+    /// Trailing bytes are ignored; prefer [`Self::decode_exact`] for documents
+    /// or [`Self::decode_prefix`] for sequences. Planned for future deprecation.
     pub fn decode<T: DeserializeOwned>(&mut self, bytes: &[u8]) -> Result<T, DecodeError> {
         self.budget.decode(bytes)
+    }
+
+    /// Decode exactly one item, rejecting trailing data (RFC 8949 §3).
+    /// Failed framing checks still charge the parsed item's value budget.
+    pub fn decode_exact<T: DeserializeOwned>(&mut self, bytes: &[u8]) -> Result<T, DecodeError> {
+        self.budget.decode_exact(bytes)
+    }
+
+    /// Decode the first item and return its borrowed, unparsed remainder.
+    /// The input byte limit applies to the entire supplied slice; values in
+    /// the remainder consume no value budget until decoded in another call.
+    pub fn decode_prefix<'a, T: DeserializeOwned>(
+        &mut self,
+        bytes: &'a [u8],
+    ) -> Result<(T, &'a [u8]), DecodeError> {
+        self.budget.decode_prefix(bytes)
+    }
+
+    /// Decode exactly one embedded item at the caller's enclosing depth.
+    /// Preserves the shared budget across byte-string boundaries.
+    pub fn decode_nested_exact<T: DeserializeOwned>(
+        &mut self,
+        bytes: &[u8],
+        enclosing_depth: usize,
+    ) -> Result<T, DecodeError> {
+        let value = self
+            .budget
+            .decode_value_exact_at_depth(bytes, enclosing_depth)?;
+        minimal_backend::value_de::from_value(value).map_err(DecodeError::Deserialization)
     }
 
     /// Decode embedded CBOR while retaining enclosing traversal depth.
@@ -94,6 +126,8 @@ impl DecodeSession {
     /// `enclosing_depth` counts arrays/maps/tags already traversed by the
     /// caller. Use this when recursive inspection crosses byte-string
     /// boundaries so shallow individual items cannot form an unbounded chain.
+    /// This legacy method ignores trailing bytes; prefer [`Self::decode_nested_exact`]
+    /// for embedded documents. No compiler deprecation warning is emitted yet.
     pub fn decode_nested<T: DeserializeOwned>(
         &mut self,
         bytes: &[u8],
@@ -110,6 +144,7 @@ impl Default for DecodeBudget {
             limits: DecodeLimits::default(),
             remaining: DEFAULT_MAX_VALUES,
             failure: None,
+            inspect_framing: false,
         }
     }
 }
@@ -117,6 +152,11 @@ impl Default for DecodeBudget {
 impl DecodeBudget {
     pub(crate) fn inspect_document(&mut self, bytes: &[u8]) -> Result<(), DecodeError> {
         self.inspect_bytes(bytes, ScanContext::Document, 0)
+    }
+
+    pub(crate) fn inspect_document_framing(&mut self, bytes: &[u8]) -> Result<(), DecodeError> {
+        self.inspect_framing = true;
+        self.inspect_document(bytes)
     }
 
     fn inspect_bytes(
@@ -128,9 +168,15 @@ impl DecodeBudget {
         self.check_input(bytes)?;
         // Bound combined traversal across byte-string boundaries as well as
         // ordinary CBOR nesting. Syntax errors can be diagnosed separately.
-        let value =
-            minimal::decode_value_budget(&mut minimal::SliceReader::new(bytes), self, depth);
+        let value = if self.inspect_framing {
+            self.decode_value_exact_at_depth(bytes, depth)
+        } else {
+            self.decode_value_at_depth(bytes, depth)
+        };
         self.check()?;
+        if let Err(e @ DecodeError::TrailingData { .. }) = value {
+            return Err(e);
+        }
         if let Ok(value) = value {
             self.inspect_value(&value, context, depth)?;
         }
@@ -145,26 +191,30 @@ impl DecodeBudget {
     ) -> Result<(), DecodeError> {
         use crate::types::signed::{COSE_HEADER_CORIM_META, COSE_HEADER_PAYLOAD_HASH_ALG};
         use crate::types::tags::{
-            CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_SIGNED_CORIM,
+            CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED,
+            TAG_LEGACY_TOP, TAG_SIGNED_CORIM,
         };
         if depth > self.limits.max_depth {
             self.fail("depth", self.limits.max_depth);
             return self.check();
         }
         match value {
-            Value::Tag(TAG_SIGNED_CORIM, inner) => {
+            Value::Tag(TAG_SIGNED_CORIM, inner) if matches!(context, ScanContext::Document) => {
                 if let Value::Array(parts) = inner.as_ref() {
                     // Only the header/payload slots are CBOR-in-bstr. Inspect
                     // even malformed envelopes so diagnostics cannot reset budgets.
                     let mut hash = false;
                     if let Some(Value::Bytes(bytes)) = parts.first() {
                         self.check_input(bytes)?;
-                        let header = minimal::decode_value_budget(
-                            &mut minimal::SliceReader::new(bytes),
-                            self,
-                            depth + 2,
-                        );
+                        let header = if self.inspect_framing {
+                            self.decode_value_exact_at_depth(bytes, depth + 2)
+                        } else {
+                            self.decode_value_at_depth(bytes, depth + 2)
+                        };
                         self.check()?;
+                        if let Err(e @ DecodeError::TrailingData { .. }) = header {
+                            return Err(e);
+                        }
                         if let Ok(header) = header {
                             if let Value::Map(fields) = &header {
                                 hash = fields.iter().any(|(k, _)| {
@@ -181,15 +231,22 @@ impl DecodeBudget {
                     }
                 }
             }
-            Value::Tag(TAG_CORIM, inner) => {
+            Value::Tag(TAG_CORIM, inner) if matches!(context, ScanContext::Document) => {
                 self.inspect_value(inner, ScanContext::Document, depth + 1)?
             }
-            Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner) => {
+            Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner)
+                if matches!(context, ScanContext::TagEntry) =>
+            {
                 if let Value::Bytes(bytes) = inner.as_ref() {
                     self.inspect_bytes(bytes, ScanContext::Opaque, depth + 1)?;
                 }
             }
-            Value::Tag(_, inner) => self.inspect_value(inner, context, depth + 1)?,
+            Value::Tag(TAG_LEGACY_TOP | TAG_LEGACY_SIGNED, inner)
+                if matches!(context, ScanContext::Document) =>
+            {
+                self.inspect_value(inner, context, depth + 1)?;
+            }
+            Value::Tag(_, inner) => self.inspect_value(inner, ScanContext::Opaque, depth + 1)?,
             Value::Map(fields) => {
                 for (k, v) in fields {
                     if matches!(context, ScanContext::Header)
@@ -206,6 +263,8 @@ impl DecodeBudget {
                             for tag in tags {
                                 if let Value::Bytes(bytes) = tag {
                                     self.inspect_bytes(bytes, ScanContext::Opaque, depth + 2)?;
+                                } else {
+                                    self.inspect_value(tag, ScanContext::TagEntry, depth + 2)?;
                                 }
                             }
                         }
@@ -239,6 +298,7 @@ impl DecodeBudget {
             limits: *limits,
             remaining: limits.max_values,
             failure: None,
+            inspect_framing: false,
         })
     }
 
@@ -295,16 +355,63 @@ impl DecodeBudget {
     }
 
     fn decode_value_at_depth(&mut self, bytes: &[u8], depth: usize) -> Result<Value, DecodeError> {
+        self.decode_value_prefix_at_depth(bytes, depth)
+            .map(|(value, _)| value)
+    }
+
+    fn decode_value_prefix_at_depth<'a>(
+        &mut self,
+        bytes: &'a [u8],
+        depth: usize,
+    ) -> Result<(Value, &'a [u8]), DecodeError> {
         self.check_input(bytes)?;
         if depth > self.limits.max_depth {
             self.fail("depth", self.limits.max_depth);
             self.check()?;
         }
-        let result =
-            minimal::decode_value_budget(&mut minimal::SliceReader::new(bytes), self, depth);
+        let mut reader = minimal::SliceReader::new(bytes);
+        let result = minimal::decode_value_budget(&mut reader, self, depth);
         // A limit is fatal even if an enclosing compatibility path catches an error.
         self.check()?;
-        result.map_err(|e| DecodeError::Deserialization(e.to_string()))
+        result
+            .map(|value| (value, reader.remaining()))
+            .map_err(|e| DecodeError::Deserialization(e.to_string()))
+    }
+
+    fn decode_value_exact_at_depth(
+        &mut self,
+        bytes: &[u8],
+        depth: usize,
+    ) -> Result<Value, DecodeError> {
+        let (value, rest) = self.decode_value_prefix_at_depth(bytes, depth)?;
+        if !rest.is_empty() {
+            return Err(DecodeError::TrailingData {
+                remaining: rest.len(),
+            });
+        }
+        Ok(value)
+    }
+
+    pub(crate) fn decode_value_exact(&mut self, bytes: &[u8]) -> Result<Value, DecodeError> {
+        self.decode_value_exact_at_depth(bytes, 0)
+    }
+
+    pub(crate) fn decode_exact<T: DeserializeOwned>(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<T, DecodeError> {
+        let value = self.decode_value_exact(bytes)?;
+        minimal_backend::value_de::from_value(value).map_err(DecodeError::Deserialization)
+    }
+
+    pub(crate) fn decode_prefix<'a, T: DeserializeOwned>(
+        &mut self,
+        bytes: &'a [u8],
+    ) -> Result<(T, &'a [u8]), DecodeError> {
+        let (value, rest) = self.decode_value_prefix_at_depth(bytes, 0)?;
+        let typed =
+            minimal_backend::value_de::from_value(value).map_err(DecodeError::Deserialization)?;
+        Ok((typed, rest))
     }
 
     pub(crate) fn decode<T: DeserializeOwned>(&mut self, bytes: &[u8]) -> Result<T, DecodeError> {
@@ -316,8 +423,11 @@ impl DecodeBudget {
     /// failures remain the caller's responsibility, but limits are fatal.
     pub(crate) fn check_corim(&mut self, bytes: &[u8]) -> Result<(), DecodeError> {
         use crate::types::tags::{CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL};
-        let value = self.decode_value(bytes);
+        let value = self.decode_value_exact(bytes);
         self.check()?;
+        if let Err(e @ DecodeError::TrailingData { .. }) = value {
+            return Err(e);
+        }
         let Ok(value) = value else {
             return Ok(());
         };
@@ -339,8 +449,11 @@ impl DecodeBudget {
                             _ => continue,
                         };
                         if let Value::Bytes(bytes) = body {
-                            let _ = self.decode_value(bytes);
+                            let result = self.decode_value_exact(bytes);
                             self.check()?;
+                            if let Err(e @ DecodeError::TrailingData { .. }) = result {
+                                return Err(e);
+                            }
                         }
                     }
                 }
@@ -354,5 +467,6 @@ impl DecodeBudget {
 enum ScanContext {
     Document,
     Header,
+    TagEntry,
     Opaque,
 }

@@ -20,6 +20,12 @@ pub enum EncodeError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// Bytes remain after an item at a single-document boundary (RFC 8949 §3).
+    #[error("trailing CBOR data: {remaining} byte(s) after the first item")]
+    TrailingData {
+        /// Number of unconsumed bytes; their contents are not parsed.
+        remaining: usize,
+    },
     /// A configured parser resource budget was exceeded (RFC 8949 §10).
     /// Document compatibility fallbacks must not swallow this error.
     #[error("decode limit exceeded: {resource} (limit {limit})")]

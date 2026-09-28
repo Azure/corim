@@ -305,7 +305,7 @@ pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
 
     // Resource failures terminate inspection; do not turn them into opaque
     // payload fallbacks or reset budgets for each embedded CBOR item.
-    if let Err(e) = crate::validate::check_decode_limits(bytes, &cbor::DecodeLimits::default()) {
+    if let Err(e) = crate::validate::check_document_framing(bytes, &cbor::DecodeLimits::default()) {
         ins.err("$", e.to_string());
         return ins.report;
     }
@@ -317,7 +317,7 @@ pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
 
     // First decode as a generic Value so we can inspect the top-level tag
     // without committing to any schema.
-    let top: Value = match ins.budget.decode_value(bytes) {
+    let top: Value = match ins.budget.decode_value_exact(bytes) {
         Ok(v) => v,
         Err(e) => {
             ins.err("$", format!("not valid CBOR: {}", e));
@@ -468,7 +468,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
         return;
     }
 
-    let inner: Value = match ins.budget.decode_value(&bytes) {
+    let inner: Value = match ins.budget.decode_value_exact(&bytes) {
         Ok(v) => v,
         Err(e) => {
             ins.err(
@@ -531,7 +531,7 @@ fn inspect_cose_payload(ins: &mut Inspector<'_>, v: Value) {
             }
             // The payload is `bstr .cbor tagged-unsigned-corim-map / hash-envelope-digest`.
             // Try decoding as CBOR first; if it parses as #6.501, walk it.
-            match ins.budget.decode_value(&b) {
+            match ins.budget.decode_value_exact(&b) {
                 Ok(Value::Tag(TAG_CORIM, inner)) => {
                     ins.info(
                         "$.payload",
@@ -738,7 +738,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             COSE_HEADER_CORIM_META => match val {
                 Value::Bytes(b) => {
                     have_corim_meta = true;
-                    match ins.budget.decode_value(&b) {
+                    match ins.budget.decode_value_exact(&b) {
                         Ok(Value::Map(_)) => ins.info(
                             path,
                             format!(
@@ -1194,7 +1194,7 @@ relaxation and routes it through `compat::decode_comid_from_tcg_bstr`.",
 /// interop relaxation where the bytes contain a `#6.506`-tagged map (see
 /// `compat::decode_comid_from_tcg_bstr`).
 fn inspect_comid_bytes(ins: &mut Inspector<'_>, base_path: &str, bytes: &[u8]) {
-    let val: Value = match ins.budget.decode_value(bytes) {
+    let val: Value = match ins.budget.decode_value_exact(bytes) {
         Ok(v) => v,
         Err(e) => {
             ins.err(base_path, format!("CoMID inner CBOR is not valid: {}", e));

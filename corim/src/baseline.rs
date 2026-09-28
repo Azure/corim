@@ -554,7 +554,7 @@ fn decode_comids(corim: &CorimMap) -> Vec<(String, ComidTag)> {
     let mut out = Vec::new();
     for (i, tag) in corim.tags.iter().enumerate() {
         if let ConciseTagChoice::Comid(bytes) = tag {
-            if let Ok(comid) = crate::cbor::decode::<ComidTag>(bytes) {
+            if let Ok(comid) = crate::cbor::decode_exact::<ComidTag>(bytes) {
                 let id = tag_id_string(&comid, i);
                 out.push((id, comid));
             }

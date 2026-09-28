@@ -346,7 +346,7 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
         let val = Value::deserialize(d)?;
         let mut budget = cbor::DecodeBudget::new(&cbor::DecodeLimits::default())
             .map_err(serde::de::Error::custom)?;
-        Self::from_value_with_budget(val, &mut budget)
+        Self::from_value_with_budget(val, &mut budget, &mut None)
     }
 }
 
@@ -355,9 +355,14 @@ impl ProtectedCorimHeaderMap {
         bytes: &[u8],
         budget: &mut cbor::DecodeBudget,
     ) -> Result<Self, crate::DecodeError> {
-        let val = budget.decode_value(bytes)?;
-        let result = Self::from_value_with_budget::<serde::de::value::Error>(val, budget);
+        let val = budget.decode_value_exact(bytes)?;
+        let mut nested_error = None;
+        let result =
+            Self::from_value_with_budget::<serde::de::value::Error>(val, budget, &mut nested_error);
         budget.check()?;
+        if let Some(error) = nested_error {
+            return Err(error);
+        }
         result.map_err(|e| crate::DecodeError::InvalidStructure(e.to_string()))
     }
 
@@ -377,6 +382,7 @@ impl ProtectedCorimHeaderMap {
     fn from_value_with_budget<E: serde::de::Error>(
         val: Value,
         budget: &mut cbor::DecodeBudget,
+        nested_error: &mut Option<crate::DecodeError>,
     ) -> Result<Self, E> {
         let map = match val {
             Value::Map(m) => m,
@@ -487,12 +493,17 @@ impl ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match budget.decode::<CorimMetaMap>(&b) {
+                            match budget.decode_exact::<CorimMetaMap>(&b) {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
                                 }
                                 Err(e @ crate::DecodeError::LimitExceeded { .. }) => {
                                     return Err(serde::de::Error::custom(e));
+                                }
+                                Err(e @ crate::DecodeError::TrailingData { .. }) => {
+                                    let message = e.to_string();
+                                    *nested_error = Some(e);
+                                    return Err(serde::de::Error::custom(message));
                                 }
                                 Err(_) => {
                                     // Store the raw bytes in extra for forward-compat;

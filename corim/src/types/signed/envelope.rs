@@ -210,7 +210,7 @@ fn decode_signed_budget(
     }
 
     // Parse once: legacy wrappers consume depth and value budget too.
-    let val = crate::compat::peel_value(budget.decode_value(bytes)?);
+    let val = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
 
     // Must be tag 18
     let (tag, inner) = match val {

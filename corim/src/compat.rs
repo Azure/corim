@@ -68,8 +68,10 @@ pub fn peel_tcg_wrappers(bytes: &[u8]) -> Result<PeelOutcome<'_>, DecodeError> {
         return Ok(PeelOutcome::Unchanged(bytes));
     }
 
-    let mut v: Value = cbor::decode(bytes)
-        .map_err(|e| DecodeError::Deserialization(format!("peel: cannot decode CBOR: {}", e)))?;
+    let mut v: Value = cbor::decode_exact(bytes).map_err(|e| match e {
+        e @ (DecodeError::TrailingData { .. } | DecodeError::LimitExceeded { .. }) => e,
+        other => DecodeError::Deserialization(format!("peel: cannot decode CBOR: {other}")),
+    })?;
 
     let mut peeled = false;
     loop {
@@ -308,8 +310,8 @@ pub(crate) fn decode_comid_with_budget(
 
     // Decode the bytes as a generic CBOR Value so we can inspect the wire
     // shape without committing to a specific schema.
-    let v = budget.decode_value(bytes).map_err(|e| match e {
-        e @ DecodeError::LimitExceeded { .. } => e,
+    let v = budget.decode_value_exact(bytes).map_err(|e| match e {
+        e @ (DecodeError::LimitExceeded { .. } | DecodeError::TrailingData { .. }) => e,
         other => DecodeError::Deserialization(format!("decode_comid_from_tcg_bstr: {other}")),
     })?;
 
