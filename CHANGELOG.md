@@ -14,6 +14,10 @@ versions.
   feature now imports `String` through the crate's `alloc` prelude. CI
   checks every first-party profile combination without default features
   on Rust 1.85, stable, and nightly.
+- **CBOR input-triggered panics.** Byte/text strings with overflowing
+  declared lengths now return a decode error, and map keys containing
+  integers outside the CBOR range return an encode error instead of
+  panicking. Valid encodings and public API signatures are unchanged.
 - **Baseline comparison skipped CoRIM and CoMID metadata.** `compare`
   only looked at `profile`, `corim-id`, and the triples, so a changed
   `rim-validity`, `entities`, or `dependent-rims`, or a changed CoMID
