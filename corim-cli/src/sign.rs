@@ -71,7 +71,7 @@ pub fn run_extract(args: ExtractArgs) {
 }
 
 fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
-    let bytes = read_input(args.file.as_deref())?;
+    let bytes = crate::input::read_document(args.file.as_deref())?;
     if bytes.is_empty() {
         return Err("input is empty".into());
     }
@@ -217,8 +217,8 @@ pub fn run_sign(args: SignArgs) {
 }
 
 fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
-    let unsigned =
-        fs::read(&args.unsigned).map_err(|e| format!("reading {}: {e}", args.unsigned))?;
+    let unsigned = crate::input::read_file(&args.unsigned)
+        .map_err(|e| format!("reading {}: {e}", args.unsigned))?;
     if unsigned.is_empty() {
         return Err("unsigned CoRIM is empty".into());
     }
@@ -226,7 +226,9 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
     let alg = parse_alg(&args.alg)?;
 
     let aad = match &args.external_aad {
-        Some(p) => fs::read(p).map_err(|e| format!("reading external-aad {p}: {e}"))?,
+        Some(p) => {
+            crate::input::read_file(p).map_err(|e| format!("reading external-aad {p}: {e}"))?
+        }
         None => Vec::new(),
     };
 
@@ -278,9 +280,10 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
 }
 
 fn run_finalize_impl(args: FinalizeArgs) -> Result<(), String> {
-    let staging = fs::read(&args.staging).map_err(|e| format!("reading {}: {e}", args.staging))?;
-    let signature =
-        fs::read(&args.signature).map_err(|e| format!("reading {}: {e}", args.signature))?;
+    let staging = crate::input::read_file(&args.staging)
+        .map_err(|e| format!("reading {}: {e}", args.staging))?;
+    let signature = crate::input::read_file(&args.signature)
+        .map_err(|e| format!("reading {}: {e}", args.signature))?;
     if signature.is_empty() {
         return Err("signature file is empty".into());
     }
@@ -335,7 +338,7 @@ fn parse_alg(s: &str) -> Result<i64, String> {
 fn load_certs(paths: &[String]) -> Result<Vec<Vec<u8>>, String> {
     let mut out = Vec::new();
     for p in paths {
-        let raw = fs::read(p).map_err(|e| format!("reading cert {p}: {e}"))?;
+        let raw = crate::input::read_file(p).map_err(|e| format!("reading cert {p}: {e}"))?;
         if raw.is_empty() {
             return Err(format!("cert file {p} is empty"));
         }
@@ -379,21 +382,6 @@ fn parse_pem_certs(text: &str) -> Result<Vec<Vec<u8>>, String> {
         rest = &after[end + END.len()..];
     }
     Ok(certs)
-}
-
-/// Read from a file path, or stdin when `None` or `"-"`.
-fn read_input(path: Option<&str>) -> Result<Vec<u8>, String> {
-    match path {
-        Some(p) if p != "-" => fs::read(p).map_err(|e| format!("reading {p}: {e}")),
-        _ => {
-            use std::io::Read;
-            let mut buf = Vec::new();
-            io::stdin()
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("reading stdin: {e}"))?;
-            Ok(buf)
-        }
-    }
 }
 
 /// Write bytes to a file path, or stdout when `None` or `"-"`. `what` names

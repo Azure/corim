@@ -67,7 +67,9 @@ pub fn run(args: ConvertArgs) {
 }
 
 fn run_impl(args: ConvertArgs) -> Result<(), String> {
-    let bytes = read_input(args.file.as_deref())?;
+    let bytes = crate::input::read_document(args.file.as_deref())?;
+    corim::validate::check_decode_limits(&bytes, &corim::cbor::DecodeLimits::default())
+        .map_err(|e| format!("not a tag-501 unsigned CoRIM: {e}"))?;
 
     // Peel legacy `#6.500` / `#6.502` outer wrappers (TCG / NVIDIA
     // producers) so the tag-501 decode below sees the inner map.
@@ -261,18 +263,3 @@ fn apply_mval_alias_names(value: &mut JsonValue, profile: &(dyn Profile + Send +
     }
 }
 
-/// Read input from a file path, or from stdin when the path is `None` or
-/// `"-"`.
-fn read_input(path: Option<&str>) -> Result<Vec<u8>, String> {
-    use std::io::Read;
-    match path {
-        None | Some("-") => {
-            let mut buf = Vec::new();
-            std::io::stdin()
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("reading stdin: {e}"))?;
-            Ok(buf)
-        }
-        Some(p) => fs::read(p).map_err(|e| format!("reading {p}: {e}")),
-    }
-}
