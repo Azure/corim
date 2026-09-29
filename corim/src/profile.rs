@@ -113,8 +113,10 @@
 //! running without a clock can still appraise the non-time keys. See
 //! `intel::eval` for one implementation of this policy.
 //!
-//! ## 3. Triple and evidence validation (optional)
+//! ## 3. Reference and evidence validation (optional)
 //!
+//! Override [`Profile::validate_reference_measurement`](crate::profile::Profile::validate_reference_measurement)
+//! for syntax or semantic constraints on one profile-defined reference value.
 //! Override [`Profile::validate_reference_triple`](crate::profile::Profile::validate_reference_triple),
 //! [`Profile::validate_attest_key_triple`](crate::profile::Profile::validate_attest_key_triple),
 //! or [`Profile::validate_evidence_claim`](crate::profile::Profile::validate_evidence_claim)
@@ -330,6 +332,19 @@ pub trait Profile {
         Ok(())
     }
 
+    /// Validate profile-specific constraints over one reference measurement.
+    ///
+    /// Called for every measurement in a reference triple after
+    /// [`Profile::validate_reference_triple`]. Use this for profile extension
+    /// values whose syntax can be checked without evidence, such as enum,
+    /// regular-expression, or operator-shaped reference values.
+    ///
+    /// Profile-aware document validation, appraisal, and diagnostic inspection
+    /// invoke this hook. The default accepts every measurement.
+    fn validate_reference_measurement(&self, _measurement: &MeasurementMap) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Validate profile-specific constraints over an attestation-key
     /// triple.
     ///
@@ -400,6 +415,33 @@ pub trait Profile {
     fn mval_json_name(&self, _key: i64) -> Option<&'static str> {
         None
     }
+}
+
+pub(crate) struct ReferenceValidationIssue {
+    pub measurement_index: Option<usize>,
+    pub error: String,
+}
+
+pub(crate) fn reference_validation_issues<P: ?Sized + Profile>(
+    profile: &P,
+    triple: &ReferenceTriple,
+) -> Vec<ReferenceValidationIssue> {
+    let mut issues = Vec::new();
+    if let Err(error) = profile.validate_reference_triple(triple) {
+        issues.push(ReferenceValidationIssue {
+            measurement_index: None,
+            error,
+        });
+    }
+    for (measurement_index, measurement) in triple.measurements().iter().enumerate() {
+        if let Err(error) = profile.validate_reference_measurement(measurement) {
+            issues.push(ReferenceValidationIssue {
+                measurement_index: Some(measurement_index),
+                error,
+            });
+        }
+    }
+    issues
 }
 
 /// Type alias for owned, thread-safe boxed profiles stored in a

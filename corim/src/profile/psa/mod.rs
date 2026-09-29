@@ -140,6 +140,18 @@ impl Profile for PsaProfile {
         Some(crate::validate::core_fields_match(reference, evidence))
     }
 
+    fn validate_reference_measurement(&self, measurement: &MeasurementMap) -> Result<(), String> {
+        let Some(value) = measurement.mval.extra_entries.get(&MVAL_PSA_CERT_NUM) else {
+            return Ok(());
+        };
+        if cert_num(value).is_none() {
+            return Err(format!(
+                "psa-cert-num must match \"[0-9]{{13}} - [0-9]{{5}}\", found {value:?}"
+            ));
+        }
+        Ok(())
+    }
+
     fn diagnose_mval_entry(&self, key: i64, value: &Value) -> Option<String> {
         if key != MVAL_PSA_CERT_NUM {
             return None;

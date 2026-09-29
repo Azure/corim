@@ -43,6 +43,13 @@ versions.
 
 ### Added
 
+- **Static profile semantics in validation and diagnose.** Registered Azure,
+  PSA, and Intel profiles now reject malformed profile-defined reference
+  values during document validation and before appraisal. The non-aborting
+  diagnose pass also reports registered-profile reference-triple,
+  reference-measurement, and attestation-key-triple errors at their CBOR
+  paths while continuing to collect other issues. Unregistered profiles
+  remain forward-compatible and skip these semantic checks.
 - **Arm CCA endorsements profile and profile-aware validation.** The
   `profile-cca` feature implements Platform and Realm validation and appraisal
   for `draft-ydb-rats-cca-endorsements-04`, including environment linkage,

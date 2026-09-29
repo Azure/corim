@@ -219,6 +219,22 @@ impl Profile for IntelProfile {
         }
     }
 
+    fn validate_reference_measurement(&self, measurement: &MeasurementMap) -> Result<(), String> {
+        for (key, value) in &measurement.mval.extra_entries {
+            let Some(name) = intel_mval_name(*key) else {
+                continue;
+            };
+            let Value::Tag(tag, _) = value else {
+                continue;
+            };
+            if Expression::is_intel_expression_tag(*tag) {
+                Expression::from_tag(value)
+                    .map_err(|error| format!("{name} has an invalid expression: {error}"))?;
+            }
+        }
+        Ok(())
+    }
+
     fn diagnose_mval_entry(&self, key: i64, value: &Value) -> Option<String> {
         let name = intel_mval_name(key)?;
         Some(format!("{} = {}", name, value_summary(value)))
