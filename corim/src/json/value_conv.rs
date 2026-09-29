@@ -164,20 +164,17 @@ fn tag_to_json(tag: u64, inner: &Value) -> serde_json::Value {
         563 => type_choice_json("masked-raw-value", value_to_json(inner)),
         564 => type_choice_json("int-range", value_to_json(inner)),
         // Tag 505, 506, 508: CoSWID/CoMID/CoTL inside tags array → base64 bytes
-        505 | 506 | 508 => {
-            let mut obj = serde_json::Map::new();
-            obj.insert("__cbor_tag".into(), serde_json::Value::Number(tag.into()));
-            obj.insert("__cbor_value".into(), value_to_json(inner));
-            serde_json::Value::Object(obj)
-        }
+        505 | 506 | 508 => cbor_tag_json(tag, inner),
         // Default: preserve as explicit tag object
-        _ => {
-            let mut obj = serde_json::Map::new();
-            obj.insert("__cbor_tag".into(), serde_json::Value::Number(tag.into()));
-            obj.insert("__cbor_value".into(), value_to_json(inner));
-            serde_json::Value::Object(obj)
-        }
+        _ => cbor_tag_json(tag, inner),
     }
+}
+
+fn cbor_tag_json(tag: u64, inner: &Value) -> serde_json::Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("__cbor_tag".into(), serde_json::Value::Number(tag.into()));
+    obj.insert("__cbor_value".into(), value_to_json(inner));
+    serde_json::Value::Object(obj)
 }
 
 /// Convert `{"type": ..., "value": ...}` JSON back to CBOR tagged value.

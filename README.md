@@ -361,11 +361,12 @@ field names (e.g. a conditional-endorsement-series triple as
 "condition": …, "addition": … } ] }`) or as the legacy **positional
 arrays**; both are accepted, and `convert` emits the labeled form.
 
-`corim-id` and `profile` accept either a plain string (text id / URI) or
-a type-choice object for the other variants — `corim-id` as
+In JSON templates, `corim-id` and `profile` accept either a plain string
+(text id / URI) or a type-choice object for the other variants — `corim-id` as
 `{ "type": "uuid", "value": "…" }`, `profile` as
 `{ "type": "oid", "value": "<base64>" }`. `rim-validity` is
-`{ "not-before"?: <epoch>, "not-after": <epoch> }` (epoch seconds).
+`{ "not-before"?: <epoch>, "not-after": <epoch> }` (epoch seconds). Generated
+CBOR encodes URI profile identifiers as RFC 8610 `#6.32(tstr)`.
 
 Any object may carry a `$comment` (or `//`) key as an authoring note;
 these are stripped before encoding and never reach the CBOR output. The

@@ -219,7 +219,7 @@ fn build_template(corim: &CorimMap) -> Result<JsonValue, String> {
 /// Serialize a typed value to prose-keyed JSON: `T -> cbor Value ->
 /// serde_json Value (integer keys) -> prose keys`.
 fn typed_to_prose<T: Serialize>(value: &T, root: Root) -> Result<JsonValue, String> {
-    let cbor_val = corim::cbor::value::to_value(value)?;
+    let cbor_val = corim::cbor::value::to_human_readable_value(value)?;
     let json_val = corim::json::value_to_json(&cbor_val);
     Ok(crate::prose::to_prose_keys(&json_val, root))
 }

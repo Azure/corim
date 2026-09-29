@@ -56,7 +56,7 @@ pub use value_conv::{json_to_value, value_to_json};
 /// ```
 pub fn to_json<T: Serialize>(value: &T) -> Result<String, EncodeError> {
     // Serialize to our Value intermediate
-    let cbor_value = cbor::value::to_value(value)
+    let cbor_value = cbor::value::to_human_readable_value(value)
         .map_err(|e| EncodeError::Serialization(format!("to_value: {e}")))?;
     // Convert to JSON value with string keys
     let json_value = value_to_json(&cbor_value);
@@ -66,7 +66,7 @@ pub fn to_json<T: Serialize>(value: &T) -> Result<String, EncodeError> {
 
 /// Encode a CoRIM/CoMID type to a pretty-printed JSON string.
 pub fn to_json_pretty<T: Serialize>(value: &T) -> Result<String, EncodeError> {
-    let cbor_value = cbor::value::to_value(value)
+    let cbor_value = cbor::value::to_human_readable_value(value)
         .map_err(|e| EncodeError::Serialization(format!("to_value: {e}")))?;
     let json_value = value_to_json(&cbor_value);
     serde_json::to_string_pretty(&json_value)

@@ -200,6 +200,7 @@ wire elements beyond `psa-cert-num`.
 | §3.1 | Major types 0–7 | ✅ Types 0–6 + simple values from type 7 | `cbor/minimal.rs` |
 | §3.3 | Floating-point | ✅ Decode f16/f32/f64; encode always f64 | `cbor/minimal.rs` |
 | §3.4.2 | Epoch-based date/time (`#6.1`) | ✅ Full | `types/common.rs` → `CborTime` |
+| §3.4.5.3 | URI (`#6.32(tstr)`, as used by RFC 8610 Appendix D) | ✅ Encode tagged; decode tagged and legacy bare text | `types/uri.rs` |
 | §4.2.1 | Core Deterministic Encoding | ✅ Full — shortest integer form + canonical map key ordering | `cbor/minimal.rs` → `encode_head`, `encode_value` |
 
 #### Documented Limitations

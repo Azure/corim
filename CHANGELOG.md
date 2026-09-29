@@ -10,6 +10,12 @@ versions.
 
 ### Fixed
 
+- **CoRIM `uri` values used a nonconformant bare-text encoding.** Profile
+  identifiers, locator hrefs, signer URIs, and entity registration IDs now
+  encode as `#6.32(tstr)` per RFC 8610 Appendix D. Decoders continue to accept
+  legacy bare text emitted by older versions, and `--diagnose` reports legacy
+  bare profile identifiers as warnings. This changes the encoded bytes of
+  documents containing URI values.
 - **Azure profile failed to compile without `std`.** The `profile-azure`
   feature now imports `String` through the crate's `alloc` prelude. CI
   checks every first-party profile combination without default features

@@ -9,6 +9,7 @@
 
 use corim::cbor::value::Value;
 use corim::json::{json_to_value, value_to_json};
+use corim::types::tags::TAG_URI;
 
 // ===========================================================================
 // value_to_json — primitive edges
@@ -46,6 +47,16 @@ fn map_with_non_standard_key_still_emits_object() {
 // ===========================================================================
 // value_to_json — tagged-value translation
 // ===========================================================================
+
+#[test]
+fn opaque_tagged_uri_preserves_tag_envelope() {
+    let uri = "https://example.com/profile";
+    let value = Value::Tag(TAG_URI, Box::new(Value::Text(uri.into())));
+    let json = value_to_json(&value);
+    assert_eq!(json["__cbor_tag"], TAG_URI);
+    assert_eq!(json["__cbor_value"], uri);
+    assert_eq!(json_to_value(&json), value);
+}
 
 #[test]
 fn tag_oid_becomes_typed_object() {

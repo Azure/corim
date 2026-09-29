@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use super::common::{EntityMap, TagIdentity, ValidityMap};
 use super::measurement::{Digest, DigestAlg};
 use super::tags::*;
+use super::uri::{deserialize_uri, UriRef};
 use crate::cbor;
 use crate::cbor::value::{self, Value};
 use crate::Validate;
@@ -104,11 +105,11 @@ impl From<[u8; 16]> for CorimId {
 // profile
 // ---------------------------------------------------------------------------
 
-/// `$profile-type-choice` — URI or OID.
+/// `$profile-type-choice` — tagged URI or OID.
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[non_exhaustive]
 pub enum ProfileChoice {
-    /// A URI profile identifier.
+    /// A URI profile identifier encoded as `#6.32(tstr)`.
     Uri(String),
     /// An OID profile identifier (CBOR tag 111).
     Oid(Vec<u8>),
@@ -117,7 +118,7 @@ pub enum ProfileChoice {
 impl Serialize for ProfileChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            ProfileChoice::Uri(u) => s.serialize_str(u),
+            ProfileChoice::Uri(uri) => UriRef(uri).serialize(s),
             ProfileChoice::Oid(b) => value::serialize_tagged_bytes(TAG_OID, b, s),
         }
     }
@@ -127,13 +128,15 @@ impl<'de> Deserialize<'de> for ProfileChoice {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
         match val {
-            Value::Text(t) => Ok(ProfileChoice::Uri(t)),
+            Value::Tag(TAG_URI, _) | Value::Text(_) => deserialize_uri(val).map(ProfileChoice::Uri),
             Value::Tag(TAG_OID, inner) => {
                 Ok(ProfileChoice::Oid(inner.into_bytes().ok_or_else(|| {
                     serde::de::Error::custom("tag 111 must wrap bytes")
                 })?))
             }
-            _ => Err(serde::de::Error::custom("expected text URI or tagged OID")),
+            _ => Err(serde::de::Error::custom(
+                "expected tagged URI or tagged OID",
+            )),
         }
     }
 }
@@ -284,7 +287,7 @@ impl<'de> Deserialize<'de> for ConciseTagChoice {
 /// ```
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
 pub struct CorimLocator {
-    /// `href` (key 0): URI or array of URIs.
+    /// `href` (key 0): `#6.32(tstr)` URI or array of tagged URIs.
     #[cbor(key = 0)]
     pub href: CorimLocatorHref,
     /// `thumbprint` (key 1): optional digest(s).
@@ -292,7 +295,7 @@ pub struct CorimLocator {
     pub thumbprint: Option<CorimLocatorThumbprint>,
 }
 
-/// Href can be a single URI string or an array of URI strings.
+/// Href can be a single tagged URI or an array of tagged URIs.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum CorimLocatorHref {
@@ -305,8 +308,12 @@ pub enum CorimLocatorHref {
 impl Serialize for CorimLocatorHref {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         match self {
-            CorimLocatorHref::Single(uri) => s.serialize_str(uri),
-            CorimLocatorHref::Multiple(uris) => uris.serialize(s),
+            CorimLocatorHref::Single(uri) => UriRef(uri).serialize(s),
+            CorimLocatorHref::Multiple(uris) => uris
+                .iter()
+                .map(|uri| UriRef(uri))
+                .collect::<Vec<_>>()
+                .serialize(s),
         }
     }
 }
@@ -314,36 +321,15 @@ impl Serialize for CorimLocatorHref {
 impl<'de> Deserialize<'de> for CorimLocatorHref {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
-        // Helper: accept either a bare text string or `#6.32(text)` (RFC 8949
-        // §3.4.5.3 URI tag). Some real-world producers (e.g. NVIDIA NIC
-        // firmware CoRIMs) tag every URI; others emit the bare string. The
-        // CDDL `uri` rule is conventionally `#6.32(text)` but bare text is
-        // widely seen in CoRIM-adjacent producers.
-        fn extract_uri<E: serde::de::Error>(v: Value) -> Result<String, E> {
-            match v {
-                Value::Text(t) => Ok(t),
-                Value::Tag(32, inner) => match *inner {
-                    Value::Text(t) => Ok(t),
-                    other => Err(E::custom(format!(
-                        "URI tag #6.32 must wrap text, got {:?}",
-                        other
-                    ))),
-                },
-                other => Err(E::custom(format!(
-                    "expected text or #6.32(text) for URI, got {:?}",
-                    other
-                ))),
-            }
-        }
         match val {
             Value::Array(arr) => {
                 let mut uris = Vec::new();
                 for v in arr {
-                    uris.push(extract_uri(v)?);
+                    uris.push(deserialize_uri(v)?);
                 }
                 Ok(CorimLocatorHref::Multiple(uris))
             }
-            other => Ok(CorimLocatorHref::Single(extract_uri(other)?)),
+            other => Ok(CorimLocatorHref::Single(deserialize_uri(other)?)),
         }
     }
 }
@@ -467,8 +453,8 @@ pub struct CorimSignerMap {
     /// `signer-name` (key 0).
     #[cbor(key = 0)]
     pub signer_name: String,
-    /// `signer-uri` (key 1).
-    #[cbor(key = 1, optional)]
+    /// `signer-uri` (key 1), encoded as `#6.32(tstr)`.
+    #[cbor(key = 1, optional, uri)]
     pub signer_uri: Option<String>,
 }
 

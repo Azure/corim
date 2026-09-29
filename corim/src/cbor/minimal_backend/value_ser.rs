@@ -10,7 +10,20 @@ use serde::ser::{self, Serialize};
 
 /// Serialize any `T: Serialize` into a [`Value`].
 pub fn to_value<T: Serialize>(value: &T) -> Result<Value, String> {
-    value.serialize(ValueSerializer).map_err(|e| e.0)
+    value
+        .serialize(ValueSerializer {
+            human_readable: false,
+        })
+        .map_err(|e| e.0)
+}
+
+/// Serialize any `T: Serialize` into a human-readable [`Value`].
+pub fn to_human_readable_value<T: Serialize>(value: &T) -> Result<Value, String> {
+    value
+        .serialize(ValueSerializer {
+            human_readable: true,
+        })
+        .map_err(|e| e.0)
 }
 
 #[derive(Debug)]
@@ -42,7 +55,10 @@ impl ser::Error for Error {
     }
 }
 
-struct ValueSerializer;
+#[derive(Clone, Copy)]
+struct ValueSerializer {
+    human_readable: bool,
+}
 
 impl ser::Serializer for ValueSerializer {
     type Ok = Value;
@@ -54,6 +70,10 @@ impl ser::Serializer for ValueSerializer {
     type SerializeMap = MapSerializer;
     type SerializeStruct = MapSerializer;
     type SerializeStructVariant = MapSerializer;
+
+    fn is_human_readable(&self) -> bool {
+        self.human_readable
+    }
 
     fn serialize_bool(self, v: bool) -> Result<Value, Error> {
         Ok(Value::Bool(v))
@@ -145,12 +165,14 @@ impl ser::Serializer for ValueSerializer {
         Ok(SeqSerializer {
             items: Vec::with_capacity(len.unwrap_or(0)),
             tag_mode: false,
+            human_readable: self.human_readable,
         })
     }
     fn serialize_tuple(self, len: usize) -> Result<SeqSerializer, Error> {
         Ok(SeqSerializer {
             items: Vec::with_capacity(len),
             tag_mode: false,
+            human_readable: self.human_readable,
         })
     }
     fn serialize_tuple_struct(
@@ -161,6 +183,7 @@ impl ser::Serializer for ValueSerializer {
         Ok(SeqSerializer {
             items: Vec::with_capacity(len),
             tag_mode: name == "__cbor_tag",
+            human_readable: self.human_readable,
         })
     }
     fn serialize_tuple_variant(
@@ -173,18 +196,21 @@ impl ser::Serializer for ValueSerializer {
         Ok(SeqSerializer {
             items: Vec::with_capacity(len),
             tag_mode: false,
+            human_readable: self.human_readable,
         })
     }
     fn serialize_map(self, len: Option<usize>) -> Result<MapSerializer, Error> {
         Ok(MapSerializer {
             entries: Vec::with_capacity(len.unwrap_or(0)),
             pending_key: None,
+            human_readable: self.human_readable,
         })
     }
     fn serialize_struct(self, _name: &'static str, len: usize) -> Result<MapSerializer, Error> {
         Ok(MapSerializer {
             entries: Vec::with_capacity(len),
             pending_key: None,
+            human_readable: self.human_readable,
         })
     }
     fn serialize_struct_variant(
@@ -197,6 +223,7 @@ impl ser::Serializer for ValueSerializer {
         Ok(MapSerializer {
             entries: Vec::with_capacity(len),
             pending_key: None,
+            human_readable: self.human_readable,
         })
     }
 }
@@ -204,13 +231,16 @@ impl ser::Serializer for ValueSerializer {
 struct SeqSerializer {
     items: Vec<Value>,
     tag_mode: bool,
+    human_readable: bool,
 }
 
 impl ser::SerializeSeq for SeqSerializer {
     type Ok = Value;
     type Error = Error;
     fn serialize_element<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
-        self.items.push(value.serialize(ValueSerializer)?);
+        self.items.push(value.serialize(ValueSerializer {
+            human_readable: self.human_readable,
+        })?);
         Ok(())
     }
     fn end(self) -> Result<Value, Error> {
@@ -272,13 +302,16 @@ impl ser::SerializeTupleVariant for SeqSerializer {
 struct MapSerializer {
     entries: Vec<(Value, Value)>,
     pending_key: Option<Value>,
+    human_readable: bool,
 }
 
 impl ser::SerializeMap for MapSerializer {
     type Ok = Value;
     type Error = Error;
     fn serialize_key<T: ?Sized + Serialize>(&mut self, key: &T) -> Result<(), Error> {
-        self.pending_key = Some(key.serialize(ValueSerializer)?);
+        self.pending_key = Some(key.serialize(ValueSerializer {
+            human_readable: self.human_readable,
+        })?);
         Ok(())
     }
     fn serialize_value<T: ?Sized + Serialize>(&mut self, value: &T) -> Result<(), Error> {
@@ -286,7 +319,12 @@ impl ser::SerializeMap for MapSerializer {
             .pending_key
             .take()
             .ok_or_else(|| Error("key missing".into()))?;
-        self.entries.push((k, value.serialize(ValueSerializer)?));
+        self.entries.push((
+            k,
+            value.serialize(ValueSerializer {
+                human_readable: self.human_readable,
+            })?,
+        ));
         Ok(())
     }
     fn end(self) -> Result<Value, Error> {
@@ -304,7 +342,9 @@ impl ser::SerializeStruct for MapSerializer {
     ) -> Result<(), Error> {
         self.entries.push((
             Value::Text(key.to_owned()),
-            value.serialize(ValueSerializer)?,
+            value.serialize(ValueSerializer {
+                human_readable: self.human_readable,
+            })?,
         ));
         Ok(())
     }
