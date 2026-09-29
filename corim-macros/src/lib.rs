@@ -30,6 +30,8 @@
 //! - `#[cbor(key = <int>)]` — CBOR integer key for this field (required)
 //! - `#[cbor(optional)]` — field is `Option<T>`; skip on `None`, tolerate absence
 //! - `#[cbor(bytes)]` — `Vec<u8>` / `[u8; N]` field; emit as CBOR bstr
+//! - `#[cbor(uri)]` — `String` field; emit as `#6.32(tstr)` and accept
+//!   legacy bare text on decode
 //!
 //! ## Enum (CborTagChoice…)
 //!

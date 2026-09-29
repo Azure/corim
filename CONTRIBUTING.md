@@ -79,7 +79,7 @@ RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps
   ```
 - Keep CBOR backend abstraction intact — types must not import `ciborium` directly.
 - New CDDL type additions should reference the relevant section of
-  [draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html).
+  [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
 
 ## Releasing
 
@@ -114,4 +114,3 @@ Trusted Publisher configuration on crates.io (one-time per crate, set at
 | Repository name   | `corim`       |
 | Workflow filename | `release.yml` |
 | Environment name  | `crates-io`   |
-

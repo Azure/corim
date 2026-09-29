@@ -18,7 +18,7 @@ Why is this feature needed? What problem does it solve?
 ## Proposed Solution
 
 Describe the solution you'd like. Reference relevant CDDL productions or sections of
-[draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html)
+[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
 if applicable.
 
 ## Alternatives Considered

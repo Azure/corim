@@ -143,6 +143,29 @@ fn convert_round_trip_cert_thumbprint() {
     );
 }
 
+/// An opaque tag-32 profile extension remains tagged across JSON conversion.
+#[test]
+fn convert_round_trip_opaque_tagged_uri_extension() {
+    assert_round_trip(
+        "opaque_tagged_uri",
+        r#"{
+          "corim-id": "id-uri-extension",
+          "comids": [
+            { "tag-identity": { "id": "c1" },
+              "triples": { "reference-triples": [
+                [ { "class": { "vendor": "ACME" } },
+                  [ { "value": {
+                    "-999": {
+                      "__cbor_tag": 32,
+                      "__cbor_value": "https://example.com/extension"
+                    }
+                  } } ] ]
+              ] } }
+          ]
+        }"#,
+    );
+}
+
 /// Convert rejects a signed CoRIM with a clear message.
 #[test]
 fn convert_rejects_signed_corim() {
@@ -217,6 +240,11 @@ fn convert_emits_azure_mval_alias_name() {
     assert!(s.success(), "azure alias test: convert failed");
 
     let back = std::fs::read_to_string(&back_t).unwrap();
+    let back_json: serde_json::Value = serde_json::from_str(&back).unwrap();
+    assert_eq!(
+        back_json["profile"], "tag:microsoft.com,2026:azure-profile#1.0.0",
+        "expected profile URI to remain a plain JSON string"
+    );
     assert!(
         back.contains("\"tcbstatus\": \"UpToDate\""),
         "expected tcbstatus alias in output JSON, got: {back}"

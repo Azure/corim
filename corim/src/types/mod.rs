@@ -18,6 +18,7 @@ pub mod measurement;
 pub mod signed;
 pub mod tags;
 pub mod triples;
+pub(crate) mod uri;
 
 // Selective re-exports of the most commonly used types.
 // Users can always access the full set via the submodules (e.g., `types::common::*`).

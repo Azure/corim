@@ -101,7 +101,17 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             let key = f.attrs.key;
-            if f.attrs.optional && f.attrs.bytes {
+            if f.attrs.uri && f.attrs.optional {
+                quote! {
+                    if let Some(ref val) = self.#ident {
+                        map.serialize_entry(&#key, &crate::types::uri::UriRef(val))?;
+                    }
+                }
+            } else if f.attrs.uri {
+                quote! {
+                    map.serialize_entry(&#key, &crate::types::uri::UriRef(&self.#ident))?;
+                }
+            } else if f.attrs.optional && f.attrs.bytes {
                 // Optional bytes field: serialize as CBOR bstr
                 quote! {
                     if let Some(ref val) = self.#ident {
