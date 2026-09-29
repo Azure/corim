@@ -89,6 +89,26 @@ fn default_diagnose_mval_entry_returns_none() {
 }
 
 #[test]
+fn default_profile_validators_accept_core_structures() {
+    let profile = NullProfile {
+        id: ProfileChoice::Uri("urn:example:default".into()),
+    };
+    let triple = corim::types::triples::ReferenceTriple::new(
+        corim::types::environment::EnvironmentMap::for_class("ACME", "Widget"),
+        vec![MeasurementMap {
+            mkey: None,
+            mval: MeasurementValuesMap {
+                svn: Some(SvnChoice::ExactValue(1)),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        }],
+    );
+
+    assert!(profile.validate_reference_triple(&triple).is_ok());
+}
+
+#[test]
 fn registry_iter_visits_all_profiles() {
     let mut registry = ProfileRegistry::new();
     registry.register(Box::new(NullProfile {

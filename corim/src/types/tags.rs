@@ -45,11 +45,11 @@ pub const TAG_CORIM: u64 = 501;
 // 2025-01-22.
 //
 // We accept them on **decode only** by transparently peeling them in
-// `crate::compat::peel_tcg_wrappers`. Encoding always uses the draft-10
+// `crate::compat::peel_tcg_wrappers`. Encoding always uses the draft-11
 // shape (tag 18 for signed, tag 501 for unsigned).
 
 /// `#6.500(...)` — legacy outer wrapper from early CoRIM drafts and the
-/// TCG Endorsement spec. Not part of draft-ietf-rats-corim-10.
+/// TCG Endorsement spec. Not part of draft-ietf-rats-corim-11.
 pub const TAG_LEGACY_TOP: u64 = 500;
 
 /// `#6.502(signed-corim)` — legacy wrapper around `#6.18(COSE_Sign1)` from

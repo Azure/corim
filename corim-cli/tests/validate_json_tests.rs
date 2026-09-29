@@ -178,14 +178,19 @@ fn cca_platform_instance_environment() -> EnvironmentMap {
     }
 }
 
-fn cca_platform_corim_with_attest_key(environment: EnvironmentMap, keys: Vec<CryptoKey>) -> Vec<u8> {
+fn cca_platform_corim_with_attest_key(
+    environment: EnvironmentMap,
+    keys: Vec<CryptoKey>,
+) -> Vec<u8> {
     let comid = ComidBuilder::new(TagIdChoice::Text("cca-platform-comid".into()))
         .add_reference_triple(ReferenceTriple::new(
             cca_platform_environment(),
             vec![cca_software_component(), cca_platform_config()],
         ))
         .add_attest_key_triple(corim::types::triples::AttestKeyTriple::new(
-            environment, keys, None,
+            environment,
+            keys,
+            None,
         ))
         .build()
         .unwrap();
@@ -276,7 +281,7 @@ fn validate_rejects_invalid_cca_platform_profile_reference_triples() {
     assert!(
         v["errors"].as_array().unwrap().iter().any(|error| error
             .as_str()
-            .is_some_and(|s| s.contains("failed profile-specific validation")
+            .is_some_and(|s| s.contains("exactly one platform configuration")
                 && s.contains("tag:arm.com,2025:endorsements/cca_platform#1.0.0"))),
         "expected profile-specific validation error, got: {v}"
     );
@@ -287,7 +292,13 @@ fn validate_accepts_cca_platform_profile_attest_key_triple() {
     let bytes = cca_platform_corim_with_attest_key(
         cca_platform_instance_environment(),
         vec![CryptoKey::PkixBase64Key(
-            "-----BEGIN PUBLIC KEY-----\nMA==\n-----END PUBLIC KEY-----".into(),
+            "-----BEGIN PUBLIC KEY-----\n\
+             MIGbMBAGByqGSM49AgEGBSuBBAAjA4GGAAQAkHEvSZK7R4iZ7mXzk9H26ZPEpQIao\n\
+             XeruzgQ1VdPt/4kS6KW3DdMkLSzy4UrxGyY5NhHIWT+nV6S27apqM/TOW0AqEnMc\n\
+             VrN+aoQQgvGlBG3CT9Vvx6U2JeVtMiVuxv/3psg3L1esLr3MbJT8WEMAb6tZdpyR\n\
+             Zot0I1FaRLRC4qt+A0=\n\
+             -----END PUBLIC KEY-----"
+                .into(),
         )],
     );
     let v = validate_json(&bytes, "cbor");
@@ -311,9 +322,29 @@ fn validate_rejects_invalid_cca_platform_profile_attest_key_triple() {
         v["errors"].as_array().unwrap().iter().any(|error| error
             .as_str()
             .is_some_and(|s| s.contains("attest-key-triples")
-                && s.contains("failed profile-specific validation")
+                && s.contains("exactly one PKIX public key")
                 && s.contains("tag:arm.com,2025:endorsements/cca_platform#1.0.0"))),
         "expected profile-specific validation error, got: {v}"
+    );
+}
+
+#[test]
+fn validate_rejects_malformed_cca_platform_cpak_spki() {
+    let bytes = cca_platform_corim_with_attest_key(
+        cca_platform_instance_environment(),
+        vec![CryptoKey::PkixBase64Key(
+            "-----BEGIN PUBLIC KEY-----\nMA==\n-----END PUBLIC KEY-----".into(),
+        )],
+    );
+    let (status, v) = validate_json_status(&bytes, "cbor");
+
+    assert!(!status.success(), "validate unexpectedly succeeded: {v}");
+    assert_eq!(v["valid"], false);
+    assert!(
+        v["errors"].as_array().unwrap().iter().any(|error| error
+            .as_str()
+            .is_some_and(|s| s.contains("DER SubjectPublicKeyInfo"))),
+        "expected malformed CPAK diagnostic, got: {v}"
     );
 }
 

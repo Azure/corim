@@ -15,24 +15,9 @@ mod display;
 mod edn;
 mod generate;
 mod jsonfmt;
+mod profiles;
 mod prose;
 mod sign;
-
-fn build_registry() -> corim::profile::ProfileRegistry {
-    #[allow(unused_mut)]
-    let mut registry = corim::profile::ProfileRegistry::new();
-    #[cfg(feature = "intel")]
-    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
-    #[cfg(feature = "azure")]
-    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
-    #[cfg(feature = "psa")]
-    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaPlatformProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaRealmProfile::new()));
-    registry
-}
 
 /// Validate, inspect, and generate CoRIM (Concise Reference Integrity
 /// Manifest) documents.
@@ -175,7 +160,7 @@ fn run_validate(cli: ValidateArgs) {
     if cli.diagnose {
         // Register all first-party profiles enabled for this CLI build
         // so diagnose can label profile-defined mval keys by name.
-        let registry = build_registry();
+        let registry = profiles::build_registry();
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
@@ -263,7 +248,7 @@ fn run_validate(cli: ValidateArgs) {
     };
 
     let corim = corim.unwrap(); // safe: HeaderOnly case already exited above
-    let registry = build_registry();
+    let registry = profiles::build_registry();
     let profile_for_render = corim.profile.as_ref().and_then(|pc| registry.get(pc));
 
     // Step 2: Structural validation
@@ -364,9 +349,8 @@ decoded via compat::decode_comid_from_tcg_bstr",
         }
     }
 
-    if let Some(profile) = profile_for_render {
-        validate_profile_reference_triples(profile, &comid_tags, &mut errors);
-        validate_profile_attest_key_triples(profile, &comid_tags, &mut errors);
+    if let Err(error) = corim::validate::validate_corim_profile(&corim, &comid_tags, &registry) {
+        errors.push(error.to_string());
     }
 
     // Baseline conformance mode: compare the (valid) input against a
@@ -424,48 +408,6 @@ decoded via compat::decode_comid_from_tcg_bstr",
 
     if !errors.is_empty() {
         process::exit(2);
-    }
-}
-
-fn validate_profile_reference_triples(
-    profile: &(dyn corim::profile::Profile + Send + Sync),
-    comids: &[corim::types::comid::ComidTag],
-    errors: &mut Vec<String>,
-) {
-    let profile_name = display::profile_str(profile.identifier());
-    for (comid_idx, comid) in comids.iter().enumerate() {
-        let Some(reference_triples) = &comid.triples.reference_triples else {
-            continue;
-        };
-
-        for (triple_idx, triple) in reference_triples.iter().enumerate() {
-            if !profile.reference_triple_valid(triple) {
-                errors.push(format!(
-                    "comids[{comid_idx}].reference-triples[{triple_idx}]: failed profile-specific validation for {profile_name}"
-                ));
-            }
-        }
-    }
-}
-
-fn validate_profile_attest_key_triples(
-    profile: &(dyn corim::profile::Profile + Send + Sync),
-    comids: &[corim::types::comid::ComidTag],
-    errors: &mut Vec<String>,
-) {
-    let profile_name = display::profile_str(profile.identifier());
-    for (comid_idx, comid) in comids.iter().enumerate() {
-        let Some(attest_key_triples) = &comid.triples.attest_key_triples else {
-            continue;
-        };
-
-        for (triple_idx, triple) in attest_key_triples.iter().enumerate() {
-            if !profile.attest_key_triple_valid(triple) {
-                errors.push(format!(
-                    "comids[{comid_idx}].attest-key-triples[{triple_idx}]: failed profile-specific validation for {profile_name}"
-                ));
-            }
-        }
     }
 }
 

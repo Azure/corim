@@ -41,6 +41,6 @@ azure = ["corim/profile-azure"]
 # Register the Arm PSA profile so `generate` resolves its `psa-cert-num`
 # mval alias and `--diagnose` labels it.
 psa = ["corim/profile-psa"]
-# Register the Arm CCA endorsements profile so CCA platform/realm
-# measurement keys are recognised as part of the CCA profile.
+# Register the Arm CCA endorsements profiles for Platform and Realm
+# validation and appraisal semantics.
 cca = ["corim/profile-cca"]

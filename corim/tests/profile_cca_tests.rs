@@ -3,13 +3,16 @@
 
 #![cfg(feature = "profile-cca")]
 
+use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::profile::cca::{
     is_cca_platform_mkey, is_cca_realm_mkey, CcaPlatformProfile, CcaRealmProfile,
     CCA_PLATFORM_PROFILE_URI, CCA_REALM_PROFILE_URI,
 };
-use corim::profile::{MatchContext, Profile};
-use corim::types::common::{ClassIdChoice, CryptoKey, InstanceIdChoice, MeasuredElement};
-use corim::types::corim::ProfileChoice;
+use corim::profile::{MatchContext, Profile, ProfileRegistry};
+use corim::types::common::{
+    ClassIdChoice, CryptoKey, InstanceIdChoice, MeasuredElement, TagIdChoice,
+};
+use corim::types::corim::{CorimId, ProfileChoice};
 use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, RawValueChoice};
 use corim::types::triples::ReferenceTriple;
@@ -277,13 +280,15 @@ fn platform_evidence() -> Vec<EvidenceClaim> {
 fn platform_claims(profile: &CcaPlatformProfile, measurements: Vec<MeasurementMap>) -> usize {
     let triples = vec![ReferenceTriple::new(platform_environment(), measurements)];
 
-    match_reference_values_with_profile(
+    match match_reference_values_with_profile(
         &triples,
         &platform_evidence(),
         Some(profile),
         &MatchContext::new(),
-    )
-    .len()
+    ) {
+        Ok(claims) => claims.len(),
+        Err(_) => 0,
+    }
 }
 
 #[test]
@@ -368,6 +373,62 @@ fn platform_profile_rejects_triple_without_cca_measurements() {
 }
 
 #[test]
+fn platform_profile_rejects_unknown_measurement_in_complete_triple() {
+    let profile = CcaPlatformProfile::new();
+    let triples = vec![ReferenceTriple::new(
+        platform_environment(),
+        vec![
+            software_component_measurement("cca.software-component", &[0x11; 32], &[0xAA; 32]),
+            masked_raw_value_measurement("cca.platform-config", &[0xA0, 0x05], &[0xF0, 0x00]),
+            measurement_with_mkey("tee.something", &[0x11; 32]),
+        ],
+    )];
+
+    let error = match_reference_values_with_profile(
+        &triples,
+        &platform_evidence(),
+        Some(&profile),
+        &MatchContext::new(),
+    )
+    .unwrap_err();
+
+    assert!(error.to_string().contains("unrecognized CCA Platform"));
+}
+
+#[test]
+fn profile_aware_decode_rejects_invalid_cca_document() {
+    let comid = ComidBuilder::new(TagIdChoice::Text("cca-platform-comid".into()))
+        .add_reference_triple(ReferenceTriple::new(
+            platform_environment(),
+            vec![software_component_measurement(
+                "cca.software-component",
+                &[0x11; 32],
+                &[0xAA; 32],
+            )],
+        ))
+        .build()
+        .unwrap();
+    let bytes = CorimBuilder::new(CorimId::Text("cca-platform-corim".into()))
+        .set_profile(ProfileChoice::Uri(CCA_PLATFORM_PROFILE_URI.into()))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
+
+    corim::validate::decode_and_validate_at(&bytes, 0)
+        .expect("core validation remains profile-agnostic");
+
+    let mut registry = ProfileRegistry::new();
+    registry.register(Box::new(CcaPlatformProfile::new()));
+    let error =
+        corim::validate::decode_and_validate_at_with_registry(&bytes, 0, &registry).unwrap_err();
+
+    assert!(error
+        .to_string()
+        .contains("exactly one platform configuration"));
+}
+
+#[test]
 fn platform_profile_accepts_standalone_rotpk_triple() {
     let profile = CcaPlatformProfile::new();
     let rotpk = rotpk_measurement("cca.rotpk.CM.2.3", &[0xAA; 32]);
@@ -385,7 +446,8 @@ fn platform_profile_accepts_standalone_rotpk_triple() {
         &evidence,
         Some(&profile),
         &MatchContext::new(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(claims.len(), 1);
 }
@@ -412,7 +474,8 @@ fn platform_profile_accepts_rotpk_triple_for_one_array_entry() {
         &evidence,
         Some(&profile),
         &MatchContext::new(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(claims.len(), 1);
     assert_eq!(claims[0].measurements.len(), 2);
@@ -442,7 +505,7 @@ fn platform_profile_rejects_rotpk_mixed_array_entries() {
             &MatchContext::new(),
         );
 
-        assert!(claims.is_empty());
+        assert!(claims.is_err());
     }
 }
 
@@ -466,7 +529,7 @@ fn platform_profile_rejects_rotpk_mixed_with_unknown_measurement() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
@@ -508,7 +571,7 @@ fn platform_profile_rejects_triple_without_implementation_id() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
@@ -535,7 +598,7 @@ fn platform_profile_rejects_triple_with_non_ueid_instance() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
@@ -560,7 +623,7 @@ fn platform_profile_rejects_evidence_without_instance() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
@@ -587,7 +650,7 @@ fn platform_profile_rejects_evidence_with_non_ueid_instance() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
@@ -741,8 +804,15 @@ fn realm_claims(
         measurements,
     }];
 
-    match_reference_values_with_profile(&triples, &evidence, Some(profile), &MatchContext::new())
-        .len()
+    match match_reference_values_with_profile(
+        &triples,
+        &evidence,
+        Some(profile),
+        &MatchContext::new(),
+    ) {
+        Ok(claims) => claims.len(),
+        Err(_) => 0,
+    }
 }
 
 #[test]
@@ -900,7 +970,7 @@ fn realm_profile_rejects_evidence_with_instance() {
         &MatchContext::new(),
     );
 
-    assert!(claims.is_empty());
+    assert!(claims.is_err());
 }
 
 #[test]
