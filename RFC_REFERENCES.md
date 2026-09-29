@@ -86,7 +86,7 @@ This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 - **Signed CoRIM changes**: §4.2 COSE structure may evolve. Our signed types
   implement the -11 semantics.
 
-**How to check for updates**: Visit the [datatracker page](https://datatracker.ietf.org/doc/draft-ietf-rats-corim/) and compare the latest revision number against `-10`.
+**How to check for updates**: Visit the [datatracker page](https://datatracker.ietf.org/doc/draft-ietf-rats-corim/) and compare the latest revision number against `-11`.
 
 ---
 
