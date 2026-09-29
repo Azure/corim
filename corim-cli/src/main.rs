@@ -85,9 +85,10 @@ struct ValidateArgs {
     #[arg(long)]
     show_raw: bool,
 
-    /// Run a non-aborting structural diagnose pass and print a human-readable
-    /// report (envelope kind, every recognized issue, summary). Useful when
-    /// strict decoding fails and you need to see *all* problems at once.
+    /// Run a non-aborting structural and profile-semantic diagnose pass and
+    /// print a human-readable report (envelope kind, every recognized issue,
+    /// summary). Useful when strict decoding fails and you need to see *all*
+    /// problems at once.
     /// When set, the strict decode path is skipped; exit code is 0 if no
     /// errors are found, 2 otherwise.
     #[arg(long)]
@@ -152,14 +153,14 @@ fn run_validate(cli: ValidateArgs) {
         }
     }
 
-    // --diagnose: best-effort structural inspection that does NOT abort on
-    // the first error. Prints all issues, then exits.
+    // --diagnose: best-effort structural and profile-semantic inspection that
+    // does NOT abort on the first error. Prints all issues, then exits.
     //
     // Note: --diagnose runs on the *original* bytes so the report can
     // explicitly call out legacy `#6.500` / `#6.502` outer wrappers.
     if cli.diagnose {
         // Register all first-party profiles enabled for this CLI build
-        // so diagnose can label profile-defined mval keys by name.
+        // so diagnose can label and validate profile-defined content.
         let registry = profiles::build_registry();
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);

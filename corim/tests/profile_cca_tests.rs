@@ -15,7 +15,7 @@ use corim::types::common::{
 use corim::types::corim::{CorimId, ProfileChoice};
 use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, RawValueChoice};
-use corim::types::triples::ReferenceTriple;
+use corim::types::triples::{AttestKeyTriple, ReferenceTriple};
 use corim::validate::{match_reference_values_with_profile, EvidenceClaim};
 
 fn measurement_with_mkey(mkey: &str, digest_val: &[u8]) -> MeasurementMap {
@@ -426,6 +426,37 @@ fn profile_aware_decode_rejects_invalid_cca_document() {
     assert!(error
         .to_string()
         .contains("exactly one platform configuration"));
+
+    let report = corim::diagnose::inspect(&bytes, &registry);
+    assert!(report.issues().iter().any(|issue| issue
+        .message()
+        .contains("exactly one platform configuration")));
+}
+
+#[test]
+fn diagnose_reports_invalid_cca_attestation_key_triple() {
+    let comid = ComidBuilder::new(TagIdChoice::Text("cca-platform-comid".into()))
+        .add_attest_key_triple(AttestKeyTriple::new(
+            platform_environment(),
+            vec![CryptoKey::Bytes(vec![0xAA; 32])],
+            None,
+        ))
+        .build()
+        .unwrap();
+    let bytes = CorimBuilder::new(CorimId::Text("cca-platform-corim".into()))
+        .set_profile(ProfileChoice::Uri(CCA_PLATFORM_PROFILE_URI.into()))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
+    let mut registry = ProfileRegistry::new();
+    registry.register(Box::new(CcaPlatformProfile::new()));
+
+    let report = corim::diagnose::inspect(&bytes, &registry);
+
+    assert!(report.issues().iter().any(|issue| issue
+        .message()
+        .contains("CPAK environment must contain a 32-byte Implementation ID and RAND UEID")));
 }
 
 #[test]

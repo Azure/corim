@@ -202,7 +202,7 @@ corim-cli validate --skip-expiry signed.corim
 # COSE_Sign1 envelope and protected header)
 corim-cli validate -f json myfile.corim
 
-# Non-aborting structural diagnose pass — prints issues without rejecting
+# Non-aborting structural and profile-semantic diagnose pass
 corim-cli validate --diagnose myfile.corim
 
 # Structural conformance check against a known-good baseline (JSON or CBOR)
