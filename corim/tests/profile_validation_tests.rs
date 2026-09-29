@@ -74,6 +74,27 @@ impl Profile for AlwaysRejectProfile {
     }
 }
 
+/// Profile that accepts every measurement pair but rejects every evidence claim.
+struct RejectEvidenceProfile {
+    id: ProfileChoice,
+}
+impl Profile for RejectEvidenceProfile {
+    fn identifier(&self) -> &ProfileChoice {
+        &self.id
+    }
+    fn validate_evidence_claim(&self, _claim: &EvidenceClaim) -> Result<(), String> {
+        Err("test profile rejected evidence".into())
+    }
+    fn match_measurement(
+        &self,
+        _reference: &MeasurementMap,
+        _evidence: &MeasurementMap,
+        _ctx: &MatchContext,
+    ) -> Option<bool> {
+        Some(true)
+    }
+}
+
 fn test_id() -> ProfileChoice {
     ProfileChoice::Uri("urn:example:test-profile".into())
 }
@@ -125,7 +146,8 @@ fn with_profile_none_matches_default_behavior_on_match() {
         &evidence,
         None::<&dyn corim::profile::Profile>,
         &ctx(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(default.len(), 1);
     assert_eq!(with_none.len(), default.len());
@@ -142,7 +164,8 @@ fn with_profile_none_matches_default_behavior_on_mismatch() {
         &evidence,
         None::<&dyn corim::profile::Profile>,
         &ctx(),
-    );
+    )
+    .unwrap();
 
     assert_eq!(default.len(), 0);
     assert_eq!(with_none.len(), 0);
@@ -157,9 +180,11 @@ fn passthrough_profile_returns_none_so_defers_to_core() {
     let evidence_miss = vec![evidence_with_digest(0xBB)];
 
     let claims_match =
-        match_reference_values_with_profile(&triples, &evidence_match, Some(&profile), &ctx());
+        match_reference_values_with_profile(&triples, &evidence_match, Some(&profile), &ctx())
+            .unwrap();
     let claims_miss =
-        match_reference_values_with_profile(&triples, &evidence_miss, Some(&profile), &ctx());
+        match_reference_values_with_profile(&triples, &evidence_miss, Some(&profile), &ctx())
+            .unwrap();
 
     assert_eq!(
         claims_match.len(),
@@ -185,7 +210,7 @@ fn always_match_profile_overrides_core_mismatch() {
 
     // Profile says yes
     let profile_claims =
-        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
+        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(profile_claims.len(), 1, "AlwaysMatch should force a match");
 }
 
@@ -201,7 +226,7 @@ fn always_reject_profile_blocks_core_match() {
 
     // Profile says no
     let profile_claims =
-        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
+        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(
         profile_claims.len(),
         0,
@@ -214,7 +239,8 @@ fn empty_triples_with_profile_yields_empty() {
     let profile = AlwaysMatchProfile { id: test_id() };
     let evidence = vec![evidence_with_digest(0xAA)];
 
-    let claims = match_reference_values_with_profile(&[], &evidence, Some(&profile), &ctx());
+    let claims =
+        match_reference_values_with_profile(&[], &evidence, Some(&profile), &ctx()).unwrap();
     assert!(claims.is_empty());
 }
 
@@ -246,7 +272,8 @@ fn environment_mismatch_skipped_before_profile_consulted() {
         }],
     }];
 
-    let claims = match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx());
+    let claims =
+        match_reference_values_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert!(
         claims.is_empty(),
         "environment mismatch should still gate the match"
@@ -362,4 +389,26 @@ fn endorsement_series_always_reject_profile_blocks_endorsement() {
     let with_profile =
         apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx()).unwrap();
     assert_eq!(with_profile.len(), 0, "profile should block endorsement");
+}
+
+#[test]
+fn endorsement_series_rejects_profile_invalid_evidence_claim() {
+    let profile = RejectEvidenceProfile { id: test_id() };
+    let triples = vec![build_series_triple(0xAA, 0xCC)];
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("ACME", "Widget"),
+        measurements: vec![MeasurementMap {
+            mkey: Some(MeasuredElement::Text("k".into())),
+            mval: MeasurementValuesMap {
+                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        }],
+    }];
+
+    let error = apply_endorsement_series_with_profile(&triples, &evidence, Some(&profile), &ctx())
+        .unwrap_err();
+
+    assert!(error.to_string().contains("test profile rejected evidence"));
 }

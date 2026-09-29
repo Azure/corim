@@ -15,7 +15,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cbor;
 use crate::error::ValidationError;
-use crate::profile::{MatchContext, Profile};
+use crate::profile::{MatchContext, Profile, ProfileRegistry};
 use crate::types::comid::ComidTag;
 use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
@@ -74,6 +74,25 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<(CorimMap, Vec<ComidTag>), Va
     decode_and_validate_at(bytes, now)
 }
 
+/// Decode and validate a CoRIM, including constraints defined by its
+/// registered profile.
+///
+/// Unknown profiles remain forward-compatible: when the CoRIM has no profile,
+/// or its identifier is absent from `registry`, only core validation runs.
+#[cfg(feature = "std")]
+pub fn decode_and_validate_with_registry(
+    bytes: &[u8],
+    registry: &ProfileRegistry,
+) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_at_with_registry(bytes, now, registry)
+}
+
 /// Decode and validate a CoRIM with an explicit "now" timestamp.
 ///
 /// Same as [`decode_and_validate`] but uses the provided `now_epoch_secs`
@@ -83,6 +102,17 @@ pub fn decode_and_validate_at(
     now_epoch_secs: i64,
 ) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
     let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    Ok((validated.corim, validated.comids))
+}
+
+/// Decode and validate a CoRIM with an explicit timestamp and profile registry.
+pub fn decode_and_validate_at_with_registry(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    registry: &ProfileRegistry,
+) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    validate_corim_profile(&validated.corim, &validated.comids, registry)?;
     Ok((validated.corim, validated.comids))
 }
 
@@ -129,12 +159,84 @@ pub fn decode_and_validate_full(bytes: &[u8]) -> Result<ValidatedCorim, Validati
     decode_and_validate_full_at(bytes, now)
 }
 
+/// Decode and validate all CoRIM tag types, including constraints defined by
+/// the document's registered profile.
+#[cfg(feature = "std")]
+pub fn decode_and_validate_full_with_registry(
+    bytes: &[u8],
+    registry: &ProfileRegistry,
+) -> Result<ValidatedCorim, ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_full_at_with_registry(bytes, now, registry)
+}
+
 /// Decode and validate a CoRIM with an explicit timestamp, returning all tag types.
 pub fn decode_and_validate_full_at(
     bytes: &[u8],
     now_epoch_secs: i64,
 ) -> Result<ValidatedCorim, ValidationError> {
     decode_and_validate_full_impl(bytes, now_epoch_secs)
+}
+
+/// Decode and validate all CoRIM tag types with an explicit timestamp and
+/// profile registry.
+pub fn decode_and_validate_full_at_with_registry(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    registry: &ProfileRegistry,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    validate_corim_profile(&validated.corim, &validated.comids, registry)?;
+    Ok(validated)
+}
+
+/// Validate profile-defined constraints over decoded CoMID triples.
+///
+/// This is useful when the caller decoded a signed CoRIM envelope separately
+/// and therefore cannot use [`decode_and_validate_with_registry`].
+pub fn validate_corim_profile(
+    corim: &CorimMap,
+    comids: &[ComidTag],
+    registry: &ProfileRegistry,
+) -> Result<(), ValidationError> {
+    let Some(profile_id) = corim.profile.as_ref() else {
+        return Ok(());
+    };
+    let Some(profile) = registry.get(profile_id) else {
+        return Ok(());
+    };
+
+    for (comid_index, comid) in comids.iter().enumerate() {
+        if let Some(triples) = &comid.triples.reference_triples {
+            for (triple_index, triple) in triples.iter().enumerate() {
+                profile.validate_reference_triple(triple).map_err(|error| {
+                    ValidationError::Invalid(format!(
+                        "profile {profile_id}, comids[{comid_index}].reference-triples\
+                         [{triple_index}]: {error}"
+                    ))
+                })?;
+            }
+        }
+        if let Some(triples) = &comid.triples.attest_key_triples {
+            for (triple_index, triple) in triples.iter().enumerate() {
+                profile
+                    .validate_attest_key_triple(triple)
+                    .map_err(|error| {
+                        ValidationError::Invalid(format!(
+                            "profile {profile_id}, comids[{comid_index}].attest-key-triples\
+                         [{triple_index}]: {error}"
+                        ))
+                    })?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Internal unified implementation — decodes all tags in a single pass.
@@ -315,16 +417,22 @@ pub struct EvidenceClaim {
 /// - `None` from the profile — defer to the default per-pair logic
 ///   (the same comparison performed by [`match_reference_values`]).
 ///
-/// The profile is consulted independently for each (reference, evidence)
-/// pair within a triple. Pass `None` for `profile` to get behavior
-/// identical to [`match_reference_values`].
+/// Before any per-pair matching, the profile's
+/// [`Profile::validate_reference_triple`] hook is called once for each
+/// reference triple. For each candidate evidence claim, the profile's
+/// [`Profile::validate_evidence_claim`] hook is also called before generic
+/// environment matching. A validation failure is returned rather than being
+/// treated as an ordinary non-match. Profiles with no triple- or
+/// evidence-level rules behave as if only per-pair matching were customized.
+/// Pass `None` for `profile` to get behavior identical to
+/// [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
 ///
 /// ```ignore
 /// let profile = registry.get(corim.profile.as_ref()?);
 /// let ctx = MatchContext::system_now();
-/// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx);
+/// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx)?;
 /// ```
 ///
 /// The `P: ?Sized + Profile` bound lets callers pass any of:
@@ -337,8 +445,22 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     evidence: &[EvidenceClaim],
     profile: Option<&P>,
     ctx: &MatchContext,
-) -> Vec<CorroboratedClaim> {
+) -> Result<Vec<CorroboratedClaim>, ValidationError> {
     let mut corroborated = Vec::new();
+
+    if let Some(profile) = profile {
+        for triple in ref_triples {
+            profile.validate_reference_triple(triple).map_err(|error| {
+                ValidationError::Invalid(format!(
+                    "profile {} reference triple: {error}",
+                    profile.identifier()
+                ))
+            })?;
+        }
+        if !ref_triples.is_empty() {
+            validate_profile_evidence(evidence, profile)?;
+        }
+    }
 
     for triple in ref_triples {
         for ev in evidence {
@@ -362,7 +484,7 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
         }
     }
 
-    corroborated
+    Ok(corroborated)
 }
 
 /// Profile-aware analogue of [`measurement_matches`]: for each evidence
@@ -414,9 +536,11 @@ pub fn apply_endorsement_series(
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
-/// [`Profile::match_measurement`] hook when comparing each series
-/// `condition` entry against evidence. Per-pair semantics are identical
-/// to those of [`match_reference_values_with_profile`].
+/// [`Profile::validate_evidence_claim`] hook before generic environment
+/// matching and [`Profile::match_measurement`] hook when comparing each
+/// series `condition` entry against evidence. Measurement-pair matching
+/// semantics are identical to those of
+/// [`match_reference_values_with_profile`].
 ///
 /// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
 /// to [`apply_endorsement_series`].
@@ -428,13 +552,21 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
 
+    if let Some(profile) = profile {
+        if !ces_triples.is_empty() {
+            validate_profile_evidence(evidence, profile)?;
+        }
+    }
+
     for triple in ces_triples {
         let condition = triple.common_condition();
 
-        let matching_evidence: Vec<_> = evidence
-            .iter()
-            .filter(|ev| environment_matches(&condition.environment, &ev.environment))
-            .collect();
+        let mut matching_evidence = Vec::new();
+        for evidence_claim in evidence {
+            if environment_matches(&condition.environment, &evidence_claim.environment) {
+                matching_evidence.push(evidence_claim);
+            }
+        }
 
         if matching_evidence.is_empty() {
             continue;
@@ -455,6 +587,21 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     }
 
     Ok(endorsed)
+}
+
+fn validate_profile_evidence<P: ?Sized + Profile>(
+    evidence: &[EvidenceClaim],
+    profile: &P,
+) -> Result<(), ValidationError> {
+    for claim in evidence {
+        profile.validate_evidence_claim(claim).map_err(|error| {
+            ValidationError::Invalid(format!(
+                "profile {} evidence claim: {error}",
+                profile.identifier()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// Validate that all series entries use the same `mkey`s (§5.1.8.1.1).

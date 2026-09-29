@@ -15,20 +15,9 @@ mod display;
 mod edn;
 mod generate;
 mod jsonfmt;
+mod profiles;
 mod prose;
 mod sign;
-
-fn build_registry() -> corim::profile::ProfileRegistry {
-    #[allow(unused_mut)]
-    let mut registry = corim::profile::ProfileRegistry::new();
-    #[cfg(feature = "intel")]
-    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
-    #[cfg(feature = "azure")]
-    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
-    #[cfg(feature = "psa")]
-    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
-    registry
-}
 
 /// Validate, inspect, and generate CoRIM (Concise Reference Integrity
 /// Manifest) documents.
@@ -171,7 +160,7 @@ fn run_validate(cli: ValidateArgs) {
     if cli.diagnose {
         // Register all first-party profiles enabled for this CLI build
         // so diagnose can label profile-defined mval keys by name.
-        let registry = build_registry();
+        let registry = profiles::build_registry();
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
@@ -259,7 +248,7 @@ fn run_validate(cli: ValidateArgs) {
     };
 
     let corim = corim.unwrap(); // safe: HeaderOnly case already exited above
-    let registry = build_registry();
+    let registry = profiles::build_registry();
     let profile_for_render = corim.profile.as_ref().and_then(|pc| registry.get(pc));
 
     // Step 2: Structural validation
@@ -358,6 +347,10 @@ decoded via compat::decode_comid_from_tcg_bstr",
                 unknown_count += 1;
             }
         }
+    }
+
+    if let Err(error) = corim::validate::validate_corim_profile(&corim, &comid_tags, &registry) {
+        errors.push(error.to_string());
     }
 
     // Baseline conformance mode: compare the (valid) input against a

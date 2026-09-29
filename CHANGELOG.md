@@ -37,6 +37,16 @@ versions.
 
 ### Added
 
+- **Arm CCA endorsements profile and profile-aware validation.** The
+  `profile-cca` feature implements Platform and Realm validation and appraisal
+  for `draft-ydb-rats-cca-endorsements-04`, including environment linkage,
+  measurement cardinality and shape constraints, ROTPK grouping, masked
+  configuration matching, and CPAK RFC 7468 / SubjectPublicKeyInfo validation.
+  New `decode_and_validate*_with_registry` APIs apply registered profile
+  constraints during decoding; the CLI uses the same validation path for
+  `validate` and `generate`. **Breaking:** profile validation hooks return
+  diagnostic `Result`s, and `match_reference_values_with_profile` now returns
+  `Result<Vec<CorroboratedClaim>, ValidationError>`.
 - **`extract --header`.** Extracts the COSE protected header instead of the
   payload — the exact `bstr` contents that go into `Sig_structure1`, so the
   bytes can be re-verified. `--header --json` emits the decoded header using
@@ -304,9 +314,8 @@ to the CDDL (Appendix A); the Reference Verifier chapter was renumbered from
   pluggable extension points for CoRIM profiles that introduce
   non-core CBOR tags, profile-specific match semantics, or extra
   measurement-value fields:
-  - New [`Profile`](corim/src/profile.rs) trait with
-    `match_measurement`, `diagnose_extra_mvm_field`, and
-    `match_context` hooks.
+  - New [`Profile`](corim/src/profile.rs) trait with measurement matching,
+    diagnostic rendering, and JSON alias hooks.
   - [`ProfileRegistry`](corim/src/profile.rs) dispatches by
     `ProfileChoice` (URI or OID).
   - [`MatchContext`](corim/src/profile.rs) carries appraisal-time
