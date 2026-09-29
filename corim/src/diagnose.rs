@@ -622,18 +622,29 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             Value::Integer(n) => match i64::try_from(*n) {
                 Ok(k) => k,
                 Err(_) => {
-                    ins.warn(
-                        "$.protected",
-                        format!("integer header key {} is out of i64 range; skipped", n),
+                    ins.info(
+                        format!("$.protected[{n}]"),
+                        format!(
+                            "integer label {n} is a valid COSE header label (value not inspected)"
+                        ),
                     );
                     continue;
                 }
             },
+            Value::Text(label) => {
+                ins.info(
+                    format!("$.protected[{label:?}]"),
+                    format!(
+                        "text label {label:?} is a valid COSE header label (value not inspected)"
+                    ),
+                );
+                continue;
+            }
             other => {
                 ins.warn(
                     "$.protected",
                     format!(
-                        "non-integer header key ({}); RFC 9052 expects int/tstr labels",
+                        "invalid COSE header key ({}); RFC 9052 §1.5 requires int or tstr",
                         value_kind(other)
                     ),
                 );
@@ -685,10 +696,13 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 ),
             },
             COSE_HEADER_KID => match val {
-                Value::Bytes(_) => {
-                    ins.warn(
+                Value::Bytes(kid) => {
+                    ins.info(
                         path,
-                        "kid (key 4) appears in the protected header; RFC 9052 §3.1 puts kid in unprotected",
+                        format!(
+                            "kid (key 4) is a {}-byte bstr; protected placement is permitted by RFC 9052 §3",
+                            kid.len()
+                        ),
                     );
                 }
                 Value::Text(_) => {
@@ -2123,6 +2137,92 @@ mod tests {
             .issues
             .iter()
             .any(|i| i.severity == Severity::Error && i.message.contains("meta-group")));
+    }
+
+    fn signed_corim_with_protected_entries(entries: Vec<(Value, Value)>) -> Vec<u8> {
+        let mut protected_entries = vec![
+            (Value::Integer(COSE_HEADER_ALG.into()), Value::Integer(-35)),
+            (
+                Value::Integer(COSE_HEADER_CONTENT_TYPE.into()),
+                Value::Text(CORIM_CONTENT_TYPE.into()),
+            ),
+            (
+                Value::Integer(COSE_HEADER_CORIM_META.into()),
+                Value::Bytes(encode(&Value::Map(vec![])).unwrap()),
+            ),
+        ];
+        protected_entries.extend(entries);
+        let protected_bytes = encode(&Value::Map(protected_entries)).unwrap();
+        let envelope = Value::Array(vec![
+            Value::Bytes(protected_bytes),
+            Value::Map(vec![]),
+            Value::Null,
+            Value::Bytes(vec![0x55; 64]),
+        ]);
+        encode(&Tagged::new(TAG_SIGNED_CORIM, envelope)).unwrap()
+    }
+
+    #[test]
+    fn protected_kid_is_accepted_without_warning() {
+        let bytes = signed_corim_with_protected_entries(vec![(
+            Value::Integer(COSE_HEADER_KID.into()),
+            Value::Bytes(vec![0xA5; 8]),
+        )]);
+
+        let report = inspect(&bytes);
+
+        assert_eq!(report.warning_count(), 0, "issues: {:#?}", report.issues);
+        let kid = report
+            .issues
+            .iter()
+            .find(|issue| issue.path == "$.protected.4")
+            .expect("expected a diagnostic entry for kid");
+        assert_eq!(kid.severity, Severity::Info);
+        assert!(kid.message.contains("permitted"));
+    }
+
+    #[test]
+    fn protected_text_header_label_is_accepted_without_warning() {
+        let label = "tee.refresh-uri";
+        let bytes = signed_corim_with_protected_entries(vec![(
+            Value::Text(label.into()),
+            Value::Text("https://example.com/refresh".into()),
+        )]);
+
+        let report = inspect(&bytes);
+
+        assert_eq!(report.warning_count(), 0, "issues: {:#?}", report.issues);
+        let private_label = report
+            .issues
+            .iter()
+            .find(|issue| issue.path.contains(label))
+            .expect("expected a diagnostic entry for the text label");
+        assert_eq!(private_label.severity, Severity::Info);
+        assert!(private_label.message.contains("valid COSE header label"));
+    }
+
+    #[test]
+    fn protected_integer_labels_outside_i64_are_accepted_without_warning() {
+        let max_cbor_uint = i128::from(u64::MAX);
+        let min_cbor_nint = -1 - max_cbor_uint;
+
+        for label in [max_cbor_uint, min_cbor_nint] {
+            let bytes = signed_corim_with_protected_entries(vec![(
+                Value::Integer(label),
+                Value::Text("private value".into()),
+            )]);
+
+            let report = inspect(&bytes);
+
+            assert_eq!(report.warning_count(), 0, "issues: {:#?}", report.issues);
+            let private_label = report
+                .issues
+                .iter()
+                .find(|issue| issue.path == format!("$.protected[{label}]"))
+                .expect("expected a diagnostic entry for the integer label");
+            assert_eq!(private_label.severity, Severity::Info);
+            assert!(private_label.message.contains("valid COSE header label"));
+        }
     }
 
     #[test]
