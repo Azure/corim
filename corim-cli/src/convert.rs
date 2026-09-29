@@ -36,7 +36,7 @@ use clap::Parser;
 use serde::Serialize;
 use serde_json::{Map, Value as JsonValue};
 
-use corim::profile::{Profile, ProfileRegistry};
+use corim::profile::Profile;
 use corim::types::comid::ComidTag;
 use corim::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use corim::types::coswid::ConciseSwidTag;
@@ -109,7 +109,7 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
         ));
     }
     let corim = tagged.value;
-    let registry = build_registry();
+    let registry = crate::profiles::build_registry();
     let profile: Option<&(dyn Profile + Send + Sync)> =
         corim.profile.as_ref().and_then(|pc| registry.get(pc));
 
@@ -259,22 +259,6 @@ fn apply_mval_alias_names(value: &mut JsonValue, profile: &(dyn Profile + Send +
         }
         _ => {}
     }
-}
-
-fn build_registry() -> ProfileRegistry {
-    #[allow(unused_mut)]
-    let mut registry = ProfileRegistry::new();
-    #[cfg(feature = "intel")]
-    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
-    #[cfg(feature = "azure")]
-    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
-    #[cfg(feature = "psa")]
-    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaPlatformProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaRealmProfile::new()));
-    registry
 }
 
 /// Read input from a file path, or from stdin when the path is `None` or

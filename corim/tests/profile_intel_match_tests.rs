@@ -382,7 +382,8 @@ fn dispatch_through_validate_passes_with_intel_profile() {
         &evidence,
         Some(&p),
         &MatchContext::new(),
-    );
+    )
+    .unwrap();
     assert_eq!(with_profile.len(), 1, "profile-aware match should succeed");
     assert_eq!(with_profile[0].measurements.len(), 1);
 
@@ -420,7 +421,8 @@ fn dispatch_through_validate_rejects_with_intel_profile() {
 
     // With profile: Intel evaluator catches the violation.
     let with_profile =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert!(
         with_profile.is_empty(),
         "Intel profile should reject the pair"
@@ -463,7 +465,8 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
         }],
     }];
     let claims =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert_eq!(claims.len(), 1);
 }
 
@@ -499,7 +502,8 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
         }],
     }];
     let claims =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert!(claims.is_empty(), "core digest mismatch should reject");
 }
 

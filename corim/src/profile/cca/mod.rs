@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Minimal Arm CCA endorsements profile support for
+//! Arm CCA endorsements profile support for
 //! `draft-ydb-rats-cca-endorsements-04`.
 //!
 //! The draft defines two specific CoRIM profile URIs:
@@ -39,6 +39,7 @@ use crate::types::measurement::{
 };
 use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 use crate::validate::EvidenceClaim;
+use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 /// Profile URI for CCA Platform endorsements
 /// (draft-ydb-rats-cca-endorsements-04 §3.1.1).
@@ -82,6 +83,8 @@ pub const CCA_MKEY_RPV: &str = "cca.rpv";
 const CCA_ROTPK_MAX_INDEX: u8 = 7;
 /// Maximum ROTPK slot index from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
 const CCA_ROTPK_MAX_SLOT: u8 = 5;
+/// Maximum entries in one ROTPK array from draft-ydb-rats-cca-endorsements-04 §3.1.3.3.
+const CCA_ROTPK_SLOT_COUNT: usize = 6;
 /// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
 const CCA_HASH_SIZE_256: usize = 32;
 /// CCA hash size in bytes from draft-ydb-rats-cca-endorsements-04 §3.1.3.1 and §3.1.3.3.
@@ -97,6 +100,10 @@ const CCA_IMPLEMENTATION_ID_SIZE: usize = 32;
 const CCA_INSTANCE_ID_SIZE: usize = 33;
 /// UEID `RAND` type byte required by draft-ydb-rats-cca-endorsements-04 §3.1.2.
 const CCA_INSTANCE_ID_RAND_TYPE: u8 = 0x01;
+/// RFC 7468 label for a DER `SubjectPublicKeyInfo` public key.
+const PUBLIC_KEY_PEM_LABEL: &str = "-----BEGIN PUBLIC KEY-----";
+/// RFC 7468 end label for a DER `SubjectPublicKeyInfo` public key.
+const PUBLIC_KEY_PEM_END_LABEL: &str = "-----END PUBLIC KEY-----";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum RotpkFamily {
@@ -187,6 +194,38 @@ fn raw_value_bytes(mval: &MeasurementValuesMap) -> Option<&[u8]> {
         Some(RawValueChoice::Bytes(bytes)) => Some(bytes),
         _ => None,
     }
+}
+
+fn is_valid_subject_public_key_info_pem(pem: &str) -> bool {
+    let mut lines = pem.lines();
+    if lines.next() != Some(PUBLIC_KEY_PEM_LABEL) {
+        return false;
+    }
+
+    let mut encoded = String::new();
+    let mut found_end = false;
+    for line in lines.by_ref() {
+        if line == PUBLIC_KEY_PEM_END_LABEL {
+            found_end = true;
+            break;
+        }
+        if line.is_empty()
+            || !line
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b"+/=".contains(&byte))
+        {
+            return false;
+        }
+        encoded.push_str(line);
+    }
+    if !found_end || encoded.is_empty() || lines.any(|line| !line.is_empty()) {
+        return false;
+    }
+
+    STANDARD
+        .decode(encoded.as_bytes())
+        .ok()
+        .is_some_and(|der| spki::SubjectPublicKeyInfoRef::try_from(der.as_slice()).is_ok())
 }
 
 fn has_no_mval_fields_except(
@@ -388,7 +427,7 @@ fn is_valid_cca_realm_measurement(m: &MeasurementMap) -> bool {
 
 fn valid_rotpk_group(measurements: &[MeasurementMap]) -> bool {
     let mut group = None;
-    let mut slots = [false; (CCA_ROTPK_MAX_SLOT as usize) + 1];
+    let mut slots = [false; CCA_ROTPK_SLOT_COUNT];
 
     for measurement in measurements {
         let Some(mkey) = mkey_name(&measurement.mkey) else {
@@ -535,9 +574,12 @@ impl Profile for CcaPlatformProfile {
         &self.id
     }
 
-    fn reference_triple_valid(&self, triple: &ReferenceTriple) -> bool {
+    fn validate_reference_triple(&self, triple: &ReferenceTriple) -> Result<(), String> {
         if !is_valid_cca_platform_environment(triple.environment()) {
-            return false;
+            return Err(
+                "environment must contain a 32-byte Implementation ID and an optional RAND UEID"
+                    .into(),
+            );
         }
 
         let mut software_component_count = 0usize;
@@ -547,14 +589,16 @@ impl Profile for CcaPlatformProfile {
 
         for measurement in triple.measurements() {
             let Some(mkey) = mkey_name(&measurement.mkey) else {
-                continue;
+                return Err("every Platform measurement must use a text mkey".into());
             };
 
             if !is_cca_platform_mkey(&mkey) {
-                continue;
+                return Err(format!(
+                    "unrecognized CCA Platform measurement key {mkey:?}"
+                ));
             }
             if !is_valid_cca_platform_reference_measurement(measurement) {
-                return false;
+                return Err(format!("invalid CCA Platform measurement {mkey:?}"));
             }
 
             match mkey.as_str() {
@@ -568,33 +612,62 @@ impl Profile for CcaPlatformProfile {
         // §3.1.3.3: each ROTPK array entry is carried in its own reference
         // triple, so a ROTPK triple describes no other platform measurement.
         if rotpk_count > 0 {
-            return software_component_count == 0
+            return (software_component_count == 0
                 && platform_config_count == 0
                 && manufacturing_config_count == 0
                 && rotpk_count == triple.measurements().len()
-                && valid_rotpk_group(triple.measurements());
+                && valid_rotpk_group(triple.measurements()))
+            .then_some(())
+            .ok_or_else(|| {
+                "ROTPK triple must contain one array entry and no other Platform measurements"
+                    .into()
+            });
         }
 
         // §3.1.3: a single reference triple MUST completely describe the CCA
         // Platform measurements — a mandatory platform configuration
         // (§3.1.3.2, "only one") and the platform software components
         // (§3.1.3.1), plus at most one manufacturing configuration (§3.1.3.4).
-        software_component_count >= 1
-            && platform_config_count == 1
-            && manufacturing_config_count <= 1
+        if software_component_count == 0 {
+            return Err("Platform triple must contain at least one software component".into());
+        }
+        if platform_config_count != 1 {
+            return Err("Platform triple must contain exactly one platform configuration".into());
+        }
+        if manufacturing_config_count > 1 {
+            return Err(
+                "Platform triple must contain at most one manufacturing configuration".into(),
+            );
+        }
+        Ok(())
     }
 
-    fn evidence_claim_valid(&self, claim: &EvidenceClaim) -> bool {
+    fn validate_evidence_claim(&self, claim: &EvidenceClaim) -> Result<(), String> {
         is_valid_cca_platform_evidence_environment(&claim.environment)
+            .then_some(())
+            .ok_or_else(|| {
+                "evidence environment must contain a 32-byte Implementation ID and RAND UEID".into()
+            })
     }
 
-    /// §3.1.4: the IAK verification key endorsement MUST identify both the
+    /// §3.1.4: the CPAK verification key endorsement MUST identify both the
     /// Implementation and Instance and MUST carry exactly one key, encoded
     /// as `tagged-pkix-base64-key-type` (`#6.554`).
-    fn attest_key_triple_valid(&self, triple: &AttestKeyTriple) -> bool {
-        is_valid_cca_platform_environment(triple.environment())
-            && triple.environment().instance.is_some()
-            && matches!(triple.keys(), [CryptoKey::PkixBase64Key(_)])
+    fn validate_attest_key_triple(&self, triple: &AttestKeyTriple) -> Result<(), String> {
+        if !is_valid_cca_platform_environment(triple.environment())
+            || triple.environment().instance.is_none()
+        {
+            return Err(
+                "CPAK environment must contain a 32-byte Implementation ID and RAND UEID".into(),
+            );
+        }
+        let [CryptoKey::PkixBase64Key(pem)] = triple.keys() else {
+            return Err("CPAK triple must contain exactly one PKIX public key".into());
+        };
+        if !is_valid_subject_public_key_info_pem(pem) {
+            return Err("CPAK key must be an RFC 7468 DER SubjectPublicKeyInfo".into());
+        }
+        Ok(())
     }
 
     fn match_measurement(
@@ -627,36 +700,51 @@ impl Profile for CcaRealmProfile {
         &self.id
     }
 
-    fn reference_triple_valid(&self, triple: &ReferenceTriple) -> bool {
+    fn validate_reference_triple(&self, triple: &ReferenceTriple) -> Result<(), String> {
         if !is_valid_cca_realm_environment(triple.environment()) {
-            return false;
+            return Err(
+                "Realm environment must contain a hash-sized RIM class ID and no instance ID"
+                    .into(),
+            );
         }
 
         let mut has_rim = false;
 
         for measurement in triple.measurements() {
             let Some(mkey) = mkey_name(&measurement.mkey) else {
-                return false;
+                return Err("every Realm measurement must use a text mkey".into());
             };
 
             if !is_cca_realm_mkey(&mkey) || !is_valid_cca_realm_measurement(measurement) {
-                return false;
+                return Err(format!("invalid CCA Realm measurement {mkey:?}"));
             }
             // §3.2.2: the environment class-id carries the RIM, so the
             // mandatory `cca.rim` measurement MUST report the same value.
             if mkey == CCA_MKEY_RIM {
                 if !realm_rim_matches_environment(triple.environment(), measurement) {
-                    return false;
+                    return Err(
+                        "cca.rim must contain the RIM carried by the environment class ID".into(),
+                    );
                 }
                 has_rim = true;
             }
         }
 
-        has_rim && !has_duplicate_mkeys(triple.measurements(), is_cca_realm_mkey)
+        if !has_rim {
+            return Err("Realm triple must contain cca.rim".into());
+        }
+        if has_duplicate_mkeys(triple.measurements(), is_cca_realm_mkey) {
+            return Err("Realm triple must not contain duplicate measurement keys".into());
+        }
+        Ok(())
     }
 
-    fn evidence_claim_valid(&self, claim: &EvidenceClaim) -> bool {
+    fn validate_evidence_claim(&self, claim: &EvidenceClaim) -> Result<(), String> {
         is_valid_cca_realm_environment(&claim.environment)
+            .then_some(())
+            .ok_or_else(|| {
+                "Realm evidence environment must contain a hash-sized RIM and no instance ID".into()
+            })
     }
 
     fn match_measurement(

@@ -6,21 +6,21 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 - The implementation adds support for a new specification
 - An RFC errata affects our implementation
 
-**Last reviewed**: May 18, 2026
+**Last reviewed**: September 29, 2026
 
 ---
 
 ## Primary Specification
 
-### draft-ietf-rats-corim-10 — Concise Reference Integrity Manifests (CoRIM)
+### draft-ietf-rats-corim-11 — Concise Reference Integrity Manifests (CoRIM)
 
 | | |
 |-|-|
 | **Status** | Internet-Draft (not yet RFC) |
-| **Version implemented** | **-10** (December 2024) |
-| **URL** | https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html |
+| **Version implemented** | **-11** |
+| **URL** | https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html |
 | **Datatracker** | https://datatracker.ietf.org/doc/draft-ietf-rats-corim/ |
-| **CDDL source** | `cddl/corim.cddl` (local copy from -10) |
+| **CDDL source** | `cddl/corim.cddl` (local copy from -11) |
 
 #### Sections Implemented
 
@@ -56,32 +56,35 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §7.3 | `validity-map` | ✅ Full | `types/common.rs` → `ValidityMap` |
 | §7.4 | UUID size constraints | ✅ Full | `types/tags.rs` → `UUID_SIZE` |
 | §7.5 | UEID size constraints (7–33 bytes) | ✅ Full | `types/common.rs` → `InstanceIdChoice::Ueid` |
-| §9 | Appraisal / Validation | ✅ Partial | `validate.rs` |
-| §9.2 | Input validation | ✅ Full | `validate.rs` → `decode_and_validate` |
-| §9.3.3 | Reference value matching | ✅ Full | `validate.rs` → `match_reference_values` |
-| §9.3.3 | Profile-aware reference value matching | ✅ Full | `validate.rs` → `match_reference_values_with_profile` |
-| §9.3.4.3 | CES application | ✅ Full | `validate.rs` → `apply_endorsement_series` |
-| §9.3.4.3 | Profile-aware CES application | ✅ Full | `validate.rs` → `apply_endorsement_series_with_profile` |
-| §9.4.2 | Environment matching | ✅ Full | `validate.rs` → `environment_matches` |
-| §9.4.6 | Measurement matching | ✅ Full | `validate.rs` → `measurement_matches` |
-| §9.4.6.1.2 | SVN comparison | ✅ Full | `validate.rs` → `svn_matches` |
-| §9.4.6.1.3 | Digest comparison | ✅ Full | `validate.rs` → `digests_match` |
-| §12 | IANA registries / constants | ✅ Full | `types/tags.rs` (all constants) |
+| §8.2 | Appraisal / Validation | ✅ Partial | `validate.rs` |
+| §8.2.3 | Input validation | ✅ Full | `validate.rs` → `decode_and_validate` |
+| §8.2.3 | Profile-aware input validation | ✅ Full | `validate.rs` → `decode_and_validate_with_registry` |
+| §8.2.4.2 | Reference value matching | ✅ Full | `validate.rs` → `match_reference_values` |
+| §8.2.4.2 | Profile-aware reference value matching | ✅ Full | `validate.rs` → `match_reference_values_with_profile` |
+| §8.2.4.3.2 | CES application | ✅ Full | `validate.rs` → `apply_endorsement_series` |
+| §8.2.4.3.2 | Profile-aware CES application | ✅ Full | `validate.rs` → `apply_endorsement_series_with_profile` |
+| §8.2.4.4.1 | Environment matching | ✅ Full | `validate.rs` → `environment_matches` |
+| §8.2.4.4.5 | Measurement matching | ✅ Full | `validate.rs` → `measurement_matches` |
+| §8.2.4.4.5.3 | SVN comparison | ✅ Full | `validate.rs` → `svn_matches` |
+| §8.2.4.4.5.4 | Digest comparison | ✅ Full | `validate.rs` → `digests_match` |
+| §11 | IANA registries / constants | ✅ Full | `types/tags.rs` (all constants) |
 
 #### Sections Not Implemented
 
 | Section | Topic | Reason |
 |---------|-------|--------|
-| CDDL `$$*-extension` sockets | Extension points | Profile-agnostic core skips unknown keys for forward-compat; profile-aware appraisal interprets them via the registered profile's `match_measurement` (see `profile.rs`). |
+| CDDL `$$*-extension` sockets | Extension points | Unknown keys are preserved in `extra_entries`; registered profiles can validate and appraise them (see `profile.rs`). |
 
 #### ⚠️ Draft Tracking Notes
 
 This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 
-- **CDDL changes**: Any new keys, renamed fields, or restructured maps. Our `cddl/corim.cddl` is a snapshot from -10. Diff against new revisions.
+- **CDDL changes**: Any new keys, renamed fields, or restructured maps. Our `cddl/corim.cddl` is a snapshot from -11. Diff against new revisions.
 - **IANA registry updates**: New tag numbers, role values, or version scheme values may be added. Check `types/tags.rs` constants.
-- **Appraisal algorithm changes**: §9 may be refined. Our `validate.rs` implements the -10 semantics.
-- **Signed CoRIM changes**: §4.2 COSE structure may evolve. Our `types/signed.rs` implements the -10 semantics.
+- **Appraisal algorithm changes**: §8.2 may be refined. Our `validate.rs`
+  implements the -11 semantics.
+- **Signed CoRIM changes**: §4.2 COSE structure may evolve. Our signed types
+  implement the -11 semantics.
 
 **How to check for updates**: Visit the [datatracker page](https://datatracker.ietf.org/doc/draft-ietf-rats-corim/) and compare the latest revision number against `-10`.
 
@@ -91,10 +94,11 @@ This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 
 CoRIM profiles are identified by URI or OID via the `corim-map.profile`
 field (§4.1.4) and define additional measurement-values keys, expression
-tags, and appraisal semantics. Profile-aware behavior is opt-in via
-Cargo features and registered with a `corim::profile::ProfileRegistry`.
+tags, validation, and appraisal semantics. Profile-aware behavior is opt-in
+via Cargo features and registered with a
+`corim::profile::ProfileRegistry`.
 
-### draft-cds-rats-intel-corim-profile-03 — Intel CoRIM Profile
+### draft-cds-rats-intel-corim-profile-07 — Intel CoRIM Profile
 
 | | |
 |-|-|
@@ -157,6 +161,25 @@ wire elements beyond `psa-cert-num`.
 | App. A | `psa-cert-num` (key 100) + `psa-cert-num-type` regexp | ✅ Full | `psa::MVAL_PSA_CERT_NUM`, `psa::is_valid_cert_num` |
 | §8.2.6 | Profile identifier URI | ✅ Full | `psa::PSA_PROFILE_URI`, `PsaProfile::identifier` |
 | §8.2.6 | Diagnose labelling / JSON alias / exact-match appraisal | ✅ Full | `PsaProfile::{diagnose_mval_entry, mval_json_alias, match_measurement}` |
+
+### draft-ydb-rats-cca-endorsements-04 — Arm CCA Endorsements
+
+| | |
+|-|-|
+| **Status** | Internet-Draft |
+| **URL** | https://www.ietf.org/archive/id/draft-ydb-rats-cca-endorsements-04.html |
+| **Platform profile URI** | `tag:arm.com,2025:endorsements/cca_platform#1.0.0` |
+| **Realm profile URI** | `tag:arm.com,2025:endorsements/cca_realm#1.0.0` |
+| **Feature gate** | `corim/profile-cca` (opt-in) |
+| **Rust module** | `corim::profile::cca` |
+
+| Section | Topic | Status | Rust Item |
+|---------|-------|--------|-----------|
+| §3.1.2 | Platform Implementation ID and Instance ID environments | ✅ Full | `CcaPlatformProfile` validation hooks |
+| §3.1.3 | Platform software, configuration, ROTPK, and manufacturing reference values | ✅ Full | `CcaPlatformProfile::validate_reference_triple` |
+| §3.1.4 | CPAK attestation verification key | ✅ Full | `CcaPlatformProfile::validate_attest_key_triple` |
+| §3.2.2–3.2.3 | Realm environment, RIM, REMs, and RPV | ✅ Full | `CcaRealmProfile` validation and matching |
+| §3.1.5 / §3.2.4 | CCA token evidence transformations | ❌ Not implemented | Callers provide normalized `EvidenceClaim` values |
 
 ---
 

@@ -5,6 +5,13 @@
 
 use std::process::Command;
 
+use corim::builder::{ComidBuilder, CorimBuilder};
+use corim::types::common::{ClassIdChoice, CryptoKey, MeasuredElement, TagIdChoice};
+use corim::types::corim::{CorimId, ProfileChoice};
+use corim::types::environment::{ClassMap, EnvironmentMap};
+use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap};
+use corim::types::triples::ReferenceTriple;
+
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_corim-cli")
 }
@@ -175,6 +182,79 @@ fn generate_rejects_template_without_comids() {
     assert!(!status.success(), "expected failure for missing comids");
 
     let _ = std::fs::remove_file(&tmp);
+}
+
+#[test]
+fn generate_rejects_invalid_cca_profile_document() {
+    let source = unique_temp("invalid_cca_source", "cbor");
+    let template = unique_temp("invalid_cca_template", "json");
+    let output = unique_temp("invalid_cca_output", "cbor");
+
+    let environment = EnvironmentMap {
+        class: Some(ClassMap {
+            class_id: Some(ClassIdChoice::Bytes(vec![0x5A; 32])),
+            ..ClassMap::default()
+        }),
+        instance: None,
+        group: None,
+    };
+    let software_component = MeasurementMap {
+        mkey: Some(MeasuredElement::Text("cca.software-component".into())),
+        mval: MeasurementValuesMap {
+            digests: Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]),
+            cryptokeys: Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]),
+            ..MeasurementValuesMap::default()
+        },
+        authorized_by: None,
+    };
+    let comid = ComidBuilder::new(TagIdChoice::Text("cca-platform-comid".into()))
+        .add_reference_triple(ReferenceTriple::new(environment, vec![software_component]))
+        .build()
+        .unwrap();
+    let bytes = CorimBuilder::new(CorimId::Text("cca-platform-corim".into()))
+        .set_profile(ProfileChoice::Uri(
+            "tag:arm.com,2025:endorsements/cca_platform#1.0.0".into(),
+        ))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
+    std::fs::write(&source, bytes).unwrap();
+
+    let converted = Command::new(bin())
+        .args([
+            "convert",
+            source.to_str().unwrap(),
+            "-o",
+            template.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run corim-cli convert");
+    assert!(
+        converted.status.success(),
+        "convert failed: {}",
+        String::from_utf8_lossy(&converted.stderr)
+    );
+
+    let generated = Command::new(bin())
+        .args([
+            "generate",
+            template.to_str().unwrap(),
+            "-o",
+            output.to_str().unwrap(),
+        ])
+        .output()
+        .expect("run corim-cli generate");
+    assert!(!generated.status.success());
+    assert!(
+        String::from_utf8_lossy(&generated.stderr).contains("exactly one platform configuration"),
+        "unexpected error: {}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    for path in [&source, &template, &output] {
+        let _ = std::fs::remove_file(path);
+    }
 }
 
 /// A digest reference value can be authored: the digest `val` is a bare

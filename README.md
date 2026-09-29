@@ -1,7 +1,7 @@
 # corim
 
 **Concise Reference Integrity Manifest (CoRIM)** — Rust implementation of
-[draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html).
+[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
 
 This crate provides CBOR-native Rust types for the CoRIM / CoMID CDDL schema,
 a builder API, validation/appraisal logic, and signed CoRIM (COSE_Sign1)
@@ -11,10 +11,10 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 
 - **Full CDDL coverage** — types for `corim-map`, `concise-mid-tag` (CoMID),
   `concise-tl-tag` (CoTL), all 9 triple types (reference, endorsed, identity,
-  attest-key, domain dependency/membership, CoSWID, conditional endorsement,
-  conditional endorsement series), `measurement-values-map` with all fields
-  (digests, SVN, flags, raw-value, MAC/IP addresses, integrity registers,
-  int-range, crypto keys, etc.).
+  attest-key, trust dependency, domain membership, CoSWID, conditional
+  endorsement, conditional endorsement series), `measurement-values-map` with
+  all fields (digests, SVN, flags, raw-value, MAC/IP addresses, integrity
+  registers, int-range, crypto keys, etc.).
 
 - **Signed CoRIM (`#6.18`)** — decode, validate, and construct COSE_Sign1-corim
   structures per §4.2. Supports both attached and detached payload modes.
@@ -41,16 +41,16 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
   plus a `strict_links` lint that flags conditional/endorsed triples whose
   condition env is not anchored by any reference triple in the same CoMID.
 
-- **Validation & Appraisal** — reference value matching (Phase 3) and
-  conditional endorsement series application (Phase 4) per §9 of the spec.
+- **Validation & Appraisal** — core and registered-profile validation,
+  reference value matching (Phase 3), and conditional endorsement series
+  application (Phase 4) per draft-11 §8.2.
 
 - **Profile framework** — [`corim::profile`](corim/src/profile.rs) defines a
   `Profile` trait, a `ProfileRegistry`, and a `MatchContext` (epoch-aware)
-  so downstream crates can plug in CoRIM profiles that introduce extra
-  measurement-values-map fields or non-core CBOR tags. The first-party
-  Intel profile (`draft-cds-rats-intel-corim-profile`) ships under the
-  `profile-intel` Cargo feature with an `IntelProfile`, the `#6.60010`
-  expression decoder, and `tdate`-aware match semantics.
+  so downstream crates can plug in CoRIM profiles that introduce validation,
+  matching rules, extra measurement-values-map fields, or non-core CBOR tags.
+  First-party features cover Intel, Azure, Arm PSA, and Arm CCA Platform/Realm
+  profiles.
 
 - **CoSWID** — structured `ConciseSwidTag`, `SwidEntity`, `SwidLink` types
   per RFC 9393 with co-constraint validation (patch/supplemental, tag-creator
@@ -62,7 +62,7 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Decode-only; encoders always emit draft-10 wire format.
+  firmware). Decode-only; encoders always emit draft-11 wire format.
   See [`corim::compat`](corim/src/compat.rs) for the full list.
 
 ## MSRV
@@ -117,7 +117,7 @@ let (_corim, _comids) = corim::validate::decode_and_validate(&bytes).unwrap();
 
 ## Compliance notes
 
-This crate implements CoRIM per draft-ietf-rats-corim-10.
+This crate implements CoRIM per draft-ietf-rats-corim-11.
 
 | Feature | Status |
 |---------|--------|
@@ -125,7 +125,7 @@ This crate implements CoRIM per draft-ietf-rats-corim-10.
 | **CoTL** (§6) — `#6.508` | ✅ Fully modeled — `ConciseTlTag`, `CotlBuilder`, validity checks |
 | **CoSWID** (RFC 9393) — `#6.505` | ✅ Structured — `ConciseSwidTag`, `SwidEntity`, `SwidLink`; payload/evidence opaque |
 | **Signed CoRIM** (§4.2) — `#6.18` | ✅ Decode, validate, construct (attached + detached); no crypto dependency |
-| CDDL extension sockets | ❌ Not modeled; unknown keys silently skipped for forward compatibility |
+| CDDL extension sockets | ✅ Unknown keys preserved in `extra_entries`; registered profiles can validate and appraise them |
 | CoTS (concise-ta-stores) | ❌ Separate draft, not modeled |
 | `no_std` + `alloc` | ✅ Library crate compiles without `std`; `std` feature is default-on |
 

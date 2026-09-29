@@ -85,7 +85,7 @@ use std::process;
 use clap::Parser;
 
 use corim::builder::CorimBuilder;
-use corim::profile::{Profile, ProfileRegistry};
+use corim::profile::Profile;
 use corim::types::comid::ComidTag;
 use corim::types::common::EntityMap;
 use corim::types::corim::{ConciseTlTag, CorimId, CorimLocator, ProfileChoice};
@@ -178,7 +178,7 @@ pub(crate) fn build_corim_from_template(
     // compiled with) and look up the profile named by the template so
     // its mval aliases resolve. Missing lookup is not fatal — the
     // template may use only core fields or raw integer keys.
-    let registry = build_registry();
+    let registry = crate::profiles::build_registry();
     let profile: Option<&(dyn Profile + Send + Sync)> =
         profile_choice.as_ref().and_then(|pc| registry.get(pc));
 
@@ -284,12 +284,11 @@ pub(crate) fn build_corim_from_template(
         .build_bytes()
         .map_err(|e| format!("building CoRIM: {e}"))?;
 
-    // Sanity-check the freshly-built CoRIM before writing. The strict
-    // validator requires at least one CoMID, so only run it when CoMIDs
-    // are present; for CoSWID/CoTL-only CoRIMs, fall back to a structural
-    // tag-501 decode.
+    // Validate core and registered-profile constraints before writing. The
+    // strict validator requires at least one CoMID, so CoSWID/CoTL-only
+    // CoRIMs use a structural tag-501 decode instead.
     if comid_count > 0 {
-        corim::validate::decode_and_validate(&bytes)
+        corim::validate::decode_and_validate_with_registry(&bytes, &registry)
             .map_err(|e| format!("post-build validation failed: {e}"))?;
     } else {
         corim::cbor::decode::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(&bytes)
@@ -400,22 +399,4 @@ fn resolve_mval_aliases(value: &mut serde_json::Value, profile: &(dyn Profile + 
         }
         _ => {}
     }
-}
-
-/// Build a registry of every first-party profile the CLI was compiled
-/// with, so `generate` can resolve profile-specific mval aliases.
-fn build_registry() -> ProfileRegistry {
-    #[allow(unused_mut)]
-    let mut registry = ProfileRegistry::new();
-    #[cfg(feature = "intel")]
-    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
-    #[cfg(feature = "azure")]
-    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
-    #[cfg(feature = "psa")]
-    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaPlatformProfile::new()));
-    #[cfg(feature = "cca")]
-    registry.register(Box::new(corim::profile::cca::CcaRealmProfile::new()));
-    registry
 }

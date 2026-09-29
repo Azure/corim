@@ -571,14 +571,14 @@ The `--diagnose` walker emits a `[warn ]` issue at `$` and recurses
 into the inner value so the user gets full diagnostics.
 
 This relaxation is **decode-only** — `SignedCorimBuilder` and
-`CorimBuilder` always emit draft-10 wire format (no `#6.500`, no
+`CorimBuilder` always emit draft-11 wire format (no `#6.500`, no
 `#6.502`). Builder tests and round-trip tests verify this.
 
 #### Bare (untagged) `corim-map` payload
 
 The pre-PR-#337 CDDL allowed `payload: bstr .cbor (tagged-corim-map /
 corim-map)` because the outer `#6.502` provided context. The IETF
-draft-10 now requires `tagged-corim-map = #6.501(corim-map)`, but
+draft-11 requires `tagged-corim-map = #6.501(corim-map)`, but
 TCG-style producers (including NVIDIA) still emit the bare form.
 
 [`crate::compat::wrap_bare_corim_map`](../corim/src/compat.rs) prefixes
