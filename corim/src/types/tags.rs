@@ -54,7 +54,7 @@ pub const TAG_LEGACY_TOP: u64 = 500;
 
 /// `#6.502(signed-corim)` — legacy wrapper around `#6.18(COSE_Sign1)` from
 /// early CoRIM drafts and the TCG Endorsement spec. Not part of
-/// draft-ietf-rats-corim-10.
+/// draft-ietf-rats-corim-11.
 pub const TAG_LEGACY_SIGNED: u64 = 502;
 
 /// `tagged-concise-swid-tag` = `#6.505(bytes .cbor concise-swid-tag)`.
