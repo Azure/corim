@@ -193,7 +193,12 @@ impl<T: Serialize> Serialize for Tagged<T> {
         // Convert inner T to Value, wrap in Tag, then serialize.
         // The Value::Tag variant's Serialize uses the __cbor_tag sentinel
         // so that ValueSerializer preserves the tag structure.
-        let inner_value = value_ser::to_value(&self.value).map_err(serde::ser::Error::custom)?;
+        let inner_value = if s.is_human_readable() {
+            value_ser::to_human_readable_value(&self.value)
+        } else {
+            value_ser::to_value(&self.value)
+        }
+        .map_err(serde::ser::Error::custom)?;
         let tagged = Value::Tag(self.tag, Box::new(inner_value));
         tagged.serialize(s)
     }
@@ -224,7 +229,12 @@ pub fn serialize_tagged<T: Serialize, S: Serializer>(
     value: &T,
     s: S,
 ) -> Result<S::Ok, S::Error> {
-    let inner_value = value_ser::to_value(value).map_err(serde::ser::Error::custom)?;
+    let inner_value = if s.is_human_readable() {
+        value_ser::to_human_readable_value(value)
+    } else {
+        value_ser::to_value(value)
+    }
+    .map_err(serde::ser::Error::custom)?;
     let tagged = Value::Tag(tag, Box::new(inner_value));
     tagged.serialize(s)
 }

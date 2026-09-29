@@ -64,7 +64,20 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|(f, _ty)| {
             let key = f.attrs.key;
             let temp = format_ident!("__field_{}", f.ident);
-            if f.attrs.bytes {
+            if f.attrs.uri {
+                let assign = if f.attrs.optional {
+                    quote! { #temp = Some(Some(uri)); }
+                } else {
+                    quote! { #temp = Some(uri); }
+                };
+                quote! {
+                    #key => {
+                        let val: crate::cbor::value::Value = map.next_value()?;
+                        let uri = crate::types::uri::deserialize_uri(val)?;
+                        #assign
+                    }
+                }
+            } else if f.attrs.bytes {
                 // For bytes fields, deserialize from Value::Bytes → Vec<u8>
                 quote! {
                     #key => {

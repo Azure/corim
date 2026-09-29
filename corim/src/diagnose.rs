@@ -64,7 +64,7 @@ use crate::types::tags::{
     MVAL_KEY_IP_ADDR, MVAL_KEY_MAC_ADDR, MVAL_KEY_NAME, MVAL_KEY_RAW_VALUE,
     MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, MVAL_KEY_SERIAL_NUMBER, MVAL_KEY_SVN, MVAL_KEY_UEID,
     MVAL_KEY_UUID, MVAL_KEY_VERSION, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED,
-    TAG_LEGACY_TOP, TAG_OID, TAG_SIGNED_CORIM, TAG_UUID, TRIPLES_KEY_ATTEST_KEY,
+    TAG_LEGACY_TOP, TAG_OID, TAG_SIGNED_CORIM, TAG_URI, TAG_UUID, TRIPLES_KEY_ATTEST_KEY,
     TRIPLES_KEY_COND_ENDORSEMENT, TRIPLES_KEY_COND_ENDORSEMENT_SERIES, TRIPLES_KEY_COSWID,
     TRIPLES_KEY_DEPENDENCY, TRIPLES_KEY_ENDORSED, TRIPLES_KEY_IDENTITY, TRIPLES_KEY_MEMBERSHIP,
     TRIPLES_KEY_REFERENCE,
@@ -953,12 +953,23 @@ fn inspect_corim_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
             }
             CORIM_KEY_PROFILE => match val {
                 Value::Text(ref s) => {
-                    let id = ProfileChoice::Uri(s.clone());
-                    if let Some(p) = ins.profiles.get(&id) {
-                        ins.current_profile = Some(p);
-                        ins.info(
-                            path.clone(),
-                            format!("profile (key 3) URI matched registered profile: {}", s),
+                    ins.warn(
+                        path.clone(),
+                        "legacy untagged profile URI; conformant encoding is #6.32(tstr)",
+                    );
+                    select_profile_uri(ins, &path, s);
+                }
+                Value::Tag(TAG_URI, ref inner) => {
+                    if let Value::Text(ref s) = **inner {
+                        select_profile_uri(ins, &path, s);
+                    } else {
+                        ins.err(
+                            path,
+                            format!(
+                                "profile (key 3) URI tag #6.{} must wrap tstr, found {}",
+                                TAG_URI,
+                                value_kind(inner)
+                            ),
                         );
                     }
                 }
@@ -988,7 +999,8 @@ fn inspect_corim_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
                 _ => ins.err(
                     path,
                     format!(
-                        "profile (key 3) must be uri (tstr) or tagged-oid-type, found {}",
+                        "profile (key 3) must be uri (#6.{}(tstr)) or tagged-oid-type, found {}",
+                        TAG_URI,
                         value_kind(&val)
                     ),
                 ),
@@ -1033,6 +1045,17 @@ fn inspect_corim_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
 
     if let Some(v) = tags_value {
         inspect_tags_array(ins, &format!("{}.1", base_path), v);
+    }
+}
+
+fn select_profile_uri(ins: &mut Inspector<'_>, path: &str, uri: &str) {
+    let id = ProfileChoice::Uri(uri.into());
+    if let Some(profile) = ins.profiles.get(&id) {
+        ins.current_profile = Some(profile);
+        ins.info(
+            path,
+            format!("profile (key 3) URI matched registered profile: {uri}"),
+        );
     }
 }
 

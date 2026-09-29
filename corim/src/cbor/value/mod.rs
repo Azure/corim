@@ -166,6 +166,14 @@ pub fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
     Ok(val)
 }
 
+/// Serialize a Rust type into a human-readable `Value` using serde.
+///
+/// Typed serializers may omit CBOR-only representation details while raw
+/// [`Value`] tags remain intact for lossless conversion.
+pub fn to_human_readable_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
+    super::minimal_backend::value_ser::to_human_readable_value(value)
+}
+
 /// Deserialize a `Value` back into a Rust type using serde.
 ///
 /// This is the last step in JSON decoding: `serde_json::Value → Value → T`.

@@ -33,7 +33,7 @@ enum Commands {
     /// Validate and inspect a CoRIM CBOR document.
     ///
     /// Reads a CBOR-encoded CoRIM file (tag-501-wrapped), validates its
-    /// structure against draft-ietf-rats-corim-10, and outputs the
+    /// structure against draft-ietf-rats-corim-11, and outputs the
     /// decoded structure.
     Validate(ValidateArgs),
 

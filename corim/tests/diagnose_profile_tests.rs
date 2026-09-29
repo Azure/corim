@@ -12,7 +12,7 @@ use corim::diagnose::{inspect, Severity};
 use corim::profile::{MatchContext, Profile, ProfileRegistry};
 use corim::types::corim::ProfileChoice;
 use corim::types::measurement::MeasurementMap;
-use corim::types::tags::{TAG_CERT_THUMBPRINT, TAG_COMID, TAG_CORIM};
+use corim::types::tags::{TAG_CERT_THUMBPRINT, TAG_COMID, TAG_CORIM, TAG_URI};
 
 const PROFILE_URI: &str = "urn:example:diagnose-test";
 
@@ -44,6 +44,13 @@ impl Profile for DemoProfile {
 /// Build a minimal valid CoRIM containing one CoMID whose first measurement
 /// has an mval with a profile-defined extension key (-85).
 fn build_corim_with_profile_and_extension(profile_uri: &str) -> Vec<u8> {
+    build_corim_with_profile_value(Value::Tag(
+        TAG_URI,
+        Box::new(Value::Text(profile_uri.into())),
+    ))
+}
+
+fn build_corim_with_profile_value(profile: Value) -> Vec<u8> {
     // measurement.mval = { 11: "name", -85: 42 }
     let mval = Value::Map(vec![
         (Value::Integer(11i128), Value::Text("widget".into())),
@@ -75,7 +82,7 @@ fn build_corim_with_profile_and_extension(profile_uri: &str) -> Vec<u8> {
     ]);
     let comid_bytes = encode(&comid_map).unwrap();
 
-    // corim-map = { 0: "my-id", 1: [#6.506(comid_bytes)], 3: profile_uri }
+    // corim-map = { 0: "my-id", 1: [#6.506(comid_bytes)], 3: profile }
     let corim_inner = Value::Map(vec![
         (Value::Integer(0i128), Value::Text("my-id".into())),
         (
@@ -85,7 +92,7 @@ fn build_corim_with_profile_and_extension(profile_uri: &str) -> Vec<u8> {
                 Box::new(Value::Bytes(comid_bytes)),
             )]),
         ),
-        (Value::Integer(3i128), Value::Text(profile_uri.into())),
+        (Value::Integer(3i128), profile),
     ]);
     encode(&Tagged::new(TAG_CORIM, corim_inner)).unwrap()
 }
@@ -179,6 +186,22 @@ fn matching_profile_emits_recognition_info_issue() {
         })
         .expect("expected a profile-recognition info issue");
     assert!(recognized.message().contains(PROFILE_URI));
+}
+
+#[test]
+fn legacy_bare_profile_uri_is_accepted_with_warning() {
+    let bytes = build_corim_with_profile_value(Value::Text(PROFILE_URI.into()));
+    let mut registry = ProfileRegistry::new();
+    registry.register(Box::new(DemoProfile {
+        id: ProfileChoice::Uri(PROFILE_URI.into()),
+    }));
+    let report = inspect(&bytes, &registry);
+
+    assert_eq!(report.error_count(), 0, "issues: {:#?}", report.issues());
+    assert!(report.issues().iter().any(|issue| {
+        issue.severity() == Severity::Warning
+            && issue.message().contains("legacy untagged profile URI")
+    }));
 }
 
 #[test]
