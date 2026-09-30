@@ -214,12 +214,20 @@ pub fn validate_corim_profile(
     for (comid_index, comid) in comids.iter().enumerate() {
         if let Some(triples) = &comid.triples.reference_triples {
             for (triple_index, triple) in triples.iter().enumerate() {
-                profile.validate_reference_triple(triple).map_err(|error| {
-                    ValidationError::Invalid(format!(
+                if let Some(issue) = crate::profile::reference_validation_issues(profile, triple)
+                    .into_iter()
+                    .next()
+                {
+                    let location = match issue.measurement_index {
+                        Some(index) => format!(".measurements[{index}]"),
+                        None => String::new(),
+                    };
+                    return Err(ValidationError::Invalid(format!(
                         "profile {profile_id}, comids[{comid_index}].reference-triples\
-                         [{triple_index}]: {error}"
-                    ))
-                })?;
+                         [{triple_index}]{location}: {}",
+                        issue.error
+                    )));
+                }
             }
         }
         if let Some(triples) = &comid.triples.attest_key_triples {
@@ -419,13 +427,15 @@ pub struct EvidenceClaim {
 ///
 /// Before any per-pair matching, the profile's
 /// [`Profile::validate_reference_triple`] hook is called once for each
-/// reference triple. For each candidate evidence claim, the profile's
-/// [`Profile::validate_evidence_claim`] hook is also called before generic
-/// environment matching. A validation failure is returned rather than being
-/// treated as an ordinary non-match. Profiles with no triple- or
-/// evidence-level rules behave as if only per-pair matching were customized.
-/// Pass `None` for `profile` to get behavior identical to
-/// [`match_reference_values`].
+/// reference triple, followed by
+/// [`Profile::validate_reference_measurement`] for every measurement in that
+/// triple. For each candidate evidence claim,
+/// [`Profile::validate_evidence_claim`] is also called before generic
+/// environment matching. Any validation failure is returned as
+/// [`ValidationError::Invalid`] rather than being treated as an ordinary
+/// non-match. Profiles with no reference- or evidence-validation rules behave
+/// as if only per-pair matching were customized. Pass `None` for `profile` to
+/// get behavior identical to [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
 ///
@@ -450,12 +460,20 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
 
     if let Some(profile) = profile {
         for triple in ref_triples {
-            profile.validate_reference_triple(triple).map_err(|error| {
-                ValidationError::Invalid(format!(
-                    "profile {} reference triple: {error}",
-                    profile.identifier()
-                ))
-            })?;
+            if let Some(issue) = crate::profile::reference_validation_issues(profile, triple)
+                .into_iter()
+                .next()
+            {
+                let location = match issue.measurement_index {
+                    Some(index) => format!(" measurement[{index}]"),
+                    None => String::new(),
+                };
+                return Err(ValidationError::Invalid(format!(
+                    "profile {} reference triple{location}: {}",
+                    profile.identifier(),
+                    issue.error
+                )));
+            }
         }
         if !ref_triples.is_empty() {
             validate_profile_evidence(evidence, profile)?;

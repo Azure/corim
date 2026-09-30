@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Diagnostic decoder — best-effort structural inspection of a CoRIM document.
+//! Diagnostic decoder — best-effort inspection of a CoRIM document.
 //!
 //! # Stability
 //!
@@ -11,14 +11,18 @@
 //! [`Severity`](crate::diagnose::Severity), and
 //! [`EnvelopeKind`](crate::diagnose::EnvelopeKind) may change between minor
 //! versions without a deprecation cycle. Production decode/validate code
-//! should use [`crate::validate::decode_and_validate`] instead.
+//! should use [`crate::validate::decode_and_validate`] or, for registered
+//! profile semantics, [`crate::validate::decode_and_validate_with_registry`]
+//! instead.
 //!
 //! Unlike [`crate::validate::decode_and_validate`], the functions in this
 //! module do **not** abort on the first error. They walk the CBOR tree as
 //! a generic [`Value`](crate::cbor::value::Value) and emit a
 //! [`DecodeReport`](crate::diagnose::DecodeReport) containing every
 //! structural problem they recognize, with a path expression, the expected
-//! shape, and what was actually found.
+//! shape, and what was actually found. When the document names a registered
+//! profile, profile semantic validation errors are collected in the same
+//! report rather than aborting the walk.
 //!
 //! Coverage (current scope, draft-ietf-rats-corim-11):
 //!
@@ -30,10 +34,9 @@
 //!   inline-vs-hash-envelope mode requirements (§4.2.1)
 //! - `unsigned-corim-map` — `id`/`tags`/`profile`/`rim-validity`/`entities` types
 //! - `tags[]` — top-level tag dispatch (`#6.505` CoSWID, `#6.506` CoMID,
-//!   `#6.508` CoTL); inner CBOR is *not* walked yet
-//!
-//! Per-triple/measurement diagnostics are intentionally not yet implemented;
-//! see the issue tracker for the planned expansion.
+//!   `#6.508` CoTL), including CoMID environments, triples, and measurements
+//! - Registered-profile semantic validation for reference measurements,
+//!   reference triples, and attestation-key triples
 //!
 //! # Example
 //!
@@ -48,6 +51,7 @@ use crate::cbor::value::{Tagged, Value};
 use crate::nostd_prelude::*;
 use crate::profile::{Profile, ProfileRegistry};
 use crate::types::corim::ProfileChoice;
+use crate::types::measurement::MeasurementMap;
 use crate::types::signed::{
     CORIM_CONTENT_TYPE, COSE_HEADER_ALG, COSE_HEADER_CONTENT_TYPE, COSE_HEADER_CORIM_META,
     COSE_HEADER_CWT_CLAIMS, COSE_HEADER_KID, COSE_HEADER_PAYLOAD_HASH_ALG,
@@ -69,6 +73,7 @@ use crate::types::tags::{
     TRIPLES_KEY_DEPENDENCY, TRIPLES_KEY_ENDORSED, TRIPLES_KEY_IDENTITY, TRIPLES_KEY_MEMBERSHIP,
     TRIPLES_KEY_REFERENCE,
 };
+use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 
 use core::fmt;
 
@@ -80,7 +85,7 @@ use core::fmt;
 #[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Severity {
-    /// A structural violation that prevents strict decoding.
+    /// A violation that prevents strict decoding or profile validation.
     Error,
     /// A spec-level concern (e.g. SHOULD violation) that does not prevent decoding.
     Warning,
@@ -98,7 +103,7 @@ impl fmt::Display for Severity {
     }
 }
 
-/// One structural issue (or recognized section) discovered during inspection.
+/// One issue or recognized section discovered during inspection.
 ///
 /// Field layout is **unstable**; access via the [`severity`](Self::severity),
 /// [`path`](Self::path), [`message`](Self::message), and [`hint`](Self::hint)
@@ -120,7 +125,7 @@ impl DecodeIssue {
     pub fn path(&self) -> &str {
         &self.path
     }
-    /// Short description: what was expected vs. what was found.
+    /// Short description of the finding.
     pub fn message(&self) -> &str {
         &self.message
     }
@@ -213,8 +218,8 @@ struct Inspector<'a> {
     profiles: &'a ProfileRegistry,
     /// Profile resolved from the manifest's `corim-map.profile` field —
     /// `Some` if the field was present AND the registry knows that
-    /// identifier. Used by the mval walker to label profile-defined
-    /// extension keys via [`Profile::diagnose_mval_entry`].
+    /// identifier. Used to label profile-defined extension keys and
+    /// run profile semantic validation.
     current_profile: Option<&'a dyn Profile>,
 }
 
@@ -283,19 +288,20 @@ fn value_kind(v: &Value) -> &'static str {
 // Public entrypoint
 // ===========================================================================
 
-/// Inspect a CBOR-encoded CoRIM document and return a structural report.
+/// Inspect a CBOR-encoded CoRIM document and return a diagnostic report.
 ///
 /// This walks the document as a generic [`Value`] tree (see [module-level
 /// docs][self] for coverage) and never aborts on the first error — every
-/// recognizable structural problem is appended to the [`DecodeReport`].
+/// recognizable structural or profile-semantic problem is appended to the
+/// [`DecodeReport`].
 ///
-/// The `profiles` argument is consulted when the walker reaches profile-
-/// defined extension keys inside a `measurement-values-map` (any integer
-/// key not in the standard 0..=15 range). If the manifest's
-/// `corim-map.profile` field names a [`Profile`] that the registry knows,
-/// that profile's [`Profile::diagnose_mval_entry`] method is invoked to
-/// label each extension key. Pass `&ProfileRegistry::new()` for the
-/// no-profile case.
+/// If the manifest's `corim-map.profile` field names a registered
+/// [`Profile`], the walker uses [`Profile::diagnose_mval_entry`] to label
+/// profile-defined measurement keys and invokes the profile's reference-
+/// measurement, reference-triple, and attestation-key-triple validation
+/// hooks. Semantic failures are emitted as error-severity issues while the
+/// walk continues. Pass `&ProfileRegistry::new()` to perform structural
+/// inspection without profile-specific labels or validation.
 pub fn inspect(bytes: &[u8], profiles: &ProfileRegistry) -> DecodeReport {
     let mut ins = Inspector::new(profiles);
 
@@ -1404,11 +1410,11 @@ fn inspect_triples_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
         match key {
             TRIPLES_KEY_REFERENCE | TRIPLES_KEY_ENDORSED => {
                 // [+ (environment-map, [+ measurement-map])]
-                inspect_env_measurements_triples(ins, &path, v, triple_kind_label(key));
+                inspect_env_measurements_triples(ins, &path, v, key, triple_kind_label(key));
             }
             TRIPLES_KEY_IDENTITY | TRIPLES_KEY_ATTEST_KEY => {
                 // [+ (environment-map, [+ $crypto-key-type-choice], ? conditions)]
-                inspect_env_keylist_triples(ins, &path, v, triple_kind_label(key));
+                inspect_env_keylist_triples(ins, &path, v, key, triple_kind_label(key));
             }
             TRIPLES_KEY_DEPENDENCY | TRIPLES_KEY_MEMBERSHIP => {
                 // [+ (environment-map, [+ environment-map])] — no measurements
@@ -1470,6 +1476,7 @@ fn inspect_env_measurements_triples(
     ins: &mut Inspector<'_>,
     base_path: &str,
     v: Value,
+    triple_key: i64,
     kind: &str,
 ) {
     let arr = match v {
@@ -1493,6 +1500,14 @@ fn inspect_env_measurements_triples(
 
     for (i, triple) in arr.into_iter().enumerate() {
         let tpath = format!("{}[{}]", base_path, i);
+        let typed_triple = if triple_key == TRIPLES_KEY_REFERENCE {
+            cbor::value::from_value::<ReferenceTriple>(&triple).ok()
+        } else {
+            None
+        };
+        if let Some(triple) = typed_triple.as_ref() {
+            inspect_profile_reference_triple(ins, &tpath, triple);
+        }
         let pair = match triple {
             Value::Array(a) => a,
             other => {
@@ -1534,7 +1549,16 @@ fn inspect_env_measurements_triples(
                     ins.err(meas_path, "measurements list is empty");
                 } else {
                     for (j, m) in ms.into_iter().enumerate() {
-                        inspect_measurement_map(ins, &format!("{}[{}]", meas_path, j), m);
+                        let path = format!("{}[{}]", meas_path, j);
+                        let typed_measurement = if triple_key == TRIPLES_KEY_REFERENCE {
+                            cbor::value::from_value::<MeasurementMap>(&m).ok()
+                        } else {
+                            None
+                        };
+                        inspect_measurement_map(ins, &path, m);
+                        if let Some(measurement) = typed_measurement.as_ref() {
+                            inspect_profile_reference_measurement(ins, &path, measurement);
+                        }
                     }
                 }
             }
@@ -1553,7 +1577,13 @@ fn inspect_env_measurements_triples(
 /// `[+ (environment-map, [+ $crypto-key-type-choice], ? conditions)]`
 /// (identity, attest-key). The second element is a non-empty key-list, not
 /// a measurement list, and an optional third element carries conditions.
-fn inspect_env_keylist_triples(ins: &mut Inspector<'_>, base_path: &str, v: Value, kind: &str) {
+fn inspect_env_keylist_triples(
+    ins: &mut Inspector<'_>,
+    base_path: &str,
+    v: Value,
+    triple_key: i64,
+    kind: &str,
+) {
     let arr = match v {
         Value::Array(a) => a,
         other => {
@@ -1575,6 +1605,11 @@ fn inspect_env_keylist_triples(ins: &mut Inspector<'_>, base_path: &str, v: Valu
 
     for (i, triple) in arr.into_iter().enumerate() {
         let tpath = format!("{}[{}]", base_path, i);
+        let typed_triple = if triple_key == TRIPLES_KEY_ATTEST_KEY {
+            cbor::value::from_value::<AttestKeyTriple>(&triple).ok()
+        } else {
+            None
+        };
         let mut record = match triple {
             Value::Array(a) => a,
             other => {
@@ -1645,6 +1680,67 @@ fn inspect_env_keylist_triples(ins: &mut Inspector<'_>, base_path: &str, v: Valu
                 ),
             }
         }
+
+        if let Some(triple) = typed_triple.as_ref() {
+            inspect_profile_attest_key_triple(ins, &tpath, triple);
+        }
+    }
+}
+
+fn inspect_profile_reference_triple(
+    ins: &mut Inspector<'_>,
+    base_path: &str,
+    triple: &ReferenceTriple,
+) {
+    let issue = {
+        let Some(profile) = ins.current_profile else {
+            return;
+        };
+        profile
+            .validate_reference_triple(triple)
+            .err()
+            .map(|error| (profile.identifier().to_string(), error))
+    };
+    if let Some((profile_id, error)) = issue {
+        ins.err(base_path, format!("profile {profile_id}: {error}"));
+    }
+}
+
+fn inspect_profile_reference_measurement(
+    ins: &mut Inspector<'_>,
+    base_path: &str,
+    measurement: &MeasurementMap,
+) {
+    let issue = {
+        let Some(profile) = ins.current_profile else {
+            return;
+        };
+        profile
+            .validate_reference_measurement(measurement)
+            .err()
+            .map(|error| (profile.identifier().to_string(), error))
+    };
+    if let Some((profile_id, error)) = issue {
+        ins.err(base_path, format!("profile {profile_id}: {error}"));
+    }
+}
+
+fn inspect_profile_attest_key_triple(
+    ins: &mut Inspector<'_>,
+    base_path: &str,
+    triple: &AttestKeyTriple,
+) {
+    let issue = {
+        let Some(profile) = ins.current_profile else {
+            return;
+        };
+        profile
+            .validate_attest_key_triple(triple)
+            .err()
+            .map(|error| (profile.identifier().to_string(), error))
+    };
+    if let Some((profile_id, error)) = issue {
+        ins.err(base_path, format!("profile {profile_id}: {error}"));
     }
 }
 
