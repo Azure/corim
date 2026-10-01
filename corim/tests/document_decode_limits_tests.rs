@@ -194,6 +194,33 @@ fn header_entry_point_shares_limits_with_corim_meta() {
     );
 }
 
+#[test]
+fn signed_envelope_input_limit_uses_shared_resource_error() {
+    let bytes = envelope(&header(), None);
+    let mut limits = DecodeLimits::default();
+    limits.max_input_bytes = bytes.len();
+    assert!(decode_signed_corim_with_limits(&bytes, &limits).is_ok());
+    limits.max_input_bytes -= 1;
+    assert_limit(
+        decode_signed_corim_with_limits(&bytes, &limits),
+        "input bytes",
+        limits.max_input_bytes,
+    );
+    limits.max_input_bytes = 0;
+    assert_limit(
+        decode_signed_corim_with_limits(&bytes, &limits),
+        "input bytes",
+        0,
+    );
+}
+
+#[test]
+fn signed_envelope_default_input_limit_uses_shared_resource_error() {
+    let limit = DecodeLimits::default().max_input_bytes;
+    let bytes = vec![c::BYTE_NULL; limit + 1];
+    assert_limit(decode_signed_corim(&bytes), "input bytes", limit);
+}
+
 fn envelope(protected: &[u8], payload: Option<&[u8]>) -> Vec<u8> {
     cbor::encode(&Value::Tag(
         TAG_SIGNED_CORIM,
