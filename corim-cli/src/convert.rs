@@ -262,4 +262,3 @@ fn apply_mval_alias_names(value: &mut JsonValue, profile: &(dyn Profile + Send +
         _ => {}
     }
 }
-

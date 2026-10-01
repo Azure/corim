@@ -201,13 +201,7 @@ fn decode_signed_budget(
 ) -> Result<CoseSign1Corim, crate::DecodeError> {
     use crate::error::DecodeError;
 
-    if bytes.len() > budget.limits.max_input_bytes {
-        return Err(DecodeError::InvalidStructure(format!(
-            "payload too large: {} bytes (max {})",
-            bytes.len(),
-            budget.limits.max_input_bytes,
-        )));
-    }
+    budget.check_input(bytes)?;
 
     // Parse once: legacy wrappers consume depth and value budget too.
     let val = crate::compat::peel_value(budget.decode_value(bytes)?);
