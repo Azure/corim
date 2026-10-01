@@ -457,6 +457,104 @@ fn hash_payload_is_opaque_even_when_it_looks_like_hostile_cbor() {
 }
 
 #[test]
+fn hash_payload_validation_requires_preimage_instead_of_decoding_digest() {
+    let mut protected = decoded(&header());
+    set_field(
+        &mut protected,
+        COSE_HEADER_PAYLOAD_HASH_ALG,
+        key(COSE_SHA_256),
+    );
+    set_field(
+        &mut protected,
+        COSE_HEADER_PAYLOAD_PREIMAGE_CT,
+        Value::Text(CORIM_CONTENT_TYPE.into()),
+    );
+    let protected = cbor::encode(&protected).unwrap();
+    for digest in [vec![0xAB; 32], unsigned(1), nested_arrays(65)] {
+        let signed = decode_signed_corim(&envelope(&protected, Some(&digest))).unwrap();
+        for result in [
+            validate_signed_corim_payload(&signed, NOW),
+            validate_signed_corim_payload_with_limits(&signed, NOW, &DecodeLimits::default()),
+            validate_signed_corim_payload_detached(&signed, &digest, NOW),
+            validate_signed_corim_payload_detached_with_limits(
+                &signed,
+                &digest,
+                NOW,
+                &DecodeLimits::default(),
+            ),
+        ] {
+            assert!(
+                matches!(result, Err(ValidationError::Invalid(ref message))
+                if message.contains("hash-envelope") && message.contains("preimage")),
+                "must not decode a digest as inline CBOR: {result:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn unsigned_explicit_input_limit_uses_shared_resource_error() {
+    let bytes = unsigned(1);
+    let mut limits = DecodeLimits::default();
+    limits.max_input_bytes = bytes.len();
+    assert!(decode_and_validate_full_at_with_limits(&bytes, NOW, &limits).is_ok());
+    for max in [bytes.len() - 1, 0] {
+        limits.max_input_bytes = max;
+        assert_validation_limit(
+            decode_and_validate_full_at_with_limits(&bytes, NOW, &limits),
+            "input bytes",
+            max,
+        );
+    }
+}
+
+#[test]
+fn legacy_unsigned_input_size_error_is_preserved() {
+    let max = corim::validate::MAX_PAYLOAD_SIZE;
+    let bytes = vec![c::BYTE_NULL; max + 1];
+    for result in [
+        decode_and_validate_full_at(&bytes, NOW).map(|_| ()),
+        corim::validate::decode_and_validate_at(&bytes, NOW).map(|_| ()),
+        corim::validate::decode_and_validate_full_at_with_registry(
+            &bytes,
+            NOW,
+            &corim::profile::ProfileRegistry::new(),
+        )
+        .map(|_| ()),
+    ] {
+        assert!(
+            matches!(result, Err(ValidationError::PayloadTooLarge { size, max: found })
+            if size == bytes.len() && found == max)
+        );
+    }
+    assert_validation_limit(
+        decode_and_validate_full_at_with_limits(&bytes, NOW, &DecodeLimits::default()),
+        "input bytes",
+        max,
+    );
+}
+
+#[test]
+fn signed_payload_explicit_input_limit_uses_shared_resource_error() {
+    let protected = header();
+    let bytes = unsigned(8);
+    assert!(bytes.len() > protected.len());
+    let signed = decode_signed_corim(&envelope(&protected, Some(&bytes))).unwrap();
+    let mut limits = DecodeLimits::default();
+    limits.max_input_bytes = bytes.len() - 1;
+    assert_validation_limit(
+        validate_signed_corim_payload_with_limits(&signed, NOW, &limits),
+        "input bytes",
+        limits.max_input_bytes,
+    );
+    assert_validation_limit(
+        validate_signed_corim_payload_detached_with_limits(&signed, &bytes, NOW, &limits),
+        "input bytes",
+        limits.max_input_bytes,
+    );
+}
+
+#[test]
 fn corim_meta_depth_limit_is_not_swallowed_by_header_compatibility() {
     let mut protected = decoded(&header());
     set_field(
