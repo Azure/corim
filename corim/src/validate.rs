@@ -266,12 +266,20 @@ fn decode_and_validate_full_impl(
     bytes: &[u8],
     now_epoch_secs: i64,
 ) -> Result<ValidatedCorim, ValidationError> {
+    if bytes.len() > MAX_PAYLOAD_SIZE {
+        return Err(ValidationError::PayloadTooLarge {
+            size: bytes.len(),
+            max: MAX_PAYLOAD_SIZE,
+        });
+    }
     decode_and_validate_full_at_with_limits(bytes, now_epoch_secs, &cbor::DecodeLimits::default())
 }
 
 /// Decode and validate with an explicit clock and resource limits (RFC 8949 §10).
 /// The outer map and every embedded tag share one aggregate value budget.
-/// Existing validation APIs use the same path with default limits.
+/// Resource failures return `ValidationError::Decode(DecodeError::LimitExceeded)`.
+/// Legacy validation APIs use default limits but retain `PayloadTooLarge` for
+/// oversized outer input.
 pub fn decode_and_validate_full_at_with_limits(
     bytes: &[u8],
     now_epoch_secs: i64,
@@ -286,12 +294,7 @@ pub(crate) fn decode_and_validate_budget(
     now_epoch_secs: i64,
     budget: &mut cbor::DecodeBudget,
 ) -> Result<ValidatedCorim, ValidationError> {
-    if bytes.len() > budget.limits.max_input_bytes {
-        return Err(ValidationError::PayloadTooLarge {
-            size: bytes.len(),
-            max: budget.limits.max_input_bytes,
-        });
-    }
+    budget.check_input(bytes)?;
     // Peel in the already-budgeted tree: wrappers count toward depth/work.
     let value = crate::compat::peel_value(budget.decode_value(bytes)?);
     let map = match value {

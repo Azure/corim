@@ -310,6 +310,8 @@ fn decode_signed_budget(
 ///
 /// For **detached** payloads, returns an error — use
 /// [`validate_signed_corim_payload_detached`] instead to supply the payload.
+/// Hash-envelope payloads are digests, not inline CoRIMs, and are rejected.
+/// The caller must obtain and authenticate the preimage separately.
 ///
 /// This is useful when the caller has already verified the signature externally
 /// and wants to inspect/validate the inner CoRIM.
@@ -327,11 +329,13 @@ pub fn validate_signed_corim_payload(
 /// Validate an attached payload with explicit parser limits (RFC 8949 §10).
 /// The original protected header and embedded payload share the value budget.
 /// No cryptographic verification is performed.
+/// Hash-envelope digests are never decoded as CBOR (draft-ietf-rats-corim-11 §4.2).
 pub fn validate_signed_corim_payload_with_limits(
     signed: &CoseSign1Corim,
     now_epoch_secs: i64,
     limits: &cbor::DecodeLimits,
 ) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    require_inline_payload(signed)?;
     let payload = signed.payload.as_ref().ok_or_else(|| {
         crate::ValidationError::Invalid(
             "signed CoRIM has detached (nil) payload; use validate_signed_corim_payload_detached()"
@@ -362,6 +366,9 @@ pub fn validate_signed_corim_payload_with_limits(
 /// 2. Verify the signature using the algorithm from `protected.alg`.
 /// 3. Call this function with the same `detached_payload` to validate the
 ///    inner CoRIM structure.
+///
+/// This is not a hash-envelope preimage-validation API. Hash mode is rejected:
+/// its COSE payload is a digest even when transported separately.
 pub fn validate_signed_corim_payload_detached(
     signed: &CoseSign1Corim,
     detached_payload: &[u8],
@@ -378,12 +385,14 @@ pub fn validate_signed_corim_payload_detached(
 /// Validate a separately supplied payload with an operation-local decode budget.
 /// Header and payload decoding share the aggregate value budget (RFC 8949 §10).
 /// No cryptographic verification is performed.
+/// Hash mode requires separately authenticated preimage handling and is rejected.
 pub fn validate_signed_corim_payload_detached_with_limits(
     signed: &CoseSign1Corim,
     detached_payload: &[u8],
     now_epoch_secs: i64,
     limits: &cbor::DecodeLimits,
 ) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    require_inline_payload(signed)?;
     // Validate the protected header structure
     signed
         .protected
@@ -394,4 +403,14 @@ pub fn validate_signed_corim_payload_detached_with_limits(
     let mut budget = cbor::DecodeBudget::new(limits)?;
     ProtectedCorimHeaderMap::decode_with_budget(&signed.protected_header_bytes, &mut budget)?;
     crate::validate::decode_and_validate_budget(detached_payload, now_epoch_secs, &mut budget)
+}
+
+fn require_inline_payload(signed: &CoseSign1Corim) -> Result<(), crate::ValidationError> {
+    if signed.protected.is_hash_envelope() {
+        return Err(crate::ValidationError::Invalid(
+            "hash-envelope payload is a digest, not an inline CoRIM; authenticated preimage required"
+                .into(),
+        ));
+    }
+    Ok(())
 }
