@@ -345,7 +345,7 @@ pub(crate) fn decode_comid_with_budget(
     };
 
     // Deserialize the already-budgeted map without a second CBOR parse.
-    crate::cbor::value::from_value(&map_value).map_err(|e| {
+    cbor::from_parsed_value(map_value).map_err(|e| {
         DecodeError::Deserialization(format!(
             "decode_comid_from_tcg_bstr: ComidTag decode: {}",
             e

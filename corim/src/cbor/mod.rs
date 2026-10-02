@@ -28,6 +28,8 @@ pub use limits::{
     DecodeLimits, DecodeSession, DEFAULT_MAX_INPUT_BYTES, DEFAULT_MAX_VALUES, MAX_COLLECTION_ITEMS,
     MAX_DECODE_DEPTH,
 };
+/// Replay an already-parsed, budget-checked tree without re-encoding or parsing.
+pub(crate) use minimal_backend::value_de::from_value as from_parsed_value;
 
 use crate::error::{DecodeError, EncodeError};
 use serde::{de::DeserializeOwned, Serialize};

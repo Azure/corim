@@ -508,7 +508,7 @@ impl ProtectedCorimHeaderMap {
                 }
                 COSE_HEADER_CWT_CLAIMS => {
                     // CWT-Claims is directly a map (not bstr-wrapped)
-                    let claims: CwtClaims = cbor::value::from_value(&v).map_err(|e| {
+                    let claims: CwtClaims = cbor::from_parsed_value(v).map_err(|e| {
                         serde::de::Error::custom(format!("cwt-claims decode: {}", e))
                     })?;
                     cwt_claims = Some(claims);

@@ -310,7 +310,7 @@ pub(crate) fn decode_and_validate_budget(
         _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
     };
     let corim: CorimMap =
-        cbor::value::from_value(&map).map_err(crate::DecodeError::Deserialization)?;
+        cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
