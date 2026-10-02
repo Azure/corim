@@ -101,6 +101,121 @@ fn limits_with_values(max_values: usize) -> DecodeLimits {
     limits
 }
 
+fn above_default_extension(byte_limit: bool) -> Value {
+    if byte_limit {
+        Value::Bytes(vec![0; cbor::DEFAULT_MAX_INPUT_BYTES + 1])
+    } else {
+        Value::Array(vec![Value::Null; cbor::DEFAULT_MAX_VALUES])
+    }
+}
+
+fn exact_document_limits(bytes: &[u8], values: usize) -> DecodeLimits {
+    let mut limits = DecodeLimits::default();
+    limits.max_input_bytes = bytes.len();
+    limits.max_values = values;
+    limits
+}
+
+#[test]
+fn raised_limits_survive_unsigned_map_deserialization() {
+    for byte_limit in [true, false] {
+        let original = unsigned(1);
+        let mut outer = decoded(&original);
+        let embedded_values = unsigned_nodes(&original) - nodes(&outer);
+        set_field(
+            &mut outer,
+            TEST_EXTENSION_LABEL,
+            above_default_extension(byte_limit),
+        );
+        let total = nodes(&outer) + embedded_values;
+        let bytes = cbor::encode(&outer).unwrap();
+        drop(outer);
+        let mut limits = exact_document_limits(&bytes, total);
+        let result = decode_and_validate_full_at_with_limits(&bytes, NOW, &limits).unwrap();
+        assert_eq!(result.comids.len(), 1);
+        limits.max_values -= 1;
+        assert_validation_limit(
+            decode_and_validate_full_at_with_limits(&bytes, NOW, &limits),
+            "values",
+            total - 1,
+        );
+    }
+}
+
+#[test]
+fn raised_limits_survive_tcg_comid_deserialization() {
+    for byte_limit in [true, false] {
+        for tagged_inner in [false, true] {
+            let mut outer = decoded(&unsigned(1));
+            let Value::Array(tags) = field(&outer, CORIM_KEY_TAGS) else {
+                panic!("tags")
+            };
+            let mut comid = decoded(byte_string(&tags[0]));
+            set_field(
+                &mut comid,
+                TEST_EXTENSION_LABEL,
+                above_default_extension(byte_limit),
+            );
+            let inner = if tagged_inner {
+                Value::Tag(TAG_COMID, Box::new(comid))
+            } else {
+                comid
+            };
+            let inner_values = nodes(&inner);
+            let inner_bytes = cbor::encode(&inner).unwrap();
+            drop(inner);
+            set_field(
+                &mut outer,
+                CORIM_KEY_TAGS,
+                Value::Array(vec![Value::Bytes(inner_bytes)]),
+            );
+            let total = nodes(&outer) + inner_values;
+            let bytes = cbor::encode(&outer).unwrap();
+            drop(outer);
+            let mut limits = exact_document_limits(&bytes, total);
+            let result = decode_and_validate_full_at_with_limits(&bytes, NOW, &limits).unwrap();
+            assert_eq!(result.comids.len(), 1);
+            limits.max_values -= 1;
+            assert_validation_limit(
+                decode_and_validate_full_at_with_limits(&bytes, NOW, &limits),
+                "values",
+                total - 1,
+            );
+        }
+    }
+}
+
+#[test]
+fn raised_limits_survive_direct_cwt_claims_deserialization() {
+    for byte_limit in [true, false] {
+        let mut protected = decoded(&header());
+        let metadata_values = header_nodes(&header()) - nodes(&protected);
+        set_field(
+            &mut protected,
+            COSE_HEADER_CWT_CLAIMS,
+            Value::Map(vec![
+                (key(CWT_CLAIM_ISS), Value::Text("Budget signer".into())),
+                (
+                    key(TEST_EXTENSION_LABEL),
+                    above_default_extension(byte_limit),
+                ),
+            ]),
+        );
+        let total = nodes(&protected) + metadata_values;
+        let bytes = cbor::encode(&protected).unwrap();
+        drop(protected);
+        let mut limits = exact_document_limits(&bytes, total);
+        let result = ProtectedCorimHeaderMap::decode_with_limits(&bytes, &limits).unwrap();
+        assert_eq!(result.cwt_claims.unwrap().extra.len(), 1);
+        limits.max_values -= 1;
+        assert_limit(
+            ProtectedCorimHeaderMap::decode_with_limits(&bytes, &limits),
+            "values",
+            total - 1,
+        );
+    }
+}
+
 fn assert_limit<T: std::fmt::Debug>(result: Result<T, DecodeError>, resource: &str, limit: usize) {
     match result {
         Err(DecodeError::LimitExceeded {
