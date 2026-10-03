@@ -14,14 +14,9 @@
 //! - Half/single precision floats
 //! - Simple values other than false/true/null
 
-/// Maximum number of items allowed in a single CBOR array or map.
-///
-/// Prevents excessive memory allocation from maliciously crafted inputs
-/// even within the 16 MiB payload limit. A single item is at minimum 1 byte,
-/// so 2 million items × 1 byte = 2 MB — well within limits.
+use super::{DecodeBudget, DecodeLimits};
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
-const MAX_COLLECTION_ITEMS: usize = 2_000_000;
 
 // Import CBOR wire-format constants.
 // In match arms we use fully-qualified `c::` prefix to avoid Rust interpreting
@@ -215,11 +210,28 @@ fn decode_arg(r: &mut SliceReader<'_>, additional: u8) -> Result<u64, CborError>
 
 /// Decode a single CBOR [`Value`](super::value::Value) from a byte slice reader.
 pub fn decode_value(r: &mut SliceReader<'_>) -> Result<super::value::Value, CborError> {
+    let mut budget = DecodeBudget::new(&DecodeLimits::default())
+        .map_err(|e| CborError::Invalid(e.to_string()))?;
+    budget
+        .check_input(&r.data[r.pos..])
+        .map_err(|e| CborError::Invalid(e.to_string()))?;
+    decode_value_budget(r, &mut budget, 0)
+}
+
+pub(crate) fn decode_value_budget(
+    r: &mut SliceReader<'_>,
+    budget: &mut DecodeBudget,
+    depth: usize,
+) -> Result<super::value::Value, CborError> {
     use super::value::Value;
 
+    budget.value()?;
     let head = r.read_u8()?;
     let major = head >> 5;
     let additional = head & 0x1F;
+    if matches!(major, c::MAJOR_ARRAY | c::MAJOR_MAP | c::MAJOR_TAG) {
+        budget.container(depth)?;
+    }
 
     match major {
         c::MAJOR_UNSIGNED => {
@@ -264,15 +276,10 @@ pub fn decode_value(r: &mut SliceReader<'_>) -> Result<super::value::Value, Cbor
             }
             let count = usize::try_from(decode_arg(r, additional)?)
                 .map_err(|_| CborError::Invalid("array length exceeds platform capacity".into()))?;
-            if count > MAX_COLLECTION_ITEMS {
-                return Err(CborError::Invalid(format!(
-                    "array length {} exceeds maximum {}",
-                    count, MAX_COLLECTION_ITEMS
-                )));
-            }
+            budget.collection(count, false)?;
             let mut arr = Vec::with_capacity(count.min(1024));
             for _ in 0..count {
-                arr.push(decode_value(r)?);
+                arr.push(decode_value_budget(r, budget, depth + 1)?);
             }
             Ok(Value::Array(arr))
         }
@@ -284,23 +291,18 @@ pub fn decode_value(r: &mut SliceReader<'_>) -> Result<super::value::Value, Cbor
             }
             let count = usize::try_from(decode_arg(r, additional)?)
                 .map_err(|_| CborError::Invalid("map length exceeds platform capacity".into()))?;
-            if count > MAX_COLLECTION_ITEMS {
-                return Err(CborError::Invalid(format!(
-                    "map length {} exceeds maximum {}",
-                    count, MAX_COLLECTION_ITEMS
-                )));
-            }
+            budget.collection(count, true)?;
             let mut map = Vec::with_capacity(count.min(1024));
             for _ in 0..count {
-                let k = decode_value(r)?;
-                let v = decode_value(r)?;
+                let k = decode_value_budget(r, budget, depth + 1)?;
+                let v = decode_value_budget(r, budget, depth + 1)?;
                 map.push((k, v));
             }
             Ok(Value::Map(map))
         }
         c::MAJOR_TAG => {
             let tag = decode_arg(r, additional)?;
-            let inner = decode_value(r)?;
+            let inner = decode_value_budget(r, budget, depth + 1)?;
             Ok(Value::Tag(tag, Box::new(inner)))
         }
         c::MAJOR_SIMPLE => match additional {

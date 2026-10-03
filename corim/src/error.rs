@@ -20,6 +20,15 @@ pub enum EncodeError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// A configured parser resource budget was exceeded (RFC 8949 §10).
+    /// Document compatibility fallbacks must not swallow this error.
+    #[error("decode limit exceeded: {resource} (limit {limit})")]
+    LimitExceeded {
+        /// Resource whose budget was exhausted.
+        resource: &'static str,
+        /// Configured maximum for that resource.
+        limit: usize,
+    },
     /// CBOR deserialization failed.
     #[error("CBOR deserialization failed: {0}")]
     Deserialization(String),

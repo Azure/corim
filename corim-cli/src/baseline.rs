@@ -12,7 +12,6 @@
 //! semantics.
 
 use std::fmt::Write as _;
-use std::fs;
 
 use corim::baseline::{
     compare, ConformanceReport, MismatchKind, StructuralMismatch, ValueDifference,
@@ -122,7 +121,7 @@ fn compared_scope(header: bool, payload: bool) -> &'static str {
 /// Load a CoRIM from a JSON template, a CBOR CoRIM, or a signed CoRIM,
 /// retaining the protected header (if signed) and payload (if present).
 fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
-    let raw = fs::read(path).map_err(|e| format!("reading baseline {path}: {e}"))?;
+    let raw = crate::input::read_file(path).map_err(|e| format!("reading baseline {path}: {e}"))?;
     if raw.is_empty() {
         return Err("baseline is empty".into());
     }
@@ -140,6 +139,9 @@ fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
             source_unsigned_desc: "unsigned CoRIM (from JSON template)",
         });
     }
+
+    corim::validate::check_decode_limits(&raw, &corim::cbor::DecodeLimits::default())
+        .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
 
     // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
     // recognizes both the bare `#6.18` tag and the legacy `#6.500`/`#6.502`
@@ -160,6 +162,9 @@ fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
                 header: Some(env.protected),
                 source_unsigned_desc: "unsigned CoRIM",
             })
+        }
+        Err(e @ corim::error::DecodeError::LimitExceeded { .. }) => {
+            Err(format!("baseline is not a valid CoRIM: {e}"))
         }
         Err(_) => {
             let (corim, _) = corim::validate::decode_and_validate(&raw)

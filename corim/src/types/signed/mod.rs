@@ -52,8 +52,10 @@ pub use header::{
 
 pub mod envelope;
 pub use envelope::{
-    build_sig_structure1, decode_signed_corim, encode_signed_corim, validate_signed_corim_payload,
-    validate_signed_corim_payload_detached, CoseSign1Corim,
+    build_sig_structure1, decode_signed_corim, decode_signed_corim_with_limits,
+    encode_signed_corim, validate_signed_corim_payload, validate_signed_corim_payload_detached,
+    validate_signed_corim_payload_detached_with_limits, validate_signed_corim_payload_with_limits,
+    CoseSign1Corim,
 };
 
 pub mod builder;
