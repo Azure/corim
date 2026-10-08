@@ -324,6 +324,7 @@ pub(crate) fn decode_and_validate_budget(
         }
         _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
     };
+    cbor::map_keys::check(&map)?;
     let corim: CorimMap =
         cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
@@ -347,12 +348,12 @@ pub(crate) fn decode_and_validate_budget(
     for tag in &corim.tags {
         match tag {
             ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = budget.decode_exact(comid_bytes)?;
+                let comid: ComidTag = budget.decode_schema_exact(comid_bytes)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag = budget.decode_exact(cotl_bytes)?;
+                let cotl: ConciseTlTag = budget.decode_schema_exact(cotl_bytes)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
