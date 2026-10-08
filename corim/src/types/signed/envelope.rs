@@ -148,6 +148,9 @@ pub fn build_sig_structure1(
 ///
 /// Produces `#6.18([protected, unprotected, payload, signature])`.
 pub fn encode_signed_corim(signed: &CoseSign1Corim) -> Result<Vec<u8>, crate::EncodeError> {
+    let unprotected = Value::Map(signed.unprotected.clone());
+    cbor::map_keys::check(&unprotected)
+        .map_err(|e| crate::EncodeError::Serialization(e.to_string()))?;
     let payload_val = match &signed.payload {
         Some(p) => Value::Bytes(p.clone()),
         None => Value::Null,
@@ -155,7 +158,7 @@ pub fn encode_signed_corim(signed: &CoseSign1Corim) -> Result<Vec<u8>, crate::En
 
     let arr = Value::Array(vec![
         Value::Bytes(signed.protected_header_bytes.clone()),
-        Value::Map(signed.unprotected.clone()),
+        unprotected,
         payload_val,
         Value::Bytes(signed.signature.clone()),
     ]);
@@ -174,24 +177,37 @@ pub fn encode_signed_corim(signed: &CoseSign1Corim) -> Result<Vec<u8>, crate::En
 /// 2. Verify the signature using the algorithm from `protected.alg`.
 /// 3. Use [`validate_signed_corim_payload`] to validate the payload.
 pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::DecodeError> {
+    decode_signed_corim_with_limits(bytes, &cbor::DecodeLimits::default())
+}
+
+/// Decode an envelope with explicit resource limits (RFC 8949 §10).
+/// Protected headers, corim-meta, attached inline payloads and embedded tags
+/// share one value budget. Payload inspection here checks resources only;
+/// it does not validate payload semantics or verify the signature/hash.
+pub fn decode_signed_corim_with_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<CoseSign1Corim, crate::DecodeError> {
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    let signed = decode_signed_budget(bytes, &mut budget)?;
+    if !signed.protected.is_hash_envelope() {
+        if let Some(payload) = &signed.payload {
+            budget.check_corim(payload)?;
+        }
+    }
+    Ok(signed)
+}
+
+fn decode_signed_budget(
+    bytes: &[u8],
+    budget: &mut cbor::DecodeBudget,
+) -> Result<CoseSign1Corim, crate::DecodeError> {
     use crate::error::DecodeError;
 
-    if bytes.len() > crate::validate::MAX_PAYLOAD_SIZE {
-        return Err(DecodeError::InvalidStructure(format!(
-            "payload too large: {} bytes (max {})",
-            bytes.len(),
-            crate::validate::MAX_PAYLOAD_SIZE,
-        )));
-    }
+    budget.check_input(bytes)?;
 
-    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
-    // present. See `crate::compat::peel_tcg_wrappers`.
-    let peeled = crate::compat::peel_tcg_wrappers(bytes)?;
-    let bytes = peeled.as_bytes();
-
-    // Decode the top-level tagged value
-    let val: Value = cbor::decode(bytes)
-        .map_err(|e| DecodeError::Deserialization(format!("cannot decode CBOR: {}", e)))?;
+    // Parse once: legacy wrappers consume depth and value budget too.
+    let val = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
 
     // Must be tag 18
     let (tag, inner) = match val {
@@ -225,6 +241,11 @@ pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::Decode
         }
     };
 
+    // Do not allow duplicate maps to disappear when a non-standard payload or
+    // signature type is tolerated below. Byte strings stay opaque here.
+    for part in &arr {
+        cbor::map_keys::check(part)?;
+    }
     let mut it = arr.into_iter();
     let protected_val = it.next().ok_or_else(|| {
         DecodeError::InvalidStructure("COSE_Sign1 missing protected header".into())
@@ -250,12 +271,19 @@ pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::Decode
     };
 
     // Decode the protected header from the bstr
-    let protected: ProtectedCorimHeaderMap = cbor::decode(&protected_header_bytes)
-        .map_err(|e| DecodeError::InvalidStructure(format!("protected header decode: {}", e)))?;
+    let protected = ProtectedCorimHeaderMap::decode_with_budget(&protected_header_bytes, budget)?;
 
     // [1] unprotected: map (tolerate non-map values from non-standard producers)
     let unprotected = match unprotected_val {
-        Value::Map(m) => m,
+        map @ Value::Map(_) => {
+            cbor::map_keys::check(&map)?;
+            // Safe: preceding pattern establishes the map variant.
+            if let Value::Map(m) = map {
+                m
+            } else {
+                unreachable!()
+            }
+        }
         _ => {
             // Some producers emit non-standard unprotected headers;
             // treat as empty for forward compatibility.
@@ -298,6 +326,8 @@ pub fn decode_signed_corim(bytes: &[u8]) -> Result<CoseSign1Corim, crate::Decode
 ///
 /// For **detached** payloads, returns an error — use
 /// [`validate_signed_corim_payload_detached`] instead to supply the payload.
+/// Hash-envelope payloads are digests, not inline CoRIMs, and are rejected.
+/// The caller must obtain and authenticate the preimage separately.
 ///
 /// This is useful when the caller has already verified the signature externally
 /// and wants to inspect/validate the inner CoRIM.
@@ -305,6 +335,23 @@ pub fn validate_signed_corim_payload(
     signed: &CoseSign1Corim,
     now_epoch_secs: i64,
 ) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    validate_signed_corim_payload_with_limits(
+        signed,
+        now_epoch_secs,
+        &cbor::DecodeLimits::default(),
+    )
+}
+
+/// Validate an attached payload with explicit parser limits (RFC 8949 §10).
+/// The original protected header and embedded payload share the value budget.
+/// No cryptographic verification is performed.
+/// Hash-envelope digests are never decoded as CBOR (draft-ietf-rats-corim-11 §4.2).
+pub fn validate_signed_corim_payload_with_limits(
+    signed: &CoseSign1Corim,
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    require_inline_payload(signed)?;
     let payload = signed.payload.as_ref().ok_or_else(|| {
         crate::ValidationError::Invalid(
             "signed CoRIM has detached (nil) payload; use validate_signed_corim_payload_detached()"
@@ -319,7 +366,9 @@ pub fn validate_signed_corim_payload(
         .map_err(crate::ValidationError::Invalid)?;
 
     // Delegate to the existing validation implementation
-    crate::validate::decode_and_validate_full_at(payload, now_epoch_secs)
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    ProtectedCorimHeaderMap::decode_with_budget(&signed.protected_header_bytes, &mut budget)?;
+    crate::validate::decode_and_validate_budget(payload, now_epoch_secs, &mut budget)
 }
 
 /// Validate a **detached** signed CoRIM payload without verifying the signature.
@@ -333,11 +382,33 @@ pub fn validate_signed_corim_payload(
 /// 2. Verify the signature using the algorithm from `protected.alg`.
 /// 3. Call this function with the same `detached_payload` to validate the
 ///    inner CoRIM structure.
+///
+/// This is not a hash-envelope preimage-validation API. Hash mode is rejected:
+/// its COSE payload is a digest even when transported separately.
 pub fn validate_signed_corim_payload_detached(
     signed: &CoseSign1Corim,
     detached_payload: &[u8],
     now_epoch_secs: i64,
 ) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    validate_signed_corim_payload_detached_with_limits(
+        signed,
+        detached_payload,
+        now_epoch_secs,
+        &cbor::DecodeLimits::default(),
+    )
+}
+
+/// Validate a separately supplied payload with an operation-local decode budget.
+/// Header and payload decoding share the aggregate value budget (RFC 8949 §10).
+/// No cryptographic verification is performed.
+/// Hash mode requires separately authenticated preimage handling and is rejected.
+pub fn validate_signed_corim_payload_detached_with_limits(
+    signed: &CoseSign1Corim,
+    detached_payload: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<crate::validate::ValidatedCorim, crate::ValidationError> {
+    require_inline_payload(signed)?;
     // Validate the protected header structure
     signed
         .protected
@@ -345,5 +416,17 @@ pub fn validate_signed_corim_payload_detached(
         .map_err(crate::ValidationError::Invalid)?;
 
     // Delegate to the existing validation implementation
-    crate::validate::decode_and_validate_full_at(detached_payload, now_epoch_secs)
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    ProtectedCorimHeaderMap::decode_with_budget(&signed.protected_header_bytes, &mut budget)?;
+    crate::validate::decode_and_validate_budget(detached_payload, now_epoch_secs, &mut budget)
+}
+
+fn require_inline_payload(signed: &CoseSign1Corim) -> Result<(), crate::ValidationError> {
+    if signed.protected.is_hash_envelope() {
+        return Err(crate::ValidationError::Invalid(
+            "hash-envelope payload is a digest, not an inline CoRIM; authenticated preimage required"
+                .into(),
+        ));
+    }
+    Ok(())
 }

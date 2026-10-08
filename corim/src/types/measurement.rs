@@ -606,7 +606,9 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                         }
                         _ => return Err(serde::de::Error::custom("digests must be an array")),
                     };
-                    map.insert(key, digests);
+                    if map.insert(key, digests).is_some() {
+                        return Err(serde::de::Error::custom("duplicate integrity register id"));
+                    }
                 }
                 Ok(IntegrityRegisters(map))
             }

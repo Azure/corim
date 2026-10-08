@@ -124,8 +124,14 @@ pub fn run(args: GenerateArgs) {
 }
 
 fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
-    let template_str = fs::read_to_string(&args.template)
+    let template_bytes = crate::input::read_file(&args.template)
         .map_err(|e| format!("reading template {}: {e}", args.template))?;
+    let template_str = String::from_utf8(template_bytes).map_err(|_| {
+        format!(
+            "reading template {}: stream did not contain valid UTF-8",
+            args.template
+        )
+    })?;
     let template: serde_json::Value =
         serde_json::from_str(&template_str).map_err(|e| format!("parsing template JSON: {e}"))?;
 
@@ -291,8 +297,10 @@ pub(crate) fn build_corim_from_template(
         corim::validate::decode_and_validate_with_registry(&bytes, &registry)
             .map_err(|e| format!("post-build validation failed: {e}"))?;
     } else {
-        corim::cbor::decode::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(&bytes)
-            .map_err(|e| format!("post-build decode failed: {e}"))?;
+        corim::cbor::decode_exact::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(
+            &bytes,
+        )
+        .map_err(|e| format!("post-build decode failed: {e}"))?;
     }
 
     Ok(bytes)
