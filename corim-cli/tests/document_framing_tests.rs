@@ -207,3 +207,84 @@ fn convert_extract_and_finalize_enforce_document_framing() {
     }
     assert!(accepted.is_empty(), "accepted trailing data: {accepted:?}");
 }
+
+#[test]
+fn edn_keeps_unknown_extension_tag_contents_opaque() {
+    let mut extensions: Vec<_> = [TAG_COSWID, TAG_COMID, TAG_COTL]
+        .into_iter()
+        .map(|tag| Value::Tag(tag, Box::new(Value::Bytes(vec![0, 1]))))
+        .collect();
+    extensions.push(Value::Tag(
+        TAG_SIGNED_CORIM,
+        Box::new(Value::Array(vec![
+            Value::Bytes(vec![0, 1]),
+            Value::Map(vec![]),
+            Value::Null,
+            Value::Bytes(vec![]),
+        ])),
+    ));
+    for extension in extensions {
+        for boundary in ["outer", "comid", "header"] {
+            let mut root: Value = cbor::decode(&unsigned()).unwrap();
+            let Value::Tag(_, map) = &mut root else {
+                panic!("CoRIM")
+            };
+            let Value::Map(fields) = map.as_mut() else {
+                panic!("CoRIM map")
+            };
+            let extra = (Value::Integer(10001), Value::Array(vec![extension.clone()]));
+            if boundary == "outer" {
+                fields.push(extra);
+            } else if boundary == "comid" {
+                let (_, Value::Array(tags)) = fields
+                    .iter_mut()
+                    .find(|(key, _)| *key == Value::Integer(i128::from(CORIM_KEY_TAGS)))
+                    .unwrap()
+                else {
+                    panic!("tags")
+                };
+                let Value::Tag(_, body) = &mut tags[0] else {
+                    panic!("CoMID tag")
+                };
+                let Value::Bytes(bytes) = body.as_mut() else {
+                    panic!("CoMID bytes")
+                };
+                let Value::Map(mut fields) = cbor::decode(bytes).unwrap() else {
+                    panic!("CoMID map")
+                };
+                fields.push(extra);
+                *bytes = cbor::encode(&Value::Map(fields)).unwrap();
+            } else {
+                root = cbor::decode(&signed(cbor::encode(&root).unwrap())).unwrap();
+                let Value::Tag(_, array) = &mut root else {
+                    panic!("COSE tag")
+                };
+                let Value::Array(parts) = array.as_mut() else {
+                    panic!("COSE array")
+                };
+                let Value::Bytes(bytes) = &mut parts[0] else {
+                    panic!("protected bytes")
+                };
+                let Value::Map(mut fields) = cbor::decode(bytes).unwrap() else {
+                    panic!("header map")
+                };
+                fields.push(extra);
+                *bytes = cbor::encode(&Value::Map(fields)).unwrap();
+            }
+            let input = Input::new(&cbor::encode(&root).unwrap());
+            assert!(success(&["validate", input.path()]), "control: {boundary}");
+            let output = Command::new(env!("CARGO_BIN_EXE_corim-cli"))
+                .args(["validate", input.path(), "--edn"])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{boundary}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            assert!(String::from_utf8(output.stdout)
+                .unwrap()
+                .contains("h'0001'"));
+        }
+    }
+}
