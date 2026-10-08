@@ -271,20 +271,36 @@ fn edn_keeps_unknown_extension_tag_contents_opaque() {
                 fields.push(extra);
                 *bytes = cbor::encode(&Value::Map(fields)).unwrap();
             }
-            let input = Input::new(&cbor::encode(&root).unwrap());
-            assert!(success(&["validate", input.path()]), "control: {boundary}");
-            let output = Command::new(env!("CARGO_BIN_EXE_corim-cli"))
-                .args(["validate", input.path(), "--edn"])
-                .output()
-                .unwrap();
+            let encoded = cbor::encode(&root).unwrap();
+            let control = Input::new(&encoded);
             assert!(
-                output.status.success(),
-                "{boundary}: {}",
-                String::from_utf8_lossy(&output.stderr)
+                success(&["validate", control.path()]),
+                "control: {boundary}"
             );
-            assert!(String::from_utf8(output.stdout)
-                .unwrap()
-                .contains("h'0001'"));
+            let mut inputs = vec![encoded.clone()];
+            if boundary != "header" {
+                let Value::Tag(_, inner) = &root else {
+                    panic!("CoRIM")
+                };
+                let bare = cbor::encode(inner.as_ref()).unwrap();
+                inputs.extend([bare.clone(), signed(encoded), signed(bare)]);
+                inputs.push(cbor::encode(&Value::Tag(TAG_LEGACY_TOP, Box::new(root))).unwrap());
+            }
+            for bytes in inputs {
+                let input = Input::new(&bytes);
+                let output = Command::new(env!("CARGO_BIN_EXE_corim-cli"))
+                    .args(["validate", input.path(), "--edn"])
+                    .output()
+                    .unwrap();
+                assert!(
+                    output.status.success(),
+                    "{boundary}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                assert!(String::from_utf8(output.stdout)
+                    .unwrap()
+                    .contains("h'0001'"));
+            }
         }
     }
 }

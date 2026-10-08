@@ -18,7 +18,10 @@ use corim::cbor::value::Value;
 use corim::cbor::{DecodeLimits, DecodeSession};
 use corim::error::DecodeError;
 use corim::types::signed::{COSE_HEADER_CORIM_META, COSE_HEADER_PAYLOAD_HASH_ALG};
-use corim::types::tags::{TAG_COMID, TAG_COSWID, TAG_COTL, TAG_SIGNED_CORIM};
+use corim::types::tags::{
+    CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED, TAG_LEGACY_TOP,
+    TAG_SIGNED_CORIM,
+};
 
 /// Render a CBOR byte string as EDN. The decoder is the same one used by
 /// the CoRIM library so anything that round-trips through the library
@@ -32,7 +35,7 @@ pub fn render(bytes: &[u8]) -> Result<String, String> {
         .map_err(|e| format!("CBOR decode failed: {e}"))?;
     let mut out = String::new();
     renderer
-        .write_value(&v, 0, 0, Ctx::Top, &mut out)
+        .write_value(&v, 0, 0, Ctx::Document, &mut out)
         .map_err(|e| format!("CBOR decode failed: {e}"))?;
     out.push('\n');
     Ok(out)
@@ -42,6 +45,11 @@ pub fn render(bytes: &[u8]) -> Result<String, String> {
 #[derive(Clone, Copy, PartialEq)]
 enum Ctx {
     Top,
+    Document,
+    CorimMap,
+    TagArray,
+    TagEntry,
+    Opaque,
     /// Inside a `#6.18(array)` — elements 0 (protected) and 2 (payload)
     /// are bstr-wrapped CBOR.
     CoseSign1Array,
@@ -119,8 +127,22 @@ impl Renderer {
                 }
             }
             Value::Array(items) => self.write_array(items, depth, nesting, ctx, out)?,
-            Value::Map(entries) => self.write_map(entries, depth, nesting, ctx, out)?,
-            Value::Tag(tag, inner) => self.write_tag(*tag, inner, depth, nesting, out)?,
+            Value::Map(entries) => {
+                let ctx = if ctx == Ctx::Document {
+                    if entries.iter().any(|(key, value)| {
+                        key == &Value::Integer(i128::from(CORIM_KEY_TAGS))
+                            && matches!(value, Value::Array(_))
+                    }) {
+                        Ctx::CorimMap
+                    } else {
+                        Ctx::Top
+                    }
+                } else {
+                    ctx
+                };
+                self.write_map(entries, depth, nesting, ctx, out)?;
+            }
+            Value::Tag(tag, inner) => self.write_tag(*tag, inner, depth, nesting, ctx, out)?,
         }
         Ok(())
     }
@@ -164,9 +186,16 @@ impl Renderer {
                     Err(_) => write_hex(b, out),
                 },
                 (Ctx::CoseSign1Array, 2, Value::Bytes(b)) if !hash_payload => {
-                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Top, out)?;
+                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Document, out)?;
                 }
-                _ => self.write_value(item, depth + 1, nesting + 1, Ctx::Top, out)?,
+                _ => {
+                    let child_ctx = match ctx {
+                        Ctx::TagArray => Ctx::TagEntry,
+                        Ctx::Top | Ctx::Document => Ctx::Top,
+                        _ => Ctx::Opaque,
+                    };
+                    self.write_value(item, depth + 1, nesting + 1, child_ctx, out)?;
+                }
             }
             if i + 1 < items.len() {
                 out.push(',');
@@ -191,17 +220,27 @@ impl Renderer {
             return Ok(());
         }
         out.push_str("{\n");
+        let child_ctx = if matches!(ctx, Ctx::Top | Ctx::Document) {
+            Ctx::Top
+        } else {
+            Ctx::Opaque
+        };
         for (i, (k, v)) in entries.iter().enumerate() {
             indent(out, depth + 1);
-            self.write_value(k, depth + 1, nesting + 1, Ctx::Top, out)?;
+            self.write_value(k, depth + 1, nesting + 1, child_ctx, out)?;
             out.push_str(": ");
             match (ctx, k, v) {
+                (Ctx::CorimMap, Value::Integer(key), Value::Array(_))
+                    if *key == i128::from(CORIM_KEY_TAGS) =>
+                {
+                    self.write_value(v, depth + 1, nesting + 1, Ctx::TagArray, out)?;
+                }
                 (Ctx::ProtectedHeaderMap, Value::Integer(key), Value::Bytes(b))
                     if *key == i128::from(COSE_HEADER_CORIM_META) =>
                 {
-                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Top, out)?;
+                    self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Opaque, out)?;
                 }
-                _ => self.write_value(v, depth + 1, nesting + 1, Ctx::Top, out)?,
+                _ => self.write_value(v, depth + 1, nesting + 1, child_ctx, out)?,
             }
             if i + 1 < entries.len() {
                 out.push(',');
@@ -219,17 +258,43 @@ impl Renderer {
         inner: &Value,
         depth: usize,
         nesting: usize,
+        ctx: Ctx,
         out: &mut String,
     ) -> Result<(), DecodeError> {
         out.push_str(&format!("#6.{}(", tag));
-        match (tag, inner) {
-            (TAG_COSWID | TAG_COMID | TAG_COTL, Value::Bytes(b)) => {
-                self.write_embedded_bstr(b, depth, nesting + 1, Ctx::Top, out)?;
+        match (ctx, tag, inner) {
+            (Ctx::Opaque, _, _) => {
+                self.write_value(inner, depth, nesting + 1, Ctx::Opaque, out)?;
             }
-            (TAG_SIGNED_CORIM, Value::Array(_)) => {
+            (Ctx::Document, TAG_LEGACY_TOP | TAG_LEGACY_SIGNED, _) => {
+                self.write_value(inner, depth, nesting + 1, Ctx::Document, out)?;
+            }
+            (Ctx::Top | Ctx::Document, TAG_CORIM, _) => {
+                self.write_value(inner, depth, nesting + 1, Ctx::CorimMap, out)?;
+            }
+            (_, TAG_COSWID | TAG_COMID | TAG_COTL, Value::Bytes(b)) => {
+                let child_ctx = if ctx == Ctx::TagEntry {
+                    Ctx::Opaque
+                } else {
+                    Ctx::Top
+                };
+                self.write_embedded_bstr(b, depth, nesting + 1, child_ctx, out)?;
+            }
+            (
+                Ctx::Top | Ctx::Document | Ctx::ProtectedHeaderMap,
+                TAG_SIGNED_CORIM,
+                Value::Array(_),
+            ) => {
                 self.write_value(inner, depth, nesting + 1, Ctx::CoseSign1Array, out)?;
             }
-            _ => self.write_value(inner, depth, nesting + 1, Ctx::Top, out)?,
+            _ => {
+                let child_ctx = if ctx == Ctx::TagEntry {
+                    Ctx::Opaque
+                } else {
+                    Ctx::Top
+                };
+                self.write_value(inner, depth, nesting + 1, child_ctx, out)?;
+            }
         }
         out.push(')');
         Ok(())
