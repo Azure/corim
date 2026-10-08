@@ -204,12 +204,16 @@ impl ConciseTagChoice {
     /// [`BareBstr`]: ConciseTagChoice::BareBstr
     pub fn as_comid(&self) -> Result<crate::types::comid::ComidTag, crate::error::DecodeError> {
         match self {
-            ConciseTagChoice::Comid(bytes) => cbor::decode(bytes).map_err(|e| {
-                crate::error::DecodeError::Deserialization(format!(
-                    "as_comid: ComidTag decode: {}",
-                    e
-                ))
-            }),
+            ConciseTagChoice::Comid(bytes) => cbor::DecodeBudget::default()
+                .decode_schema_exact(bytes)
+                .map_err(|e| match e {
+                    e @ (crate::DecodeError::TrailingData { .. }
+                    | crate::DecodeError::LimitExceeded { .. }
+                    | crate::DecodeError::DuplicateKey { .. }) => e,
+                    other => crate::error::DecodeError::Deserialization(format!(
+                        "as_comid: ComidTag decode: {other}"
+                    )),
+                }),
             ConciseTagChoice::BareBstr(bytes) => crate::compat::decode_comid_from_tcg_bstr(bytes),
             ConciseTagChoice::Coswid(_) => Err(crate::error::DecodeError::InvalidStructure(
                 "as_comid: tag is CoSWID (#6.505), not CoMID".into(),
