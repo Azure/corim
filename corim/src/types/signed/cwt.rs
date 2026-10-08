@@ -168,6 +168,14 @@ impl Serialize for CwtClaims {
             map.serialize_entry(&CWT_CLAIM_NBF, &nbf)?;
         }
         for (k, v) in &self.extra {
+            if matches!(
+                k,
+                ClaimKey::Int(CWT_CLAIM_ISS | CWT_CLAIM_SUB | CWT_CLAIM_EXP | CWT_CLAIM_NBF)
+            ) {
+                return Err(serde::ser::Error::custom(format!(
+                    "extra claim key {k} collides with a modeled claim"
+                )));
+            }
             map.serialize_entry(k, v)?;
         }
         map.end()

@@ -20,6 +20,27 @@ pub enum EncodeError {
 #[derive(Debug, Error)]
 #[non_exhaustive]
 pub enum DecodeError {
+    /// A schema map repeats an integer or text key (RFC 8949 §5.6).
+    #[error("duplicate map key: {key}")]
+    DuplicateKey {
+        /// Diagnostic representation of the repeated label.
+        key: String,
+    },
+    /// Bytes remain after an item at a single-document boundary (RFC 8949 §3).
+    #[error("trailing CBOR data: {remaining} byte(s) after the first item")]
+    TrailingData {
+        /// Number of unconsumed bytes; their contents are not parsed.
+        remaining: usize,
+    },
+    /// A configured parser resource budget was exceeded (RFC 8949 §10).
+    /// Document compatibility fallbacks must not swallow this error.
+    #[error("decode limit exceeded: {resource} (limit {limit})")]
+    LimitExceeded {
+        /// Resource whose budget was exhausted.
+        resource: &'static str,
+        /// Configured maximum for that resource.
+        limit: usize,
+    },
     /// CBOR deserialization failed.
     #[error("CBOR deserialization failed: {0}")]
     Deserialization(String),

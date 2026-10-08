@@ -6,8 +6,8 @@
 //!
 //! Gated on the `profile-intel` Cargo feature. Provides:
 //!
-//! - [`IntelProfile`](crate::profile::intel::IntelProfile) — the [`Profile`](crate::profile::Profile) implementation, registerable
-//!   with [`ProfileRegistry`](crate::profile::ProfileRegistry).
+//! - [`IntelProfile`](crate::profile::intel::IntelProfile) — the [`crate::profile::Profile`] implementation, registerable
+//!   with [`crate::profile::ProfileRegistry`].
 //! - [`expression`](crate::profile::intel::expression) — the operator-shaped reference-value decoder
 //!   for tags `#6.60010` (numeric), `#6.60020` (set-of-digests),
 //!   `#6.60021` (set-of-tstr), `#6.564` (`tagged-int-range`), and
