@@ -127,6 +127,63 @@ fn generic_value_preserves_repeated_keys_for_inspection() {
 }
 
 #[test]
+fn document_boundaries_reject_nested_extension_duplicates() {
+    for duplicate in [false, true] {
+        let mut extension = vec![(text("custom"), int(1))];
+        if duplicate {
+            extension.push((text("custom"), int(2)));
+        }
+        for boundary in ["outer", "comid", "tcg-bare", "tcg-tagged"] {
+            let mut corim = sample_corim();
+            if boundary != "outer" {
+                let ConciseTagChoice::Comid(bytes) = &corim.tags[0] else {
+                    panic!("CoMID fixture")
+                };
+                let Value::Map(mut fields) = cbor::decode::<Value>(bytes).unwrap() else {
+                    panic!("CoMID map")
+                };
+                fields.push((int(EXTENSION), Value::Map(extension.clone())));
+                let body = Value::Map(fields);
+                corim.tags[0] = if boundary == "comid" {
+                    ConciseTagChoice::Comid(cbor::encode(&body).unwrap())
+                } else {
+                    let body = if boundary == "tcg-tagged" {
+                        Value::Tag(TAG_COMID, Box::new(body))
+                    } else {
+                        body
+                    };
+                    decode::<ConciseTagChoice>(&Value::Bytes(cbor::encode(&body).unwrap())).unwrap()
+                };
+                assert_eq!(
+                    corim.tags[0].as_comid().is_ok(),
+                    !duplicate,
+                    "accessor {boundary}, duplicate={duplicate}"
+                );
+            }
+            let mut fields = entries(&corim);
+            if boundary == "outer" {
+                fields.push((int(EXTENSION), Value::Map(extension.clone())));
+            }
+            let bytes = cbor::encode(&Value::Tag(TAG_CORIM, Box::new(Value::Map(fields)))).unwrap();
+            let result = decode_and_validate_full_at(&bytes, 0);
+            if duplicate {
+                assert!(
+                    matches!(
+                        result,
+                        Err(corim::ValidationError::Decode(
+                            corim::DecodeError::DuplicateKey { .. }
+                        ))
+                    ),
+                    "{boundary}: {result:?}"
+                );
+            } else {
+                assert!(result.is_ok(), "{boundary}: {result:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn corim_rejects_duplicate_required_and_optional_null_fields() {
     let base = entries(&sample_corim());
     let mut fields = base.clone();
