@@ -661,6 +661,14 @@ const MVAL: &[(i64, &str, Slot)] = &[
     (13, "cryptokeys", many(Ctx::Leaf)),
     (14, "integrity-registers", one(Ctx::IntegrityRegisters)),
     (15, "int-range", one(Ctx::Leaf)),
+    (corim::types::tags::MVAL_KEY_BOOL, "bool", one(Ctx::Leaf)),
+    (
+        corim::types::tags::MVAL_KEY_NUMBER,
+        "number",
+        one(Ctx::Leaf),
+    ),
+    (corim::types::tags::MVAL_KEY_TEXT, "text", one(Ctx::Leaf)),
+    (corim::types::tags::MVAL_KEY_BYTES, "bytes", one(Ctx::Leaf)),
 ];
 
 const VERSION: &[(i64, &str, Slot)] = &[

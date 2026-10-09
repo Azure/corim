@@ -423,6 +423,19 @@ fn print_measurement(
         }
     }
 
+    if let Some(value) = mv.r#bool {
+        println!("{}bool: {}", mi, value);
+    }
+    if let Some(value) = &mv.number {
+        println!("{}number: {:?}", mi, value);
+    }
+    if let Some(value) = &mv.text {
+        println!("{}text: {:?}", mi, value);
+    }
+    if let Some(value) = &mv.bytes {
+        println!("{}bytes: {:?}", mi, value);
+    }
+
     if let Some(ref auth) = m.authorized_by {
         println!("{}authorized-by: ({} keys)", indent, auth.len());
     }
