@@ -10,6 +10,13 @@ versions.
 
 ### Fixed
 
+- **Reference-value appraisal accepted partial matches and returned reference
+  constraints as evidence.** Core and profile-aware matching now require every
+  reference measurement to match within a single evidence claim, then return
+  that claim's complete measurement list in evidence order. Exact SVN conditions
+  no longer match minimum-SVN evidence; minimum-to-minimum SVN comparisons use
+  equality, per draft-ietf-rats-corim-11 §8.2.4.4.5.3. Public signatures and
+  types are unchanged, but callers receive corrected matching results.
 - **CoRIM `uri` values used a nonconformant bare-text encoding.** Profile
   identifiers, locator hrefs, signer URIs, and entity registration IDs now
   encode as `#6.32(tstr)` per RFC 8610 Appendix D. Decoders continue to accept
