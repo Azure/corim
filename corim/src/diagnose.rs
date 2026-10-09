@@ -1948,6 +1948,8 @@ fn inspect_measurement_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
 // ===========================================================================
 
 fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
+    use crate::types::matcher::{BytesMatcher, NumberMatcher, TextMatcher};
+    use crate::types::tags::{MVAL_KEY_BOOL, MVAL_KEY_BYTES, MVAL_KEY_NUMBER, MVAL_KEY_TEXT};
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -2133,6 +2135,29 @@ fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: V
                         path,
                         format!("int-range (key 15) must be array, found {}", value_kind(&v)),
                     );
+                }
+            }
+            MVAL_KEY_BOOL | MVAL_KEY_NUMBER | MVAL_KEY_TEXT | MVAL_KEY_BYTES => {
+                let (name, result) = match key {
+                    MVAL_KEY_BOOL => (
+                        "bool",
+                        crate::cbor::from_parsed_value::<bool>(v).map(|_| ()),
+                    ),
+                    MVAL_KEY_NUMBER => (
+                        "number",
+                        crate::cbor::from_parsed_value::<NumberMatcher>(v).map(|_| ()),
+                    ),
+                    MVAL_KEY_TEXT => (
+                        "text",
+                        crate::cbor::from_parsed_value::<TextMatcher>(v).map(|_| ()),
+                    ),
+                    _ => (
+                        "bytes",
+                        crate::cbor::from_parsed_value::<BytesMatcher>(v).map(|_| ()),
+                    ),
+                };
+                if let Err(error) = result {
+                    ins.err(path, format!("{name} matcher: {error}"));
                 }
             }
             _ => {

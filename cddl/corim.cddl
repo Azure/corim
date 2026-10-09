@@ -249,8 +249,21 @@ measurement-values-map = non-empty<{
     ? &(cryptokeys: 13) => [+ $crypto-key-type-choice],
     ? &(integrity-registers: 14) => integrity-registers,
     ? &(int-range: 15) => int-range-type-choice,
+    ? &(bool: 16) => bool-matcher,
+    ? &(number: 17) => number-matcher,
+    ? &(text: 18) => text-matcher,
+    ? &(bytes: 19) => bytes-matcher,
     * $$measurement-values-map-extension,
 }>
+  ; CoRIM editor's draft (2026-10-07), section 5.1.4.9.
+  bool-matcher = bool
+  number-matcher = number / tagged-number-range / tagged-number-set
+  text-matcher = text / tagged-text-set
+  bytes-matcher = bytes / tagged-bytes-set
+  tagged-number-range = #6.565([number / null, number / null])
+  tagged-number-set = #6.566([2* number])
+  tagged-text-set = #6.566([2* text])
+  tagged-bytes-set = #6.566([2* bytes])
 ; Arm PSA profile (tag:arm.com,2025:psa#1.0.0) measurement-values extension.
 $$measurement-values-map-extension //= (&(psa-cert-num: 100) => psa-cert-num-type)
 psa-cert-num-type = text .regexp "[0-9]{13} - [0-9]{5}"

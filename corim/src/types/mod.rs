@@ -14,6 +14,7 @@ pub mod common;
 pub mod corim;
 pub mod coswid;
 pub mod environment;
+pub mod matcher;
 pub mod measurement;
 pub mod signed;
 pub mod tags;
@@ -33,6 +34,7 @@ pub use self::corim::{
 };
 pub use self::coswid::{ConciseSwidTag, SwidEntity, SwidLink};
 pub use self::environment::{ClassMap, EnvironmentMap};
+pub use self::matcher::{BoolMatcher, BytesMatcher, Number, NumberMatcher, TextMatcher};
 pub use self::measurement::{
     Digest, DigestAlg, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr,
     MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,

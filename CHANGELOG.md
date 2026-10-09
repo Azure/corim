@@ -68,6 +68,20 @@ versions.
 
 ### Added
 
+- **Generic measurement matchers from the 2026-10-07 CoRIM editor's draft.**
+  Keys 16-19 now have typed boolean, number, text, and byte-string fields.
+  Numeric ranges use tag 565; numeric/text/byte sets use tag 566 and require
+  at least two entries. Bare values match exactly; range/set observations do
+  not match. Numeric matching preserves integer precision, treats NaN as
+  non-matching, and supports infinities. Reversed and NaN-bounded ranges are
+  rejected. Appraisal, diagnostics, baseline reporting, CDDL and CLI templates
+  support the fields. JSON uses explicit representations for byte strings,
+  large integers and non-finite floats rather than losing their types.
+  **Source compatibility:** exhaustive `MeasurementValuesMap` literals must
+  add `r#bool`, `number`, `text`, and `bytes` (or use `..Default::default()`).
+  Move keys 16-19 out of `extra_entries` into the typed fields; extras collisions
+  are rejected. Existing encodings are unchanged when the new fields are absent.
+  This is targeted editor-draft support, not a complete migration from draft-11.
 - **Static profile semantics in validation and diagnose.** Registered Azure,
   PSA, and Intel profiles now reject malformed profile-defined reference
   values during document validation and before appraisal. The non-aborting
