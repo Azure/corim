@@ -27,12 +27,14 @@ use crate::types::matcher::{Number, NumberMatcher};
 use crate::types::tags::TAG_SIGNED_CORIM;
 use crate::validate::ValidatedCorim;
 use crate::{Validate, ValidationError};
+use alloc::collections::BTreeSet;
 
 /// Decode and validate a complete signed document with an explicit clock.
 ///
 /// Per draft-ietf-rats-corim-11 Section 4.2, RFC 9052 Section 4 and RFC 8392
 /// Sections 3, 4.4 and 4.5. Checks COSE slot shapes, exact media type, header
 /// time windows and CWT/metadata agreement, then validates the inline CoRIM.
+/// Protected and unprotected label sets must be disjoint (RFC 9052 Section 3).
 /// CWT `exp` is exclusive; CoRIM validity `not-after` is inclusive. Fractional
 /// CWT times are checked from their original values before legacy conversion.
 /// The returned envelope retains the exact protected bytes; its existing CWT
@@ -106,6 +108,7 @@ pub fn decode_and_validate_signed_corim_at_with_limits(
         return Err(invalid("protected header must be a map"));
     };
     header_labels(fields)?;
+    disjoint_header_labels(fields, &unprotected)?;
     let window = original_claims(fields)?;
     check_window(window.0, window.1, now_epoch_secs, true)?;
     let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
@@ -210,6 +213,38 @@ fn header_labels(fields: &[(Value, Value)]) -> Result<(), ValidationError> {
         .any(|(key, _)| !matches!(key, Value::Integer(_) | Value::Text(_)))
     {
         return Err(invalid("COSE header labels must be integer or text"));
+    }
+    Ok(())
+}
+
+fn disjoint_header_labels(
+    protected: &[(Value, Value)],
+    unprotected: &[(Value, Value)],
+) -> Result<(), ValidationError> {
+    let mut integers = BTreeSet::new();
+    let mut texts = BTreeSet::new();
+    for (label, _) in unprotected {
+        match label {
+            Value::Integer(label) => {
+                integers.insert(*label);
+            }
+            Value::Text(label) => {
+                texts.insert(label.as_str());
+            }
+            _ => {}
+        }
+    }
+    for (label, _) in protected {
+        let overlaps = match label {
+            Value::Integer(label) => integers.contains(label),
+            Value::Text(label) => texts.contains(label.as_str()),
+            _ => false,
+        };
+        if overlaps {
+            return Err(invalid(&format!(
+                "COSE header label {label:?} appears in both protected and unprotected maps"
+            )));
+        }
     }
     Ok(())
 }
