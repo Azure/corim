@@ -111,6 +111,11 @@ pub const TAG_MASKED_RAW_VALUE: u64 = 563;
 /// `tagged-int-range` = `#6.564(int-range)`.
 pub const TAG_INT_RANGE: u64 = 564;
 
+/// Numeric range, editor's draft (2026-10-07) Section 5.1.4.9: `#6.565([min, max])`.
+pub const TAG_NUMBER_RANGE: u64 = 565;
+/// Numeric/text/byte set, editor's draft (2026-10-07) Section 5.1.4.9: `#6.566([2* value])`.
+pub const TAG_MATCHER_SET: u64 = 566;
+
 // ===========================================================================
 // CoRIM Map keys (§11.3 — "CoRIM Map" registry)
 // ===========================================================================
@@ -291,6 +296,14 @@ pub const MVAL_KEY_CRYPTOKEYS: i64 = 13;
 pub const MVAL_KEY_INTEGRITY_REGISTERS: i64 = 14;
 /// `measurement-values-map` key: `int-range` (index 15).
 pub const MVAL_KEY_INT_RANGE: i64 = 15;
+/// `bool` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_BOOL: i64 = 16;
+/// `number` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_NUMBER: i64 = 17;
+/// `text` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_TEXT: i64 = 18;
+/// `bytes` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_BYTES: i64 = 19;
 
 // ===========================================================================
 // Flags Map keys (§11.10 — "CoMID Flags Map" registry)

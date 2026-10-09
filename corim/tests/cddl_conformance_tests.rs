@@ -780,6 +780,10 @@ fn measurement_values_map_all_14_fields() {
             min: Some(0),
             max: Some(100),
         }),
+        r#bool: None,
+        number: None,
+        text: None,
+        bytes: None,
         extra_entries: BTreeMap::new(),
     });
 }
