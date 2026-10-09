@@ -386,12 +386,51 @@ fn dispatch_through_validate_passes_with_intel_profile() {
     .unwrap();
     assert_eq!(with_profile.len(), 1, "profile-aware match should succeed");
     assert_eq!(with_profile[0].measurements.len(), 1);
+    assert_eq!(with_profile[0].measurements, evidence[0].measurements);
 
     // Sanity: without profile, core also says it matches (it ignores
     // extras), so we can't differentiate solely on this case. Use a
     // FAILING-with-profile case below to prove profile is consulted.
     let no_profile = match_reference_values(&[triple], &evidence);
     assert_eq!(no_profile.len(), 1);
+}
+
+#[test]
+fn dispatch_through_validate_requires_all_profile_measurements() {
+    let profile = IntelProfile::new();
+    let mut reference_extras = BTreeMap::new();
+    reference_extras.insert(
+        MVAL_TEE_ISVSVN,
+        expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(5)])),
+    );
+    let base = ref_triple_with_extras(reference_extras);
+    let mut first = base.measurements()[0].clone();
+    first.mval.name = Some("first".into());
+    let mut second = first.clone();
+    second.mval.name = Some("second".into());
+    let reference = ReferenceTriple::new(base.environment().clone(), vec![first, second]);
+    for complete in [false, true] {
+        let mut evidence_extras = BTreeMap::new();
+        evidence_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(7));
+        let mut evidence = evidence_with_extras(evidence_extras);
+        evidence[0].measurements[0].mval.name = Some("first".into());
+        if complete {
+            let mut second = evidence[0].measurements[0].clone();
+            second.mval.name = Some("second".into());
+            evidence[0].measurements.push(second);
+        }
+        let matched = match_reference_values_with_profile(
+            std::slice::from_ref(&reference),
+            &evidence,
+            Some(&profile),
+            &MatchContext::new(),
+        )
+        .unwrap();
+        assert_eq!(matched.len(), usize::from(complete));
+        if complete {
+            assert_eq!(matched[0].measurements, evidence[0].measurements);
+        }
+    }
 }
 
 #[test]
