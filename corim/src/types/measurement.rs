@@ -676,16 +676,16 @@ pub struct MeasurementValuesMap {
     #[cbor(key = 15, optional)]
     pub int_range: Option<IntRangeChoice>,
     /// `bool` (key 16), editor's draft (2026-10-07) Section 5.1.4.5.2.
-    #[cbor(key = 16, optional)]
+    #[cbor(key = 16, optional, non_null)]
     pub r#bool: Option<super::matcher::BoolMatcher>,
     /// `number` (key 17), editor's draft (2026-10-07) Section 5.1.4.5.2.
-    #[cbor(key = 17, optional)]
+    #[cbor(key = 17, optional, non_null)]
     pub number: Option<super::matcher::NumberMatcher>,
     /// `text` (key 18), editor's draft (2026-10-07) Section 5.1.4.5.2.
-    #[cbor(key = 18, optional)]
+    #[cbor(key = 18, optional, non_null)]
     pub text: Option<super::matcher::TextMatcher>,
     /// `bytes` (key 19), editor's draft (2026-10-07) Section 5.1.4.5.2.
-    #[cbor(key = 19, optional)]
+    #[cbor(key = 19, optional, non_null)]
     pub bytes: Option<super::matcher::BytesMatcher>,
     /// Profile-defined extension entries. Keyed by the raw integer CBOR
     /// map key; values are preserved as opaque [`Value`] trees. Populated

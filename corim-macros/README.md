@@ -34,6 +34,13 @@ This generates `Serialize`/`Deserialize` impls that encode `MyMap` as a
 CBOR map with integer keys `{0: "...", 1: ...}`, with canonical key
 ordering and `non-empty` constraint support.
 
+Use `#[cbor(key = N, optional, non_null)]` when an omitted field is allowed
+but a present field must deserialize as its inner `T`, rather than as
+`Option<T>`. For null-rejecting types such as `bool` and the measurement
+matchers, this rejects an explicit CBOR `null` while preserving absence.
+It does not override the inner type's own accepted values. Ordinary
+`optional` fields retain their existing null-as-absence behavior.
+
 ## License
 
 [MIT](https://github.com/Azure/corim/blob/main/LICENSE)

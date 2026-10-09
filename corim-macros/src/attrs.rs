@@ -28,6 +28,8 @@ pub struct FieldAttrs {
     pub key: i64,
     /// Whether the field is optional (`Option<T>`).
     pub optional: bool,
+    /// Deserialize a present optional field as its inner type, not `Option<T>`.
+    pub non_null: bool,
     /// Whether to serialize the field as CBOR bstr (bytes) instead of array.
     /// Use for `Vec<u8>` fields that represent byte strings.
     pub bytes: bool,
@@ -74,6 +76,7 @@ impl FieldAttrs {
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
         let mut key: Option<i64> = None;
         let mut optional = false;
+        let mut non_null = false;
         let mut bytes = false;
         let mut uri = false;
 
@@ -91,6 +94,9 @@ impl FieldAttrs {
                 } else if meta.path.is_ident("optional") {
                     optional = true;
                     Ok(())
+                } else if meta.path.is_ident("non_null") {
+                    non_null = true;
+                    Ok(())
                 } else if meta.path.is_ident("bytes") {
                     bytes = true;
                     Ok(())
@@ -104,6 +110,10 @@ impl FieldAttrs {
         }
 
         match key {
+            _ if non_null && (!optional || key.is_none()) => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(non_null)] requires #[cbor(key = ..., optional)]",
+            )),
             Some(_k) if bytes && uri => Err(syn::Error::new_spanned(
                 &attrs[0],
                 "#[cbor(bytes)] and #[cbor(uri)] cannot be combined",
@@ -111,6 +121,7 @@ impl FieldAttrs {
             Some(k) => Ok(Some(FieldAttrs {
                 key: k,
                 optional,
+                non_null,
                 bytes,
                 uri,
             })),
@@ -193,6 +204,27 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<CborField>> {
 mod tests {
     use super::FieldAttrs;
     use syn::parse_quote;
+
+    #[test]
+    fn non_null_modifier_requires_optional_keyed_field() {
+        for field in [
+            parse_quote! { #[cbor(non_null)] value: Option<bool> },
+            parse_quote! { #[cbor(optional, non_null)] value: Option<bool> },
+            parse_quote! { #[cbor(key = 1, non_null)] value: bool },
+        ] {
+            let field: syn::Field = field;
+            assert!(FieldAttrs::from_attrs(&field.attrs).is_err());
+        }
+        let field: syn::Field = parse_quote! {
+            #[cbor(key = 1, optional, non_null)] value: Option<bool>
+        };
+        assert!(
+            FieldAttrs::from_attrs(&field.attrs)
+                .unwrap()
+                .unwrap()
+                .non_null
+        );
+    }
 
     #[test]
     fn uri_modifier_requires_key() {
