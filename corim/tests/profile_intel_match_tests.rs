@@ -386,6 +386,7 @@ fn dispatch_through_validate_passes_with_intel_profile() {
     .unwrap();
     assert_eq!(with_profile.len(), 1, "profile-aware match should succeed");
     assert_eq!(with_profile[0].measurements.len(), 1);
+    assert_eq!(with_profile[0].measurements, evidence[0].measurements);
 
     // Sanity: without profile, core also says it matches (it ignores
     // extras), so we can't differentiate solely on this case. Use a
