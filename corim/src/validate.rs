@@ -469,7 +469,7 @@ pub struct EvidenceClaim {
 /// Like [`match_reference_values`] but consults a profile's
 /// [`Profile::match_measurement`] hook for each candidate
 /// (reference, evidence) measurement pair before falling back to the
-/// crate's default exact-match logic.
+/// crate's core comparison rules, including matcher conditions for keys 16-19.
 /// All reference measurements must match within one evidence claim; successful
 /// results copy that claim's complete measurement list, as in
 /// [`match_reference_values`] (draft-ietf-rats-corim-11 §8.2.4.2.1).
@@ -820,6 +820,15 @@ fn class_matches(
 /// - `name` (key 11) — exact match
 /// - `integrity-registers` (key 14) — exact match
 /// - `int-range` (key 15) — exact match
+/// - `bool` (key 16) - exact boolean match
+/// - `number` (key 17) - numeric equality, inclusive range, or set membership
+/// - `text` (key 18) - exact text or set membership
+/// - `bytes` (key 19) - exact bytes or set membership
+///
+/// Keys 16-19 follow the editor's draft (2026-10-07), Sections
+/// 8.3.4.4.5.9-12. Number/text/bytes observations must be exact values, not
+/// sets or ranges. Missing required observations and invalid matchers do not
+/// match; NaN never matches and infinities compare normally.
 ///
 /// Note: `cryptokeys` (key 13) is not compared — it carries authorized
 /// keys, not a measurement value to match against evidence. Profile-defined
@@ -834,7 +843,10 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 
 /// Per-pair core matching primitive: tests whether a single reference
 /// measurement matches a single evidence measurement under the crate's
-/// default exact-match semantics. Used by both the loop in
+/// core comparison rules: equality for ordinary fields, typed SVN comparison,
+/// and exact/range/set conditions for the generic measurement matchers at
+/// keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12).
+/// Used by both the loop in
 /// [`measurement_matches`] and by the profile-aware fallback path in
 /// [`measurement_matches_with_profile`].
 ///
@@ -974,8 +986,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 }
 
 /// Tests whether a reference measurement's core (non-extension) fields
-/// agree with an evidence measurement under the crate's default
-/// exact-match semantics.
+/// satisfy the crate's core comparison rules against an evidence measurement.
 ///
 /// This is the stable public entry point for the per-pair comparison
 /// performed internally by [`match_reference_values`]. It is intended for
@@ -984,8 +995,18 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries])
 /// but want to delegate the structural fields (`mkey`, `digests`, `svn`,
 /// `version`, `name`, `flags`, `raw-value`, `mac-addr`, `ip-addr`,
-/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`)
+/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`,
+/// `bool`, `number`, `text`, `bytes`)
 /// to the crate's default matcher.
+///
+/// For keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12),
+/// booleans match exactly; number conditions support equality, inclusive
+/// ranges and set membership; text and byte conditions support equality and
+/// set membership. Number/text/bytes observations must be exact values, not
+/// sets or ranges. Missing observations or invalid matchers return `false`.
+/// Numeric comparisons preserve integer precision across integer/float types;
+/// NaN never matches and infinities compare normally. A field absent from the
+/// reference imposes no condition on the corresponding evidence field.
 ///
 /// Note: this function does NOT inspect
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].
