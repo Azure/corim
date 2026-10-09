@@ -334,6 +334,91 @@ fn invalid_matcher_json_does_not_disappear_as_null() {
     }
 }
 
+#[test]
+fn present_null_matcher_fields_are_rejected_in_embedded_documents() {
+    use corim::types::tags::{MEAS_KEY_MVAL, MVAL_KEY_BOOL, TAG_CORIM};
+    fn insert_null(value: &mut Value, key: i64) {
+        match value {
+            Value::Map(fields) => {
+                for (field, value) in fields {
+                    if *field == Value::Integer(i128::from(MEAS_KEY_MVAL)) {
+                        if let Value::Map(fields) = value {
+                            if fields.iter().any(|(key, _)| {
+                                *key == Value::Integer(i128::from(corim::types::tags::MVAL_KEY_SVN))
+                            }) {
+                                fields.push((Value::Integer(i128::from(key)), Value::Null));
+                                return;
+                            }
+                        }
+                    }
+                    insert_null(value, key);
+                }
+            }
+            Value::Array(values) => {
+                for value in values {
+                    insert_null(value, key);
+                }
+            }
+            Value::Tag(_, inner) => insert_null(inner, key),
+            _ => {}
+        }
+    }
+    for key in [
+        MVAL_KEY_BOOL,
+        MVAL_KEY_NUMBER,
+        MVAL_KEY_TEXT,
+        MVAL_KEY_BYTES,
+    ] {
+        let control = MeasurementValuesMap {
+            svn: Some(corim::types::SvnChoice::ExactValue(1)),
+            ..Default::default()
+        };
+        let mut corim = corim_with_matchers(control.clone());
+        let direct = Value::Map(vec![
+            (
+                Value::Integer(i128::from(corim::types::tags::MVAL_KEY_SVN)),
+                Value::Integer(1),
+            ),
+            (Value::Integer(i128::from(key)), Value::Null),
+        ]);
+        assert!(
+            cbor::decode_exact::<MeasurementValuesMap>(&cbor::encode(&direct).unwrap()).is_err(),
+            "key {key}: explicit null accepted"
+        );
+        let corim::types::corim::ConciseTagChoice::Comid(body) = &mut corim.tags[0] else {
+            panic!("CoMID fixture");
+        };
+        let mut comid: Value = cbor::decode_exact(body).unwrap();
+        insert_null(&mut comid, key);
+        *body = cbor::encode(&comid).unwrap();
+        let bytes = cbor::encode(&corim::cbor::value::Tagged {
+            tag: TAG_CORIM,
+            value: corim,
+        })
+        .unwrap();
+        assert!(
+            corim::validate::decode_and_validate_full_at(&bytes, 0).is_err(),
+            "embedded key {key}: explicit null accepted"
+        );
+        #[cfg(feature = "json")]
+        {
+            let json = format!(r#"{{"1":1,"{key}":null}}"#);
+            assert!(
+                corim::json::from_json::<MeasurementValuesMap>(&json).is_err(),
+                "{json}"
+            );
+        }
+        round_trip(control);
+    }
+    round_trip(MeasurementValuesMap {
+        number: Some(NumberMatcher::Range {
+            min: None,
+            max: None,
+        }),
+        ..Default::default()
+    });
+}
+
 fn corim_with_matchers(mval: MeasurementValuesMap) -> corim::types::CorimMap {
     let comid =
         corim::builder::ComidBuilder::new(corim::types::TagIdChoice::Text("matcher".into()))
