@@ -9,6 +9,13 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 
 ## Features
 
+- **Generic measurement matchers** - targeted support for keys 16-19 from the
+  [2026-10-07 editor's draft](https://ietf-rats-wg.github.io/draft-ietf-rats-corim/draft-ietf-rats-corim.html#name-type-matchers):
+  `BoolMatcher` (bare `bool`), `NumberMatcher`, `TextMatcher`, and `BytesMatcher`.
+  Set and numeric-range conditions accept exact observations only. Numeric
+  comparison preserves integer precision; NaN never matches. The Rust map fields
+  are `r#bool`, `number`, `text`, and `bytes`. See the
+  [matcher module](src/types/matcher.rs) for usage and lossless JSON formats.
 - **Full CDDL coverage** — `corim-map`, CoMID, CoTL, all 9 triple types,
   `measurement-values-map` with all fields
 - **Signed CoRIM (`#6.18`)** — decode, validate, construct (attached + detached);

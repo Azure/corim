@@ -250,6 +250,10 @@ fn has_no_mval_fields_except(
         && mval.uuid.is_none()
         && mval.integrity_registers.is_none()
         && mval.int_range.is_none()
+        && mval.r#bool.is_none()
+        && mval.number.is_none()
+        && mval.text.is_none()
+        && mval.bytes.is_none()
         && mval.extra_entries.is_empty()
 }
 

@@ -179,7 +179,44 @@ fn cbor_tag_json(tag: u64, inner: &Value) -> serde_json::Value {
 
 /// Convert `{"type": ..., "value": ...}` JSON back to CBOR tagged value.
 fn type_choice_to_value(type_name: &str, value: &serde_json::Value) -> Value {
+    let invalid_matcher = || {
+        Value::Map(vec![
+            (Value::Text("type".into()), Value::Text(type_name.into())),
+            (Value::Text("value".into()), json_to_value(value)),
+        ])
+    };
     match type_name {
+        "number-range" => Value::Tag(
+            crate::types::tags::TAG_NUMBER_RANGE,
+            Box::new(json_to_value(value)),
+        ),
+        "number-set" | "text-set" | "bytes-set" => Value::Tag(
+            crate::types::tags::TAG_MATCHER_SET,
+            Box::new(json_to_value(value)),
+        ),
+        "integer" => value
+            .as_str()
+            .and_then(|text| text.parse::<i128>().ok())
+            .map(Value::Integer)
+            .unwrap_or_else(invalid_matcher),
+        "float-bits" => value
+            .as_str()
+            .filter(|text| text.len() == 16)
+            .and_then(|text| u64::from_str_radix(text, 16).ok())
+            .map(|bits| Value::Float(f64::from_bits(bits)))
+            .unwrap_or_else(invalid_matcher),
+        "byte-string" => {
+            let bytes = value
+                .as_str()
+                .filter(|text| text.is_ascii() && text.len() % 2 == 0)
+                .and_then(|text| {
+                    (0..text.len())
+                        .step_by(2)
+                        .map(|offset| u8::from_str_radix(&text[offset..offset + 2], 16).ok())
+                        .collect::<Option<Vec<_>>>()
+                });
+            bytes.map(Value::Bytes).unwrap_or_else(invalid_matcher)
+        }
         "uuid" => {
             if let Some(s) = value.as_str() {
                 if let Some(bytes) = parse_uuid(s) {

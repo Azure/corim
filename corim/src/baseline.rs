@@ -1160,6 +1160,21 @@ fn compare_mval(
         r,
     );
 
+    scalar(path, "bool", opt_val(&b.r#bool), opt_val(&i.r#bool), r);
+    scalar(
+        path,
+        "number",
+        b.number
+            .as_ref()
+            .map(|value| crate::cbor::value::to_human_readable_value(value).unwrap_or(Value::Null)),
+        i.number
+            .as_ref()
+            .map(|value| crate::cbor::value::to_human_readable_value(value).unwrap_or(Value::Null)),
+        r,
+    );
+    scalar(path, "text", opt_val(&b.text), opt_val(&i.text), r);
+    scalar(path, "bytes", opt_val(&b.bytes), opt_val(&i.bytes), r);
+
     // Profile-defined extension attributes: key presence = structure,
     // value = value difference.
     compare_extra_entries(path, &b.extra_entries, &i.extra_entries, r);

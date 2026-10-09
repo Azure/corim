@@ -841,6 +841,39 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 /// Public companion: [`core_fields_match`] (same logic, stable name for
 /// out-of-crate [`Profile`][crate::profile::Profile] implementations).
 fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementMap) -> bool {
+    if reference.mval.r#bool.is_some() && reference.mval.r#bool != ev_meas.mval.r#bool {
+        return false;
+    }
+    if let Some(condition) = &reference.mval.number {
+        if !ev_meas
+            .mval
+            .number
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
+    if let Some(condition) = &reference.mval.text {
+        if !ev_meas
+            .mval
+            .text
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
+    if let Some(condition) = &reference.mval.bytes {
+        if !ev_meas
+            .mval
+            .bytes
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
     // Match mkey if specified in reference
     if let Some(ref ref_mkey) = reference.mkey {
         match &ev_meas.mkey {
