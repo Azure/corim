@@ -60,3 +60,8 @@ pub use envelope::{
 
 pub mod builder;
 pub use builder::SignedCorimBuilder;
+
+pub mod validation;
+pub use validation::{
+    decode_and_validate_signed_corim_at, decode_and_validate_signed_corim_at_with_limits,
+};

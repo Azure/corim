@@ -68,6 +68,17 @@ versions.
 
 ### Added
 
+- **Strict signed-document validation alongside tolerant inspection.**
+  `decode_and_validate_signed_corim_at` and its limits-aware variant check
+  COSE slot types, the exact payload media type, CWT and metadata time windows,
+  and agreement between metadata and flat/nested CWT claims. They validate
+  original fractional CWT times without truncation during comparison, preserve
+  protected-header bytes, and share one parser budget across envelope, header,
+  metadata, payload and tag bodies. Missing detached payloads, hash envelopes
+  without separate authenticated-preimage handling, and opaque CoSWID fallback
+  content cannot produce a successful validation result. Existing decode and
+  payload-validation APIs retain their 0.2.x behavior. These new APIs perform
+  no cryptographic, certificate, critical-header or profile-specific validation.
 - **Generic measurement matchers from the 2026-10-07 CoRIM editor's draft.**
   Keys 16-19 now have typed boolean, number, text, and byte-string fields.
   Numeric ranges use tag 565; numeric/text/byte sets use tag 566 and require
