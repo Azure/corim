@@ -235,6 +235,325 @@ fn strict_signed_validation_rejects_tolerated_slot_and_metadata_shapes() {
     assert!(decode_and_validate_signed_corim_at(&bytes, None, 100).is_err());
 }
 
+#[test]
+fn strict_signed_validation_rejects_hash_digests_and_payload_substitution() {
+    let payload = build_sample_corim_bytes();
+    let attached = strict_fixture_envelope(
+        strict_fixture_header(strict_fixture_claims()),
+        Value::Bytes(payload.clone()),
+    );
+    assert!(decode_and_validate_signed_corim_at(&attached, Some(&payload), 100).is_ok());
+    assert!(decode_and_validate_signed_corim_at(&attached, Some(&[0xff]), 100).is_err());
+    let Value::Map(mut header) = strict_fixture_header(strict_fixture_claims()) else {
+        panic!("header")
+    };
+    header.retain(|(key, _)| *key != Value::Integer(COSE_HEADER_CONTENT_TYPE.into()));
+    header.extend([
+        (
+            Value::Integer(COSE_HEADER_PAYLOAD_HASH_ALG.into()),
+            Value::Integer(7),
+        ),
+        (
+            Value::Integer(COSE_HEADER_PAYLOAD_PREIMAGE_CT.into()),
+            Value::Text(CORIM_CONTENT_TYPE.into()),
+        ),
+    ]);
+    for digest in [
+        Value::Bytes(vec![0xff; 32]),
+        Value::Bytes(payload.clone()),
+        Value::Null,
+    ] {
+        let bytes = strict_fixture_envelope(Value::Map(header.clone()), digest);
+        assert!(decode_signed_corim(&bytes).is_ok());
+        let error = decode_and_validate_signed_corim_at(&bytes, Some(&payload), 100).unwrap_err();
+        assert!(
+            error.to_string().contains("authenticated preimage"),
+            "{error}"
+        );
+    }
+}
+
+#[test]
+fn strict_signed_validation_checks_flat_nested_cwt_consistency() {
+    for (key, equal, unequal) in [
+        (
+            CWT_CLAIM_ISS,
+            Value::Text("issuer".into()),
+            Value::Text("other".into()),
+        ),
+        (
+            CWT_CLAIM_SUB,
+            Value::Text("subject".into()),
+            Value::Text("other".into()),
+        ),
+        (CWT_CLAIM_NBF, Value::Float(99.0), Value::Float(99.5)),
+        (CWT_CLAIM_EXP, Value::Float(200.0), Value::Float(200.5)),
+    ] {
+        for conflict in [false, true] {
+            let mut claims = strict_fixture_claims();
+            claims.extend([
+                (
+                    Value::Integer(CWT_CLAIM_SUB.into()),
+                    Value::Text("subject".into()),
+                ),
+                (Value::Integer(CWT_CLAIM_NBF.into()), Value::Integer(99)),
+                (Value::Integer(CWT_CLAIM_EXP.into()), Value::Integer(200)),
+            ]);
+            let Value::Map(mut header) = strict_fixture_header(claims) else {
+                panic!("header")
+            };
+            header.push((
+                Value::Integer(key.into()),
+                if conflict {
+                    unequal.clone()
+                } else {
+                    equal.clone()
+                },
+            ));
+            let bytes = strict_fixture_envelope(
+                Value::Map(header),
+                Value::Bytes(build_sample_corim_bytes()),
+            );
+            assert!(decode_signed_corim(&bytes).is_ok());
+            assert_eq!(
+                decode_and_validate_signed_corim_at(&bytes, None, 100).is_ok(),
+                !conflict,
+                "key {key}"
+            );
+        }
+    }
+}
+
+#[test]
+fn strict_signed_validation_checks_metadata_window_without_cwt() {
+    let meta = CorimMetaMap {
+        signer: CorimSignerMap {
+            signer_name: "issuer".into(),
+            signer_uri: None,
+        },
+        signature_validity: Some(corim::types::ValidityMap {
+            not_before: Some(100.into()),
+            not_after: 200.into(),
+        }),
+    };
+    let Value::Map(mut header) = strict_fixture_header(strict_fixture_claims()) else {
+        panic!("header")
+    };
+    header.retain(|(key, _)| *key != Value::Integer(COSE_HEADER_CWT_CLAIMS.into()));
+    header.push((
+        Value::Integer(COSE_HEADER_CORIM_META.into()),
+        Value::Bytes(cbor::encode(&meta).unwrap()),
+    ));
+    let bytes =
+        strict_fixture_envelope(Value::Map(header), Value::Bytes(build_sample_corim_bytes()));
+    for (now, valid) in [(99, false), (100, true), (200, true), (201, false)] {
+        assert_eq!(
+            decode_and_validate_signed_corim_at(&bytes, None, now).is_ok(),
+            valid,
+            "now {now}"
+        );
+    }
+}
+
+#[test]
+fn strict_signed_validation_shares_budget_and_preserves_wire_header() {
+    fn nodes(value: &Value) -> usize {
+        1 + match value {
+            Value::Map(fields) => fields
+                .iter()
+                .map(|(key, value)| nodes(key) + nodes(value))
+                .sum(),
+            Value::Array(values) => values.iter().map(nodes).sum(),
+            Value::Tag(_, inner) => nodes(inner),
+            _ => 0,
+        }
+    }
+    let payload = build_sample_corim_bytes();
+    let Value::Map(mut fields) = strict_fixture_header(strict_fixture_claims()) else {
+        panic!("header")
+    };
+    let meta = CorimMetaMap {
+        signer: CorimSignerMap {
+            signer_name: "issuer".into(),
+            signer_uri: None,
+        },
+        signature_validity: None,
+    };
+    let metadata = cbor::encode(&meta).unwrap();
+    fields.push((
+        Value::Integer(COSE_HEADER_CORIM_META.into()),
+        Value::Bytes(metadata.clone()),
+    ));
+    let header = Value::Map(fields);
+    let canonical = cbor::encode(&header).unwrap();
+    let mut protected = vec![0xb8, canonical[0] & 0x1f];
+    protected.extend_from_slice(&canonical[1..]);
+    let outer = Value::Tag(
+        TAG_SIGNED_CORIM,
+        Box::new(Value::Array(vec![
+            Value::Bytes(protected.clone()),
+            Value::Map(vec![]),
+            Value::Bytes(payload.clone()),
+            Value::Bytes(vec![1; 64]),
+        ])),
+    );
+    let bytes = cbor::encode(&outer).unwrap();
+    let validated = corim::validate::decode_and_validate_full_at(&payload, 100).unwrap();
+    let count = nodes(&outer)
+        + nodes(&header)
+        + nodes(&cbor::decode::<Value>(&metadata).unwrap())
+        + nodes(&cbor::decode::<Value>(&payload).unwrap())
+        + validated
+            .corim
+            .tags
+            .iter()
+            .map(|tag| {
+                let corim::types::ConciseTagChoice::Comid(bytes) = tag else {
+                    panic!("CoMID")
+                };
+                nodes(&cbor::decode::<Value>(bytes).unwrap())
+            })
+            .sum::<usize>();
+    let mut limits = cbor::DecodeLimits::default();
+    limits.max_values = count;
+    let (signed, _) =
+        decode_and_validate_signed_corim_at_with_limits(&bytes, None, 100, &limits).unwrap();
+    assert_eq!(signed.protected_header_bytes, protected);
+    let Value::Array(tbs) = cbor::decode::<Value>(&signed.to_be_signed(&[]).unwrap()).unwrap()
+    else {
+        panic!("TBS")
+    };
+    assert_eq!(tbs[1], Value::Bytes(protected));
+    limits.max_values -= 1;
+    assert!(matches!(
+        decode_and_validate_signed_corim_at_with_limits(&bytes, None, 100, &limits),
+        Err(corim::ValidationError::Decode(
+            corim::DecodeError::LimitExceeded { .. }
+        ))
+    ));
+}
+
+#[test]
+fn strict_signed_validation_checks_time_window_shapes_and_limits() {
+    for times in [
+        vec![
+            (CWT_CLAIM_NBF, Value::Integer(201)),
+            (CWT_CLAIM_EXP, Value::Integer(200)),
+        ],
+        vec![
+            (CWT_CLAIM_NBF, Value::Integer(200)),
+            (CWT_CLAIM_EXP, Value::Integer(200)),
+        ],
+        vec![(CWT_CLAIM_EXP, Value::Float(f64::NAN))],
+        vec![(CWT_CLAIM_EXP, Value::Float(f64::INFINITY))],
+        vec![(CWT_CLAIM_NBF, Value::Text("100".into()))],
+    ] {
+        let mut claims = strict_fixture_claims();
+        claims.extend(
+            times
+                .into_iter()
+                .map(|(key, value)| (Value::Integer(key.into()), value)),
+        );
+        let bytes = strict_fixture_envelope(
+            strict_fixture_header(claims),
+            Value::Bytes(build_sample_corim_bytes()),
+        );
+        assert!(decode_and_validate_signed_corim_at(&bytes, None, 100).is_err());
+    }
+    let clean = strict_fixture_envelope(
+        strict_fixture_header(strict_fixture_claims()),
+        Value::Bytes(build_sample_corim_bytes()),
+    );
+    let mut limits = cbor::DecodeLimits::default();
+    limits.max_input_bytes = clean.len();
+    assert!(decode_and_validate_signed_corim_at_with_limits(&clean, None, 100, &limits).is_ok());
+    limits.max_input_bytes -= 1;
+    assert!(matches!(
+        decode_and_validate_signed_corim_at_with_limits(&clean, None, 100, &limits),
+        Err(corim::ValidationError::Decode(
+            corim::DecodeError::LimitExceeded { .. }
+        ))
+    ));
+    let mut trailing = clean;
+    trailing.push(0);
+    assert!(matches!(
+        decode_and_validate_signed_corim_at(&trailing, None, 100),
+        Err(corim::ValidationError::Decode(
+            corim::DecodeError::TrailingData { .. }
+        ))
+    ));
+}
+
+#[test]
+fn strict_signed_validation_rejects_opaque_coswid_fallback() {
+    use corim::types::tags::TAG_CORIM;
+    let mut corim = corim::validate::decode_and_validate_full_at(&build_sample_corim_bytes(), 100)
+        .unwrap()
+        .corim;
+    corim
+        .tags
+        .push(corim::types::ConciseTagChoice::Coswid(vec![0xff]));
+    let payload = cbor::encode(&cbor::value::Tagged {
+        tag: TAG_CORIM,
+        value: corim,
+    })
+    .unwrap();
+    assert_eq!(
+        corim::validate::decode_and_validate_full_at(&payload, 100)
+            .unwrap()
+            .coswid_opaque_count,
+        1
+    );
+    let bytes = strict_fixture_envelope(
+        strict_fixture_header(strict_fixture_claims()),
+        Value::Bytes(payload),
+    );
+    assert!(decode_signed_corim(&bytes).is_ok());
+    assert!(decode_and_validate_signed_corim_at(&bytes, None, 100).is_err());
+}
+
+#[test]
+fn strict_signed_validation_rejects_null_metadata_validity_fields() {
+    use corim::types::tags::{
+        META_KEY_SIGNATURE_VALIDITY, VALIDITY_KEY_NOT_AFTER, VALIDITY_KEY_NOT_BEFORE,
+    };
+    for validity in [
+        Value::Null,
+        Value::Map(vec![
+            (Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()), Value::Null),
+            (
+                Value::Integer(VALIDITY_KEY_NOT_AFTER.into()),
+                Value::Integer(200),
+            ),
+        ]),
+    ] {
+        let meta = CorimMetaMap {
+            signer: CorimSignerMap {
+                signer_name: "issuer".into(),
+                signer_uri: None,
+            },
+            signature_validity: None,
+        };
+        let Value::Map(mut fields) = cbor::decode::<Value>(&cbor::encode(&meta).unwrap()).unwrap()
+        else {
+            panic!("meta")
+        };
+        fields.push((Value::Integer(META_KEY_SIGNATURE_VALIDITY.into()), validity));
+        let Value::Map(mut header) = strict_fixture_header(strict_fixture_claims()) else {
+            panic!("header")
+        };
+        header.retain(|(key, _)| *key != Value::Integer(COSE_HEADER_CWT_CLAIMS.into()));
+        header.push((
+            Value::Integer(COSE_HEADER_CORIM_META.into()),
+            Value::Bytes(cbor::encode(&Value::Map(fields)).unwrap()),
+        ));
+        let bytes =
+            strict_fixture_envelope(Value::Map(header), Value::Bytes(build_sample_corim_bytes()));
+        assert!(decode_signed_corim(&bytes).is_ok());
+        assert!(decode_and_validate_signed_corim_at(&bytes, None, 100).is_err());
+    }
+}
+
 // ===================================================================
 // CwtClaims tests
 // ===================================================================
