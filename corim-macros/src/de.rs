@@ -94,6 +94,12 @@ pub fn expand_deserialize(input: &DeriveInput) -> syn::Result<TokenStream> {
                         }
                     }
                 }
+            } else if f.attrs.non_null {
+                quote! {
+                    #key => {
+                        #temp = Some(Some(map.next_value()?));
+                    }
+                }
             } else {
                 quote! {
                     #key => {
