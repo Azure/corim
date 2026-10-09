@@ -94,6 +94,132 @@ fn convert_round_trip_minimal_comid() {
     );
 }
 
+#[test]
+fn convert_round_trip_measurement_matchers() {
+    for (name, values) in [
+        (
+            "matcher_exact",
+            r#""bool":false,"number":1.5,"text":"abc","bytes":{"type":"byte-string","value":"00ff"}"#,
+        ),
+        (
+            "matcher_sets",
+            r#""bool":true,"number":{"type":"number-set","value":[1,{"type":"integer","value":"18446744073709551615"}]},"text":{"type":"text-set","value":["a","b"]},"bytes":{"type":"bytes-set","value":[{"type":"byte-string","value":""},{"type":"byte-string","value":"ff"}]}"#,
+        ),
+        (
+            "matcher_range",
+            r#""number":{"type":"number-range","value":[null,{"type":"float-bits","value":"7ff0000000000000"}]}"#,
+        ),
+        (
+            "matcher_nan",
+            r#""number":{"type":"float-bits","value":"7ff8000000001234"}"#,
+        ),
+    ] {
+        let template = format!(
+            r#"{{"corim-id":"matchers","comids":[{{"tag-identity":{{"id":"c1"}},"triples":{{"reference-triples":[[{{"class":{{"vendor":"ACME"}}}},[{{"value":{{{values}}}}}]]]}}}}]}}"#
+        );
+        assert_round_trip(name, &template);
+    }
+}
+
+#[test]
+fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
+    use corim::cbor::{self, value::Value};
+    use corim::types::tags::*;
+    let source = unique_temp("matcher_diagnose", "cbor");
+    for invalid in [false, true] {
+        let mval = Value::Map(vec![
+            (
+                Value::Integer(i128::from(MVAL_KEY_BOOL)),
+                Value::Bool(false),
+            ),
+            (
+                Value::Integer(i128::from(MVAL_KEY_NUMBER)),
+                if invalid {
+                    Value::Tag(
+                        TAG_MATCHER_SET,
+                        Box::new(Value::Array(vec![Value::Integer(1)])),
+                    )
+                } else {
+                    Value::Integer(2)
+                },
+            ),
+            (
+                Value::Integer(i128::from(MVAL_KEY_TEXT)),
+                Value::Text("abc".into()),
+            ),
+            (
+                Value::Integer(i128::from(MVAL_KEY_BYTES)),
+                Value::Bytes(vec![0, 255]),
+            ),
+        ]);
+        let measurement = Value::Map(vec![(Value::Integer(i128::from(MEAS_KEY_MVAL)), mval)]);
+        let environment = Value::Map(vec![(
+            Value::Integer(i128::from(ENV_KEY_CLASS)),
+            Value::Map(vec![(
+                Value::Integer(i128::from(CLASS_KEY_VENDOR)),
+                Value::Text("ACME".into()),
+            )]),
+        )]);
+        let comid = Value::Map(vec![
+            (
+                Value::Integer(i128::from(COMID_KEY_TAG_IDENTITY)),
+                Value::Map(vec![(
+                    Value::Integer(i128::from(TAG_IDENTITY_KEY_TAG_ID)),
+                    Value::Text("c1".into()),
+                )]),
+            ),
+            (
+                Value::Integer(i128::from(COMID_KEY_TRIPLES)),
+                Value::Map(vec![(
+                    Value::Integer(i128::from(TRIPLES_KEY_REFERENCE)),
+                    Value::Array(vec![Value::Array(vec![
+                        environment,
+                        Value::Array(vec![measurement]),
+                    ])]),
+                )]),
+            ),
+        ]);
+        let corim = Value::Tag(
+            TAG_CORIM,
+            Box::new(Value::Map(vec![
+                (
+                    Value::Integer(i128::from(CORIM_KEY_ID)),
+                    Value::Text("matcher".into()),
+                ),
+                (
+                    Value::Integer(i128::from(CORIM_KEY_TAGS)),
+                    Value::Array(vec![Value::Tag(
+                        TAG_COMID,
+                        Box::new(Value::Bytes(cbor::encode(&comid).unwrap())),
+                    )]),
+                ),
+            ])),
+        );
+        std::fs::write(&source, cbor::encode(&corim).unwrap()).unwrap();
+        for mode in [None, Some("--diagnose")] {
+            let mut command = Command::new(bin());
+            command.args(["validate", source.to_str().unwrap()]);
+            if let Some(mode) = mode {
+                command.arg(mode);
+            }
+            let output = command.output().unwrap();
+            assert_eq!(
+                output.status.success(),
+                !invalid,
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if !invalid && mode.is_none() {
+                let output = String::from_utf8(output.stdout).unwrap();
+                for field in ["bool: false", "number:", "text:", "bytes:"] {
+                    assert!(output.contains(field), "{output}");
+                }
+            }
+        }
+    }
+    std::fs::remove_file(source).unwrap();
+}
+
 /// All CoRIM-level fields (UUID id, OID profile, validity, entities,
 /// dependent-rims), integrity-registers, and a CoTL round-trip.
 #[test]
