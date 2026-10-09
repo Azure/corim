@@ -102,6 +102,75 @@ fn strict_fixture_claims() -> Vec<(Value, Value)> {
 }
 
 #[test]
+fn strict_signed_validation_requires_disjoint_header_labels() {
+    let payload = build_sample_corim_bytes();
+    for label in [
+        Value::Integer(COSE_HEADER_CONTENT_TYPE.into()),
+        Value::Integer(-70_000),
+        Value::Text("custom".into()),
+    ] {
+        let Value::Map(mut fields) = strict_fixture_header(strict_fixture_claims()) else {
+            panic!("header")
+        };
+        let protected_value = Value::Text(CORIM_CONTENT_TYPE.into());
+        if !fields.iter().any(|(key, _)| *key == label) {
+            fields.push((label.clone(), protected_value.clone()));
+        }
+        let protected_bytes = cbor::encode(&Value::Map(fields)).unwrap();
+        for overlap in [false, true] {
+            for unprotected_value in [protected_value.clone(), Value::Text("different".into())] {
+                let unprotected_label = if overlap {
+                    label.clone()
+                } else {
+                    Value::Text("disjoint".into())
+                };
+                let bytes = cbor::encode(&Value::Tag(
+                    TAG_SIGNED_CORIM,
+                    Box::new(Value::Array(vec![
+                        Value::Bytes(protected_bytes.clone()),
+                        Value::Map(vec![(unprotected_label, unprotected_value)]),
+                        Value::Bytes(payload.clone()),
+                        Value::Bytes(vec![1; 64]),
+                    ])),
+                ))
+                .unwrap();
+                assert!(decode_signed_corim(&bytes).is_ok());
+                for result in [
+                    decode_and_validate_signed_corim_at(&bytes, None, 100),
+                    decode_and_validate_signed_corim_at_with_limits(
+                        &bytes,
+                        None,
+                        100,
+                        &cbor::DecodeLimits::default(),
+                    ),
+                ] {
+                    if overlap {
+                        assert!(result.is_err(), "overlapping label {label:?} was accepted");
+                    } else {
+                        assert_eq!(result.unwrap().0.protected_header_bytes, protected_bytes);
+                    }
+                }
+            }
+        }
+    }
+    let protected_bytes = cbor::encode(&strict_fixture_header(strict_fixture_claims())).unwrap();
+    let bytes = cbor::encode(&Value::Tag(
+        TAG_SIGNED_CORIM,
+        Box::new(Value::Array(vec![
+            Value::Bytes(protected_bytes),
+            Value::Map(vec![(
+                Value::Text(COSE_HEADER_CONTENT_TYPE.to_string()),
+                Value::Text("distinct".into()),
+            )]),
+            Value::Bytes(payload),
+            Value::Bytes(vec![1; 64]),
+        ])),
+    ))
+    .unwrap();
+    assert!(decode_and_validate_signed_corim_at(&bytes, None, 100).is_ok());
+}
+
+#[test]
 fn strict_signed_validation_requires_complete_inline_payload() {
     let payload = build_sample_corim_bytes();
     let header = strict_fixture_header(strict_fixture_claims());
