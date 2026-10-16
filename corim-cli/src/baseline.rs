@@ -17,7 +17,7 @@ use corim::baseline::{
     compare, ConformanceReport, MismatchKind, StructuralMismatch, ValueDifference,
 };
 use corim::cbor::value::Value;
-use corim::types::corim::CorimMap;
+use corim::types::corim::{ConciseTagChoice, CorimMap};
 use corim::types::signed::ProtectedCorimHeaderMap;
 
 #[derive(Debug)]
@@ -76,6 +76,18 @@ pub fn run(
     }
     // Payload: whenever both sides carry one.
     if let (Some(ip), Some(bp)) = (input_payload, baseline.payload.as_ref()) {
+        for (side, payload) in [("target", ip), ("baseline", bp)] {
+            if payload.tags.iter().any(|tag| {
+                !matches!(
+                    tag,
+                    ConciseTagChoice::Comid(_) | ConciseTagChoice::BareBstr(_)
+                )
+            }) {
+                return Err(BaselineError::Invalid(format!(
+                    "unsupported {side} payload for baseline comparison: only CoMID tags are supported"
+                )));
+            }
+        }
         report.merge(compare(ip, bp));
         compared_payload = true;
     }
