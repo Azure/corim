@@ -199,9 +199,21 @@ fn input_at_size_limit_is_not_rejected_by_reader() {
 
 #[test]
 fn oversized_baseline_is_rejected_before_json_parsing() {
-    let bytes = SignedCorimBuilder::new(-7, vec![0xf6])
+    let comid = corim::builder::ComidBuilder::new(corim::types::TagIdChoice::Text("limit".into()))
+        .add_dependency_triple_for(
+            corim::types::EnvironmentMap::for_class("V", "target"),
+            vec![corim::types::EnvironmentMap::for_class("V", "trustee").into()],
+        )
+        .build()
+        .unwrap();
+    let payload = corim::builder::CorimBuilder::new(corim::types::CorimId::Text("limit".into()))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
+    let bytes = SignedCorimBuilder::new(-7, payload)
         .set_cwt_claims(CwtClaims::new("test"))
-        .build_detached_with_signature(vec![0xab])
+        .build_with_signature(vec![0xab])
         .unwrap();
     let target = InputFile::new(&bytes);
     let baseline = InputFile::oversized();
@@ -452,6 +464,11 @@ fn hash_envelope_digest_is_opaque_in_all_cli_modes() {
             let output = run(&args);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if hash_envelope && mode.is_none() {
+                assert_failure(&output, "authenticated preimage");
+                assert!(!stderr.contains("collection entries"));
+                continue;
+            }
             if hash_envelope {
                 assert!(
                     output.status.success(),

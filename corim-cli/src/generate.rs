@@ -151,8 +151,16 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
 /// --baseline` to load a JSON baseline). `profile_override`, when set,
 /// replaces the template's `profile` and drives mval-alias resolution.
 pub(crate) fn build_corim_from_template(
+    template: serde_json::Value,
+    profile_override: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    build_corim_from_template_with_time(template, profile_override, Some(crate::validation::now()?))
+}
+
+pub(crate) fn build_corim_from_template_with_time(
     mut template: serde_json::Value,
     profile_override: Option<&str>,
+    now: Option<i64>,
 ) -> Result<Vec<u8>, String> {
     // Strip authoring comments before any structural processing so they
     // never reach the CBOR output (see `strip_comments`).
@@ -294,7 +302,7 @@ pub(crate) fn build_corim_from_template(
     // strict validator requires at least one CoMID, so CoSWID/CoTL-only
     // CoRIMs use a structural tag-501 decode instead.
     if comid_count > 0 {
-        corim::validate::decode_and_validate_with_registry(&bytes, &registry)
+        crate::validation::document(&bytes, now, &registry)
             .map_err(|e| format!("post-build validation failed: {e}"))?;
     } else {
         corim::cbor::decode_exact::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(

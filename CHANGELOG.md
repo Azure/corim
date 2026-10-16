@@ -10,6 +10,14 @@ versions.
 
 ### Fixed
 
+- **CLI validation could report success for invalid or incomplete documents.**
+  `validate` now reuses library validation for signed/unsigned inputs and
+  baselines, including CoTL and registered-profile checks. Invalid attached
+  payloads, expired signed headers, detached envelopes and hash-only documents
+  cannot report ordinary validation success. JSON failures are structured.
+  `--skip-expiry` remains available as explicit partial validation: successful
+  runs exit 0 with `valid: null` and `time_validated: false`; structural and
+  profile failures still exit 2. Inspection commands retain their behavior.
 - **Reference-value appraisal accepted partial matches and returned reference
   constraints as evidence.** Core and profile-aware matching now require every
   reference measurement to match within a single evidence claim, then return
