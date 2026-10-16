@@ -21,7 +21,9 @@ use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{Digest, MeasurementMap, SvnChoice};
-use crate::types::tags::TAG_CORIM;
+use crate::types::tags::{
+    CORIM_KEY_RIM_VALIDITY, COTL_KEY_VALIDITY, TAG_CORIM, VALIDITY_KEY_NOT_BEFORE,
+};
 use crate::types::triples::{
     ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
 };
@@ -155,11 +157,21 @@ fn validate_comid(comid: &ComidTag) -> Result<(), ValidationError> {
 /// Checks:
 /// - `tags-list` is non-empty
 /// - `tl-validity` is within the current time window
-fn validate_cotl(cotl: &ConciseTlTag, now_epoch_secs: i64) -> Result<(), ValidationError> {
+fn validate_cotl(cotl: &ConciseTlTag, now_epoch_secs: Option<i64>) -> Result<(), ValidationError> {
     if cotl.tags_list.is_empty() {
         return Err(ValidationError::EmptyTagsList);
     }
 
+    if let Some(not_before) = cotl.tl_validity.not_before {
+        if not_before.epoch_secs() > cotl.tl_validity.not_after.epoch_secs() {
+            return Err(ValidationError::Invalid(
+                "CoTL validity window is reversed".into(),
+            ));
+        }
+    }
+    let Some(now_epoch_secs) = now_epoch_secs else {
+        return Ok(());
+    };
     // Check CoTL validity window
     if let Some(nb) = cotl.tl_validity.not_before {
         if now_epoch_secs < nb.epoch_secs() {
@@ -309,6 +321,96 @@ pub(crate) fn decode_and_validate_budget(
     now_epoch_secs: i64,
     budget: &mut cbor::DecodeBudget,
 ) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_budget_with_time(bytes, Some(now_epoch_secs), budget)?;
+    if validated.comids.is_empty() {
+        return Err(ValidationError::NoComidTags);
+    }
+    Ok(validated)
+}
+
+/// Validate a complete unsigned document with an explicit clock and limits.
+///
+/// Per draft-ietf-rats-corim-11 Section 4.1, the non-empty tags array may
+/// contain any supported tag type; a CoMID is not required. Unlike the legacy
+/// [`decode_and_validate_full_at_with_limits`], opaque CoSWID content is an
+/// error. Apply registered profile validation separately. This does not
+/// establish authenticity (RFC 9334 Section 8).
+pub fn decode_and_validate_document_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_document_impl(bytes, Some(now_epoch_secs), limits)
+}
+
+fn decode_and_validate_document_impl(
+    bytes: &[u8],
+    now_epoch_secs: Option<i64>,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_budget_with_time(
+        bytes,
+        now_epoch_secs,
+        &mut cbor::DecodeBudget::new(limits)?,
+    )?;
+    validated.corim.valid().map_err(ValidationError::Invalid)?;
+    if validated.coswid_opaque_count != 0 {
+        return Err(ValidationError::Invalid(
+            "cannot validate opaque CoSWID content".into(),
+        ));
+    }
+    Ok(validated)
+}
+
+/// Validate CoRIM structure without checking time validity (partial validation).
+///
+/// All tag decoding, structural rules and parser limits still apply. Reversed
+/// validity windows and opaque CoSWID content are rejected. A CoMID is not
+/// required. Callers must explicitly report that temporal
+/// validity was not checked and apply any registered profile validation separately.
+/// This does not establish freshness or authenticity (RFC 9334 Section 8).
+pub fn decode_and_validate_structure_with_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_document_impl(bytes, None, limits)
+}
+
+fn check_validity_shape(
+    map: &cbor::value::Value,
+    validity_key: i64,
+    name: &str,
+) -> Result<(), ValidationError> {
+    use cbor::value::Value;
+    let Value::Map(entries) = map else {
+        return Ok(());
+    };
+    let Some((_, validity)) = entries
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(validity_key.into()))
+    else {
+        return Ok(());
+    };
+    let Value::Map(fields) = validity else {
+        return Err(ValidationError::Invalid(format!(
+            "{name} must be a validity map"
+        )));
+    };
+    if fields.iter().any(|(key, value)| {
+        *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()) && matches!(value, Value::Null)
+    }) {
+        return Err(ValidationError::Invalid(format!(
+            "{name} validity not-before must not be null"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn decode_and_validate_budget_with_time(
+    bytes: &[u8],
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
     budget.check_input(bytes)?;
     // Peel in the already-budgeted tree: wrappers count toward depth/work.
     let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
@@ -325,18 +427,29 @@ pub(crate) fn decode_and_validate_budget(
         _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
     };
     cbor::map_keys::check(&map)?;
+    check_validity_shape(&map, CORIM_KEY_RIM_VALIDITY, "rim-validity")?;
     let corim: CorimMap =
         cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
-        if let Some(nb) = validity.not_before {
-            if now_epoch_secs < nb.epoch_secs() {
-                return Err(ValidationError::NotYetValid);
-            }
+        if validity
+            .not_before
+            .is_some_and(|value| value.epoch_secs() > validity.not_after.epoch_secs())
+        {
+            return Err(ValidationError::Invalid(
+                "CoRIM validity window is reversed".into(),
+            ));
         }
-        if validity.not_after.epoch_secs() < now_epoch_secs {
-            return Err(ValidationError::Expired);
+        if let Some(now_epoch_secs) = now_epoch_secs {
+            if let Some(nb) = validity.not_before {
+                if now_epoch_secs < nb.epoch_secs() {
+                    return Err(ValidationError::NotYetValid);
+                }
+            }
+            if validity.not_after.epoch_secs() < now_epoch_secs {
+                return Err(ValidationError::Expired);
+            }
         }
     }
 
@@ -353,7 +466,11 @@ pub(crate) fn decode_and_validate_budget(
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag = budget.decode_schema_exact(cotl_bytes)?;
+                let map = budget.decode_value_exact(cotl_bytes)?;
+                cbor::map_keys::check(&map)?;
+                check_validity_shape(&map, COTL_KEY_VALIDITY, "tl-validity")?;
+                let cotl: ConciseTlTag =
+                    cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
@@ -386,10 +503,6 @@ pub(crate) fn decode_and_validate_budget(
                 // Unknown tag types: forward-compat, skip silently
             }
         }
-    }
-
-    if comids.is_empty() {
-        return Err(ValidationError::NoComidTags);
     }
 
     Ok(ValidatedCorim {

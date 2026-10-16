@@ -63,7 +63,7 @@ fn make_signed(unsigned: &[u8], detached: bool) -> Vec<u8> {
         .set_cwt_claims(CwtClaims::new("test-issuer").with_sub("test-subject"))
         .set_corim_meta(CorimMetaMap {
             signer: CorimSignerMap {
-                signer_name: "Test Signer Ltd.".into(),
+                signer_name: "test-issuer".into(),
                 signer_uri: None,
             },
             signature_validity: None,
@@ -111,6 +111,704 @@ fn validate_json_status(bytes: &[u8], ext: &str) -> (std::process::ExitStatus, s
     let parsed = serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("output is not valid JSON: {e}\n{stdout}"));
     (out.status, parsed)
+}
+
+fn validate_with_flags(bytes: &[u8], flags: &[&str]) -> std::process::Output {
+    let path = unique_temp("strict_validation", "cbor");
+    std::fs::write(&path, bytes).unwrap();
+    let result = Command::new(bin())
+        .arg("validate")
+        .arg(&path)
+        .args(flags)
+        .output()
+        .unwrap();
+    std::fs::remove_file(path).unwrap();
+    result
+}
+
+#[test]
+fn empty_validation_input_is_invalid_not_an_io_failure() {
+    for format in ["text", "json"] {
+        for skip in [false, true] {
+            let mut flags = vec!["--format", format];
+            if skip {
+                flags.push("--skip-expiry");
+            }
+            let output = validate_with_flags(&[], &flags);
+            assert_eq!(output.status.code(), Some(2));
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false);
+                assert!(report["errors"][0].as_str().unwrap().contains("empty"));
+            }
+        }
+    }
+    for flag in ["--edn", "--diagnose"] {
+        assert_eq!(validate_with_flags(&[], &[flag]).status.code(), Some(1));
+    }
+}
+
+#[test]
+fn baseline_io_failures_are_distinct_from_invalid_content() {
+    let missing = unique_temp("missing_baseline", "cbor");
+    let invalid = unique_temp("invalid_baseline", "cbor");
+    std::fs::write(&invalid, []).unwrap();
+    for format in ["text", "json"] {
+        for (path, code) in [(&missing, 1), (&std::env::temp_dir(), 1), (&invalid, 2)] {
+            let output = validate_with_flags(
+                &sample_unsigned_corim(),
+                &["--baseline", path.to_str().unwrap(), "--format", format],
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(code),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false);
+                assert!(!report["errors"].as_array().unwrap().is_empty());
+            }
+        }
+    }
+    std::fs::remove_file(invalid).unwrap();
+}
+
+#[test]
+fn tag_only_documents_validate_all_tags_in_both_time_modes() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::SWID_ROLE_TAG_CREATOR;
+    use corim::types::{
+        ConciseSwidTag, ConciseTagChoice, ConciseTlTag, SwidEntity, TagIdentity, ValidityMap,
+    };
+    let swid = ConciseSwidTag::new(
+        TagIdChoice::Text("software".into()),
+        "Software",
+        0,
+        vec![SwidEntity::new("issuer", vec![SWID_ROLE_TAG_CREATOR])],
+    );
+    let cotl = ConciseTlTag {
+        tag_identity: TagIdentity {
+            tag_id: TagIdChoice::Text("list".into()),
+            tag_version: None,
+        },
+        tags_list: vec![TagIdentity {
+            tag_id: TagIdChoice::Text("software".into()),
+            tag_version: None,
+        }],
+        tl_validity: ValidityMap {
+            not_before: None,
+            not_after: i64::MAX.into(),
+        },
+    };
+    let mut expired = cotl.clone();
+    expired.tl_validity.not_after = 1.into();
+    for (tag, valid_now, valid_without_clock) in [
+        (
+            ConciseTagChoice::Coswid(cbor::encode(&swid).unwrap()),
+            true,
+            true,
+        ),
+        (
+            ConciseTagChoice::Cotl(cbor::encode(&cotl).unwrap()),
+            true,
+            true,
+        ),
+        (
+            ConciseTagChoice::Cotl(cbor::encode(&expired).unwrap()),
+            false,
+            true,
+        ),
+        (ConciseTagChoice::Coswid(vec![0xff]), false, false),
+        (ConciseTagChoice::Cotl(vec![0xff]), false, false),
+    ] {
+        let mut corim: Tagged<corim::types::CorimMap> =
+            cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+        corim.value.tags = vec![tag];
+        let payload = cbor::encode(&corim).unwrap();
+        if valid_now {
+            let limits = cbor::DecodeLimits::default();
+            assert!(matches!(
+                corim::validate::decode_and_validate_full_at_with_limits(&payload, 100, &limits),
+                Err(corim::ValidationError::NoComidTags)
+            ));
+            assert!(
+                corim::validate::decode_and_validate_document_at_with_limits(
+                    &payload, 100, &limits
+                )
+                .is_ok()
+            );
+        }
+        for signed in [false, true] {
+            let bytes = if signed {
+                make_signed(&payload, false)
+            } else {
+                payload.clone()
+            };
+            for skip in [false, true] {
+                for format in ["text", "json"] {
+                    let mut flags = vec!["--format", format];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&bytes, &flags);
+                    let valid = if skip { valid_without_clock } else { valid_now };
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if valid { 0 } else { 2 }),
+                        "signed={signed} skip={skip}: {}{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    if format == "json" {
+                        let report: serde_json::Value =
+                            serde_json::from_slice(&output.stdout).unwrap();
+                        if valid {
+                            assert_eq!(report["comid_count"], 0);
+                        } else {
+                            assert_eq!(report["valid"], false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn validity_nulls_are_rejected_without_changing_tolerant_inspection() {
+    use corim::cbor::{
+        self,
+        value::{Tagged, Value},
+    };
+    use corim::types::tags::*;
+    use corim::types::{ConciseTagChoice, ConciseTlTag, TagIdentity, ValidityMap};
+    let limits = cbor::DecodeLimits::default();
+    for location in ["rim-validity", "rim not-before", "cotl not-before"] {
+        for null in [true, false] {
+            let mut validity = vec![(
+                Value::Integer(VALIDITY_KEY_NOT_AFTER.into()),
+                Value::Tag(TAG_EPOCH_TIME, Box::new(Value::Integer(i64::MAX.into()))),
+            )];
+            if null {
+                validity.push((Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()), Value::Null));
+            }
+            let mut corim: Tagged<corim::types::CorimMap> =
+                cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+            if location == "cotl not-before" {
+                let identity = TagIdentity {
+                    tag_id: TagIdChoice::Text("list".into()),
+                    tag_version: None,
+                };
+                let cotl = ConciseTlTag {
+                    tag_identity: identity.clone(),
+                    tags_list: vec![identity],
+                    tl_validity: ValidityMap {
+                        not_before: None,
+                        not_after: i64::MAX.into(),
+                    },
+                };
+                let Value::Map(mut entries) =
+                    cbor::decode_exact(&cbor::encode(&cotl).unwrap()).unwrap()
+                else {
+                    panic!("CoTL map");
+                };
+                entries.retain(|(key, _)| *key != Value::Integer(COTL_KEY_VALIDITY.into()));
+                entries.push((
+                    Value::Integer(COTL_KEY_VALIDITY.into()),
+                    Value::Map(validity.clone()),
+                ));
+                let bytes = cbor::encode(&Value::Map(entries)).unwrap();
+                assert!(cbor::decode_exact::<ConciseTlTag>(&bytes).is_ok());
+                corim.value.tags.push(ConciseTagChoice::Cotl(bytes));
+            }
+            let Value::Tag(tag, map) = cbor::decode_exact(&cbor::encode(&corim).unwrap()).unwrap()
+            else {
+                panic!("tagged CoRIM");
+            };
+            let Value::Map(mut entries) = *map else {
+                panic!("CoRIM map");
+            };
+            if location == "rim-validity" && null {
+                entries.push((Value::Integer(CORIM_KEY_RIM_VALIDITY.into()), Value::Null));
+            } else if location == "rim not-before" {
+                entries.push((
+                    Value::Integer(CORIM_KEY_RIM_VALIDITY.into()),
+                    Value::Map(validity),
+                ));
+            }
+            let payload = cbor::encode(&Value::Tag(tag, Box::new(Value::Map(entries)))).unwrap();
+            assert!(cbor::decode_exact::<Tagged<corim::types::CorimMap>>(&payload).is_ok());
+            assert_eq!(
+                corim::validate::decode_and_validate_structure_with_limits(&payload, &limits)
+                    .is_ok(),
+                !null,
+                "{location}"
+            );
+            assert_eq!(
+                corim::validate::decode_and_validate_document_at_with_limits(
+                    &payload, 100, &limits
+                )
+                .is_ok(),
+                !null,
+                "{location}"
+            );
+            assert_eq!(
+                corim::validate::decode_and_validate_full_at_with_limits(&payload, 100, &limits)
+                    .is_ok(),
+                !null,
+                "{location}"
+            );
+            for bytes in [payload.clone(), make_signed(&payload, false)] {
+                assert!(validate_with_flags(&bytes, &["--edn"]).status.success());
+                for skip in [false, true] {
+                    let mut flags = vec!["--format", "json"];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&bytes, &flags);
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if null { 2 } else { 0 }),
+                        "{location}, skip={skip}: {}",
+                        String::from_utf8_lossy(&output.stdout)
+                    );
+                    if null {
+                        let report: serde_json::Value =
+                            serde_json::from_slice(&output.stdout).unwrap();
+                        assert_eq!(report["valid"], false);
+                        assert!(report["errors"][0].as_str().unwrap().contains("validity"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn validation_modes_reject_invalid_and_incomplete_documents() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::TAG_CORIM;
+    let payload = sample_unsigned_corim();
+    let build = |payload: Vec<u8>, claims: CwtClaims| {
+        SignedCorimBuilder::new(-38, payload)
+            .set_cwt_claims(claims)
+            .build_with_signature(vec![1; 64])
+            .unwrap()
+    };
+    let mut corim: Tagged<corim::types::CorimMap> = cbor::decode_exact(&payload).unwrap();
+    corim
+        .value
+        .tags
+        .push(corim::types::ConciseTagChoice::Cotl(vec![0xff]));
+    let malformed_cotl = cbor::encode(&Tagged {
+        tag: TAG_CORIM,
+        value: corim.value,
+    })
+    .unwrap();
+    let mut future: Tagged<corim::types::CorimMap> = cbor::decode_exact(&payload).unwrap();
+    future.value.rim_validity = Some(corim::types::ValidityMap {
+        not_before: Some(i64::MAX.into()),
+        not_after: i64::MAX.into(),
+    });
+    for (name, bytes) in [
+        (
+            "malformed signed payload",
+            build(vec![0xff], CwtClaims::new("issuer")),
+        ),
+        (
+            "expired header",
+            build(payload.clone(), CwtClaims::new("issuer").with_exp(1)),
+        ),
+        (
+            "future header",
+            build(payload.clone(), CwtClaims::new("issuer").with_nbf(i64::MAX)),
+        ),
+        (
+            "conflicting issuer",
+            SignedCorimBuilder::new(-38, payload.clone())
+                .set_cwt_claims(CwtClaims::new("issuer"))
+                .set_corim_meta(CorimMetaMap {
+                    signer: CorimSignerMap {
+                        signer_name: "other".into(),
+                        signer_uri: None,
+                    },
+                    signature_validity: None,
+                })
+                .build_with_signature(vec![1; 64])
+                .unwrap(),
+        ),
+        (
+            "detached payload",
+            SignedCorimBuilder::new(-38, payload.clone())
+                .set_cwt_claims(CwtClaims::new("issuer"))
+                .build_detached_with_signature(vec![1; 64])
+                .unwrap(),
+        ),
+        ("malformed CoTL", malformed_cotl),
+        ("future rim", cbor::encode(&future).unwrap()),
+    ] {
+        for format in ["text", "json"] {
+            let output = validate_with_flags(&bytes, &["--format", format]);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false, "{name}");
+                assert!(!report["errors"].as_array().unwrap().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn skip_expiry_reports_partial_validation_without_hiding_structure_errors() {
+    let payload = sample_unsigned_corim();
+    for malformed in [false, true] {
+        let bytes = SignedCorimBuilder::new(
+            -38,
+            if malformed {
+                vec![0xff]
+            } else {
+                payload.clone()
+            },
+        )
+        .set_cwt_claims(CwtClaims::new("issuer").with_exp(1))
+        .build_with_signature(vec![1; 64])
+        .unwrap();
+        let output = validate_with_flags(&bytes, &["--format", "json", "--skip-expiry"]);
+        assert_eq!(output.status.code(), Some(if malformed { 2 } else { 0 }));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["time_validated"], false);
+        if malformed {
+            assert_eq!(report["valid"], false);
+        } else {
+            assert!(report["valid"].is_null());
+        }
+    }
+    let output = validate_with_flags(&sample_unsigned_corim(), &["--skip-expiry"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("temporal checks skipped"));
+}
+
+#[test]
+fn skip_expiry_skips_rim_and_cotl_clocks_but_not_profile_or_header_rules() {
+    use corim::cbor::{self, value::Tagged};
+    let mut corim: Tagged<corim::types::CorimMap> =
+        cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+    corim.value.rim_validity = Some(corim::types::ValidityMap {
+        not_before: None,
+        not_after: 1.into(),
+    });
+    let cotl = corim::types::ConciseTlTag {
+        tag_identity: corim::types::TagIdentity {
+            tag_id: TagIdChoice::Text("list".into()),
+            tag_version: None,
+        },
+        tags_list: vec![corim::types::TagIdentity {
+            tag_id: TagIdChoice::Text("json-comid".into()),
+            tag_version: None,
+        }],
+        tl_validity: corim::types::ValidityMap {
+            not_before: None,
+            not_after: 1.into(),
+        },
+    };
+    corim.value.tags.push(corim::types::ConciseTagChoice::Cotl(
+        cbor::encode(&cotl).unwrap(),
+    ));
+    let bytes = cbor::encode(&corim).unwrap();
+    assert_eq!(validate_with_flags(&bytes, &[]).status.code(), Some(2));
+    let output = validate_with_flags(&bytes, &["--skip-expiry", "-f", "json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(report["valid"].is_null());
+    assert_eq!(report["time_validated"], false);
+    let invalid_profile = cca_platform_corim(vec![cca_software_component()]);
+    assert_eq!(
+        validate_with_flags(&invalid_profile, &["--skip-expiry"])
+            .status
+            .code(),
+        Some(2)
+    );
+    let invalid_header = SignedCorimBuilder::new(-38, sample_unsigned_corim())
+        .set_cwt_claims(CwtClaims::new("issuer").with_exp(1))
+        .set_content_type("text/plain")
+        .build_with_signature(vec![1; 64])
+        .unwrap();
+    assert_eq!(
+        validate_with_flags(&invalid_header, &["--skip-expiry"])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
+#[test]
+fn baseline_rejects_uncompared_tags_on_either_side() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::SWID_ROLE_TAG_CREATOR;
+    use corim::types::{
+        ConciseSwidTag, ConciseTagChoice, ConciseTlTag, SwidEntity, TagIdentity, ValidityMap,
+    };
+    let normal = sample_unsigned_corim();
+    for coswid in [false, true] {
+        for mixed in [false, true] {
+            let documents: Vec<Vec<u8>> = ["first", "second"]
+                .into_iter()
+                .map(|name| {
+                    let tag = if coswid {
+                        ConciseTagChoice::Coswid(
+                            cbor::encode(&ConciseSwidTag::new(
+                                TagIdChoice::Text(name.into()),
+                                name,
+                                0,
+                                vec![SwidEntity::new("issuer", vec![SWID_ROLE_TAG_CREATOR])],
+                            ))
+                            .unwrap(),
+                        )
+                    } else {
+                        let identity = TagIdentity {
+                            tag_id: TagIdChoice::Text(name.into()),
+                            tag_version: None,
+                        };
+                        ConciseTagChoice::Cotl(
+                            cbor::encode(&ConciseTlTag {
+                                tag_identity: identity.clone(),
+                                tags_list: vec![identity],
+                                tl_validity: ValidityMap {
+                                    not_before: None,
+                                    not_after: i64::MAX.into(),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                    };
+                    let mut document: Tagged<corim::types::CorimMap> =
+                        cbor::decode_exact(&normal).unwrap();
+                    if !mixed {
+                        document.value.tags.clear();
+                    }
+                    document.value.tags.push(tag);
+                    cbor::encode(&document).unwrap()
+                })
+                .collect();
+            for (target, baseline) in [
+                (&documents[0], &documents[1]),
+                (&normal, &documents[0]),
+                (&documents[0], &normal),
+            ] {
+                for signed in [false, true] {
+                    let target = if signed {
+                        make_signed(target, false)
+                    } else {
+                        target.clone()
+                    };
+                    let baseline = if signed {
+                        make_signed(baseline, false)
+                    } else {
+                        baseline.clone()
+                    };
+                    assert!(validate_with_flags(&target, &[]).status.success());
+                    assert!(validate_with_flags(&baseline, &[]).status.success());
+                    let path = unique_temp("unsupported_baseline", "cbor");
+                    std::fs::write(&path, baseline).unwrap();
+                    for skip in [false, true] {
+                        for format in ["text", "json"] {
+                            let mut flags =
+                                vec!["--baseline", path.to_str().unwrap(), "--format", format];
+                            if skip {
+                                flags.push("--skip-expiry");
+                            }
+                            let output = validate_with_flags(&target, &flags);
+                            assert_eq!(
+                                output.status.code(),
+                                Some(2),
+                                "coswid={coswid}, mixed={mixed}, signed={signed}: {}",
+                                String::from_utf8_lossy(&output.stdout)
+                            );
+                            if format == "json" {
+                                let report: serde_json::Value =
+                                    serde_json::from_slice(&output.stdout).unwrap();
+                                assert_eq!(report["valid"], false);
+                                assert!(report["errors"][0]
+                                    .as_str()
+                                    .unwrap()
+                                    .contains("unsupported"));
+                            }
+                        }
+                    }
+                    std::fs::remove_file(path).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn json_baselines_reject_invalid_present_timestamps_before_conversion() {
+    use serde_json::{json, Value};
+    let template = json!({"corim-id":"json-corim","comids":[{"tag-identity":{"id":"json-comid"},"triples":{"reference-triples":[[{"class":{"vendor":"TestVendor","model":"TestModel"}},[{"key":"firmware","value":{"svn":{"type":"min-svn","value":1}}}]]]}}]});
+    for cotl in [false, true] {
+        for (before, after) in [("not-before", "not-after"), ("0", "1")] {
+            for (value, valid) in [
+                (None, true),
+                (Some(json!(0)), true),
+                (Some(json!({"__cbor_tag":1,"__cbor_value":0})), true),
+                (Some(Value::Null), false),
+                (Some(json!("invalid")), false),
+                (Some(json!(u64::MAX)), false),
+                (Some(json!(0.5)), false),
+                (Some(json!(true)), false),
+                (Some(json!({"__cbor_tag":1,"__cbor_value":null})), false),
+            ] {
+                let mut baseline = template.clone();
+                let mut validity = serde_json::Map::new();
+                validity.insert(after.into(), json!(i64::MAX));
+                if let Some(value) = value {
+                    validity.insert(before.into(), value);
+                }
+                if cotl {
+                    baseline["cotls"] = json!([{"tag-identity":{"id":"list"},"tags-list":[{"id":"member"}],"tl-validity":validity}]);
+                } else {
+                    baseline["rim-validity"] = validity.into();
+                }
+                let path = unique_temp("json_validity_baseline", "json");
+                let generated = unique_temp("json_validity_generated", "cbor");
+                std::fs::write(&path, serde_json::to_vec(&baseline).unwrap()).unwrap();
+                for skip in [false, true] {
+                    let mut flags = vec!["--baseline", path.to_str().unwrap(), "--format", "json"];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&sample_unsigned_corim(), &flags);
+                    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if valid && !cotl { 0 } else { 2 }),
+                        "cotl={cotl}, skip={skip}, baseline={baseline}: {report}"
+                    );
+                    if !valid {
+                        assert_eq!(report["valid"], false);
+                        let message = report["errors"][0].as_str().unwrap();
+                        assert!(
+                            !message.contains("unsupported"),
+                            "invalid timestamp escaped conversion: {message}"
+                        );
+                    } else if cotl {
+                        assert!(report["errors"][0]
+                            .as_str()
+                            .unwrap()
+                            .contains("unsupported"));
+                    }
+                }
+                let output = Command::new(bin())
+                    .args([
+                        "generate",
+                        path.to_str().unwrap(),
+                        "-o",
+                        generated.to_str().unwrap(),
+                    ])
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.success(),
+                    valid,
+                    "baseline={baseline}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                if valid {
+                    std::fs::remove_file(generated).unwrap();
+                }
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn baselines_use_same_time_and_structural_policy_as_input() {
+    use corim::cbor::{self, value::Tagged};
+    let target = sample_unsigned_corim();
+    let mut baseline: Tagged<corim::types::CorimMap> = cbor::decode_exact(&target).unwrap();
+    baseline.value.rim_validity = Some(corim::types::ValidityMap {
+        not_before: None,
+        not_after: 1.into(),
+    });
+    let json = br#"{"corim-id":"json-corim","rim-validity":{"not-after":1},"comids":[{"tag-identity":{"id":"json-comid"},"triples":{"reference-triples":[[{"class":{"vendor":"TestVendor","model":"TestModel"}},[{"key":"firmware","value":{"svn":{"type":"min-svn","value":1}}}]]]}}]}"#;
+    for bytes in [cbor::encode(&baseline).unwrap(), json.to_vec()] {
+        let path = unique_temp("expired_baseline", "data");
+        std::fs::write(&path, bytes).unwrap();
+        let output = validate_with_flags(
+            &target,
+            &["--baseline", path.to_str().unwrap(), "-f", "json"],
+        );
+        assert_eq!(output.status.code(), Some(2));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["valid"], false);
+        let output = validate_with_flags(
+            &target,
+            &[
+                "--baseline",
+                path.to_str().unwrap(),
+                "--skip-expiry",
+                "-f",
+                "json",
+            ],
+        );
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["time_validated"], false);
+        std::fs::remove_file(path).unwrap();
+    }
+    let malformed = SignedCorimBuilder::new(-38, vec![0xff])
+        .set_cwt_claims(CwtClaims::new("issuer"))
+        .build_with_signature(vec![1; 64])
+        .unwrap();
+    let path = unique_temp("invalid_baseline", "cose");
+    std::fs::write(&path, malformed).unwrap();
+    assert_eq!(
+        validate_with_flags(
+            &target,
+            &["--baseline", path.to_str().unwrap(), "--skip-expiry"]
+        )
+        .status
+        .code(),
+        Some(2)
+    );
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn nonpreferred_signed_tag_is_validated_without_unsigned_fallback() {
+    let mut bytes = make_signed(&sample_unsigned_corim(), false);
+    assert_eq!(bytes.remove(0), 0xd2);
+    bytes.splice(..0, [0xd8, 18]);
+    let output = validate_with_flags(&bytes, &["-f", "json"]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(report["valid"], true);
+    assert_eq!(report["time_validated"], true);
+    assert_eq!(report["signed"]["signature_verified"], false);
 }
 
 fn cca_platform_environment() -> EnvironmentMap {
@@ -218,7 +916,7 @@ fn signed_corim_json_includes_protected_header_fields() {
     assert_eq!(p["content_type"], "application/rim+cbor");
     assert_eq!(p["issuer"], "test-issuer");
     assert_eq!(p["subject"], "test-subject");
-    assert_eq!(p["signer_name"], "Test Signer Ltd.");
+    assert_eq!(p["signer_name"], "test-issuer");
     assert_eq!(p["has_cwt_claims"], true);
     assert_eq!(p["has_corim_meta"], true);
     assert!(p["size"].as_u64().unwrap() > 0);
@@ -238,17 +936,18 @@ fn signed_corim_json_reports_payload_and_signature() {
     assert_eq!(v["id"], "json-corim");
 }
 
-/// A detached signed CoRIM has no payload to decode; `-f json` must still
-/// emit JSON rather than falling back to the text header view.
+/// Incomplete signed documents produce structured failure rather than success.
 #[test]
-fn detached_signed_corim_json_emits_header_only_object() {
+fn detached_signed_corim_json_reports_incomplete_validation() {
     let signed = make_signed(&sample_unsigned_corim(), true);
-    let v = validate_json(&signed, "cose");
-
-    assert_eq!(v["valid"], true);
-    assert_eq!(v["payload_decoded"], false);
-    assert_eq!(v["signed"]["payload"]["detached"], true);
-    assert_eq!(v["signed"]["protected"]["issuer"], "test-issuer");
+    let (status, report) = validate_json_status(&signed, "cose");
+    assert_eq!(status.code(), Some(2));
+    assert_eq!(report["valid"], false);
+    assert!(report["errors"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|error| error.as_str().unwrap().contains("detached payload")));
 }
 
 #[test]

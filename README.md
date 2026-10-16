@@ -193,10 +193,13 @@ subcommands:
 
 ```sh
 # Validate an unsigned CoRIM
-corim-cli validate --skip-expiry myfile.corim
+corim-cli validate myfile.corim
 
 # Validate a signed CoRIM (auto-detected)
-corim-cli validate --skip-expiry signed.corim
+corim-cli validate signed.corim
+
+# Partial validation: structural/profile checks only, temporal validity unchecked
+corim-cli validate --skip-expiry archived.corim
 
 # JSON output (signed CoRIMs also carry a "signed" object describing the
 # COSE_Sign1 envelope and protected header)
@@ -239,13 +242,14 @@ protected header — the same fields the text renderer shows:
 ```jsonc
 {
   "valid": true,
+  "time_validated": true,
   "signed": {
     "tag": 18,
     "protected": {
       "size": 5160,
       "alg": "PS384", "alg_id": -38,
       "content_type": "application/rim+cbor",
-      "issuer": "did:x509:0:sha256:…::eku:…",   // CWT `iss`
+      "issuer": "ACC Endorsement Issuer",      // CWT `iss`
       "subject": "TDX-Trust-Endorsement",        // CWT `sub`
       "signer_name": "ACC Endorsement Issuer",   // corim-meta
       "has_cwt_claims": true, "has_corim_meta": true,
@@ -260,11 +264,26 @@ protected header — the same fields the text renderer shows:
 }
 ```
 
-`signature_verified` is always `false` — the tool has no crypto dependency
-and checks structure only. A **detached** signed CoRIM has no payload to
-decode, so the report carries `"payload_decoded": false` and the `signed`
-object without the inner CoRIM summary. Unsigned CoRIMs have no `signed`
-object at all.
+`signature_verified` is always `false`: the tool does not authenticate
+signatures or certificates. Default validation checks document structure,
+temporal validity and registered profile constraints. A detached envelope or
+hash-only document is incomplete for validation and exits `2`, as does an
+invalid attached payload. Use `--diagnose`, `--edn`, or `extract --header` for
+inspection. Unsigned CoRIMs have no `signed` object.
+
+CoSWID-only and CoTL-only documents are supported, as are CoMID documents.
+Library callers can use `decode_and_validate_document_at_with_limits` for
+unsigned complete-document validation; legacy validation APIs retain their
+CoMID prerequisite. Registered-profile checks remain a separate library step.
+
+`--skip-expiry` retains structural, header-consistency and profile checks but
+skips comparisons against the clock. Success exits `0` with `"valid": null`
+and `"time_validated": false`, and text output explicitly says temporal checks
+were skipped. It does not establish current validity. Failed checks report
+`"valid": false`, `"time_validated": false`, and an `errors` array (exit `2`);
+input I/O errors exit `1`. Empty documents and present-null validity fields are
+invalid, including with `--skip-expiry`. In particular, JSON validation failures
+remain JSON.
 
 ### `validate --baseline` — structural conformance check
 
@@ -274,6 +293,19 @@ same. The reference may be JSON, CBOR, or a signed CoRIM (auto-detected
 and validated first). This is meant for generation pipelines: run it
 right after `generate` to catch a dropped or mistyped field before the
 CoRIM ships.
+
+The same structural, registered-profile and optional clock checks apply to
+both files, including JSON baselines. `--skip-expiry` applies to both inputs;
+baseline JSON reports include `time_validated`. Invalid or incomplete baselines
+exit `2` instead of yielding a conformance result. Missing or unreadable baseline
+files exit `1`. Both failure categories produce JSON errors in JSON mode.
+
+Baseline payload comparison currently supports CoMID tags only. A CoTL,
+CoSWID, or other unsupported tag on either side, including in a mixed-tag
+document, exits `2` instead of reporting conformance for unexamined content.
+Ordinary validation without `--baseline` continues to support CoTL and CoSWID.
+Malformed present JSON timestamps are rejected before template conversion;
+omitted optional timestamps remain supported.
 
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
@@ -307,17 +339,16 @@ header fields — `alg`, `content-type`, hash-envelope mode, the CWT
 `iss` (signer identity), and the *presence* of `corim-meta` /
 `CWT-Claims` / `kid` / `x5chain` / `x5bag` / `x5t` / `x5u` — must match;
 signer name, `sub`, timestamps, certificate bytes, and other details are
-reported as value differences. Detached (nil-payload) signed CoRIMs are
-supported: only the header is compared. What was compared depends on the
-formats of the two files:
+reported as value differences. Signed inputs must have complete attached
+payloads; detached/header-only baseline comparisons are not validation.
+What was compared depends on the formats of the two files:
 
 | baseline \ target | signed | unsigned |
 | --- | --- | --- |
-| **signed** | protected header (+ payload if both present) | payload |
+| **signed** | protected header + payload | payload |
 | **unsigned** | payload | payload |
 
-The output notes the detected format of each file (e.g. `signed CoRIM
-(detached payload)`) and what was compared.
+The output notes the detected format of each file and what was compared.
 
 ### `extract` / `sign` — signed CoRIM workflow
 
@@ -336,8 +367,8 @@ bring-your-own-signer flow:
 
 `extract` reverses signing: it pulls the embedded unsigned CoRIM payload
 back out of a signed CoRIM (attached payloads only). `validate` on a
-signed CoRIM checks structure only and prints a note that the signature
-is **not** cryptographically verified.
+signed CoRIM checks structure, temporal validity and registered profiles, but
+the signature is **not** cryptographically verified.
 
 ### `generate` — build a CoRIM from a JSON template
 

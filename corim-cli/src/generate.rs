@@ -151,8 +151,16 @@ fn run_impl(args: GenerateArgs) -> Result<PathBuf, String> {
 /// --baseline` to load a JSON baseline). `profile_override`, when set,
 /// replaces the template's `profile` and drives mval-alias resolution.
 pub(crate) fn build_corim_from_template(
+    template: serde_json::Value,
+    profile_override: Option<&str>,
+) -> Result<Vec<u8>, String> {
+    build_corim_from_template_with_time(template, profile_override, Some(crate::validation::now()?))
+}
+
+pub(crate) fn build_corim_from_template_with_time(
     mut template: serde_json::Value,
     profile_override: Option<&str>,
+    now: Option<i64>,
 ) -> Result<Vec<u8>, String> {
     // Strip authoring comments before any structural processing so they
     // never reach the CBOR output (see `strip_comments`).
@@ -210,15 +218,26 @@ pub(crate) fn build_corim_from_template(
                     .and_then(serde_json::Value::as_i64)
             })
         };
-        let epoch = |names: &[&str]| -> Option<i64> {
-            names.iter().find_map(|n| vo.get(*n)).and_then(as_epoch)
+        let epoch = |names: &[&str]| -> Result<Option<i64>, String> {
+            names
+                .iter()
+                .find_map(|name| vo.get(*name))
+                .map(|value| {
+                    as_epoch(value).ok_or_else(|| {
+                        format!(
+                            "rim-validity {} must be an epoch integer or a #6.1 tag envelope",
+                            names[0]
+                        )
+                    })
+                })
+                .transpose()
         };
-        let not_after = epoch(&["not-after", "1"]).ok_or_else(|| {
+        let not_after = epoch(&["not-after", "1"])?.ok_or_else(|| {
             "rim-validity requires \"not-after\" as an epoch integer or a \
              #6.1 tag envelope ({\"__cbor_tag\": 1, \"__cbor_value\": <epoch>})"
                 .to_string()
         })?;
-        let not_before = epoch(&["not-before", "0"]);
+        let not_before = epoch(&["not-before", "0"])?;
         builder = builder
             .set_validity(not_before, not_after)
             .map_err(|e| format!("rim-validity: {e}"))?;
@@ -243,7 +262,6 @@ pub(crate) fn build_corim_from_template(
     }
 
     let mut tag_count = 0usize;
-    let mut comid_count = 0usize;
 
     // comids (optional): decoded CoMID tags (full triples tree).
     if let Some(arr) = obj.get("comids").and_then(|v| v.as_array()) {
@@ -254,7 +272,6 @@ pub(crate) fn build_corim_from_template(
                 .add_comid_tag(comid)
                 .map_err(|e| format!("comids[{i}]: add_comid_tag: {e}"))?;
             tag_count += 1;
-            comid_count += 1;
         }
     }
 
@@ -290,18 +307,8 @@ pub(crate) fn build_corim_from_template(
         .build_bytes()
         .map_err(|e| format!("building CoRIM: {e}"))?;
 
-    // Validate core and registered-profile constraints before writing. The
-    // strict validator requires at least one CoMID, so CoSWID/CoTL-only
-    // CoRIMs use a structural tag-501 decode instead.
-    if comid_count > 0 {
-        corim::validate::decode_and_validate_with_registry(&bytes, &registry)
-            .map_err(|e| format!("post-build validation failed: {e}"))?;
-    } else {
-        corim::cbor::decode_exact::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(
-            &bytes,
-        )
-        .map_err(|e| format!("post-build decode failed: {e}"))?;
-    }
+    crate::validation::document(&bytes, now, &registry)
+        .map_err(|e| format!("post-build validation failed: {e}"))?;
 
     Ok(bytes)
 }
@@ -324,6 +331,24 @@ fn decode_typed<T: serde::de::DeserializeOwned>(
     }
     let mut cbor_val = corim::json::json_to_value(&resolved);
     crate::prose::coerce_bytes(&mut cbor_val, root);
+    if matches!(root, Root::Cotl) {
+        use corim::cbor::value::Value;
+        use corim::types::tags::{COTL_KEY_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
+        if let Value::Map(entries) = &cbor_val {
+            for (key, value) in entries {
+                if *key == Value::Integer(COTL_KEY_VALIDITY.into()) {
+                    if let Value::Map(fields) = value {
+                        if fields.iter().any(|(key, value)| {
+                            *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into())
+                                && matches!(value, Value::Null)
+                        }) {
+                            return Err("tl-validity not-before must not be null".into());
+                        }
+                    }
+                }
+            }
+        }
+    }
     corim::cbor::value::from_value(&cbor_val)
 }
 

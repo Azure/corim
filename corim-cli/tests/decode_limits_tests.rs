@@ -121,6 +121,9 @@ fn oversized_document_files_fail_in_every_reader() {
     let file = InputFile::oversized();
     for args in [
         vec!["validate", file.path()],
+        vec!["validate", file.path(), "--format", "json"],
+        vec!["validate", file.path(), "--skip-expiry"],
+        vec!["validate", file.path(), "--skip-expiry", "--format", "json"],
         vec!["validate", file.path(), "--edn"],
         vec!["validate", file.path(), "--diagnose"],
         vec!["convert", file.path()],
@@ -149,7 +152,31 @@ fn oversized_document_files_fail_in_every_reader() {
             "/dev/null",
         ],
     ] {
-        assert_failure(&run(&args), "input exceeds maximum size");
+        let output = run(&args);
+        if args.contains(&"json") {
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["valid"], false);
+            assert!(report["errors"][0]
+                .as_str()
+                .unwrap()
+                .contains("input exceeds maximum size"));
+        } else {
+            assert_failure(&output, "input exceeds maximum size");
+        }
+        if args[0] == "validate" {
+            let inspection = args.contains(&"--edn") || args.contains(&"--diagnose");
+            assert_eq!(output.status.code(), Some(if inspection { 1 } else { 2 }));
+        }
+    }
+    fs::remove_file(&file.0).unwrap();
+    for format in ["text", "json"] {
+        let output = run(&["validate", file.path(), "--format", format]);
+        assert_eq!(output.status.code(), Some(1));
+        if format == "json" {
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["valid"], false);
+            assert!(!report["errors"].as_array().unwrap().is_empty());
+        }
     }
 }
 
@@ -173,10 +200,11 @@ fn oversized_piped_stdin_fails_with_and_without_dash() {
             if let Err(e) = result {
                 assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
             }
-            assert_failure(
-                &child.wait_with_output().unwrap(),
-                "input exceeds maximum size",
-            );
+            let output = child.wait_with_output().unwrap();
+            assert_failure(&output, "input exceeds maximum size");
+            if command == "validate" {
+                assert_eq!(output.status.code(), Some(2));
+            }
         }
     }
 }
@@ -199,9 +227,21 @@ fn input_at_size_limit_is_not_rejected_by_reader() {
 
 #[test]
 fn oversized_baseline_is_rejected_before_json_parsing() {
-    let bytes = SignedCorimBuilder::new(-7, vec![0xf6])
+    let comid = corim::builder::ComidBuilder::new(corim::types::TagIdChoice::Text("limit".into()))
+        .add_dependency_triple_for(
+            corim::types::EnvironmentMap::for_class("V", "target"),
+            vec![corim::types::EnvironmentMap::for_class("V", "trustee").into()],
+        )
+        .build()
+        .unwrap();
+    let payload = corim::builder::CorimBuilder::new(corim::types::CorimId::Text("limit".into()))
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
+    let bytes = SignedCorimBuilder::new(-7, payload)
         .set_cwt_claims(CwtClaims::new("test"))
-        .build_detached_with_signature(vec![0xab])
+        .build_with_signature(vec![0xab])
         .unwrap();
     let target = InputFile::new(&bytes);
     let baseline = InputFile::oversized();
@@ -452,6 +492,11 @@ fn hash_envelope_digest_is_opaque_in_all_cli_modes() {
             let output = run(&args);
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
+            if hash_envelope && mode.is_none() {
+                assert_failure(&output, "authenticated preimage");
+                assert!(!stderr.contains("collection entries"));
+                continue;
+            }
             if hash_envelope {
                 assert!(
                     output.status.success(),
