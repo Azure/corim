@@ -49,7 +49,7 @@ pub(crate) fn document(
         (Some(signed), payload)
     } else {
         let payload = match now {
-            Some(now) => validate::decode_and_validate_full_at_with_limits(bytes, now, &limits),
+            Some(now) => validate::decode_and_validate_document_at_with_limits(bytes, now, &limits),
             None => validate::decode_and_validate_structure_with_limits(bytes, &limits),
         }
         .map_err(|error| error.to_string())?;
