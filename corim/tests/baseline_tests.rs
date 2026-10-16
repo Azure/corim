@@ -3,7 +3,7 @@
 
 //! Tests for `corim::baseline` structural conformance comparison.
 
-use corim::baseline::{compare, MismatchKind};
+use corim::baseline::{compare, try_compare, MismatchKind};
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::cbor::{self, value::Tagged, value::Value};
 use corim::types::common::{MeasuredElement, TagIdChoice};
@@ -70,6 +70,75 @@ fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
     let validated = corim::validate::decode_and_validate_full_at(&bytes, 0).unwrap();
     assert_eq!(validated.comids.len(), 1);
     validated.corim
+}
+
+#[test]
+fn checked_comparison_rejects_skipped_tags_on_either_side() {
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for tag in [
+        ConciseTagChoice::Comid(vec![0xff]),
+        ConciseTagChoice::BareBstr(vec![0xff]),
+        ConciseTagChoice::Coswid(vec![]),
+        ConciseTagChoice::Cotl(vec![]),
+        ConciseTagChoice::Unknown(TAG_CORIM, vec![]),
+    ] {
+        for mixed in [false, true] {
+            let mut invalid = valid.clone();
+            if !mixed {
+                invalid.tags.clear();
+            }
+            invalid.tags.push(tag.clone());
+            assert!(compare(&invalid, &invalid).is_conformant());
+            assert!(try_compare(&invalid, &valid).is_err(), "input: {tag:?}");
+            assert!(try_compare(&valid, &invalid).is_err(), "baseline: {tag:?}");
+            assert!(try_compare(&invalid, &invalid).is_err(), "both: {tag:?}");
+        }
+    }
+}
+
+#[test]
+fn checked_comparison_validates_structure_without_reading_clock() {
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut empty = valid.clone();
+    empty.tags.clear();
+    assert!(try_compare(&empty, &valid).is_err());
+    assert!(try_compare(&valid, &empty).is_err());
+    let mut invalid = valid.clone();
+    invalid.entities = Some(vec![]);
+    assert!(try_compare(&invalid, &valid).is_err());
+    assert!(try_compare(&valid, &invalid).is_err());
+    let mut expired = valid.clone();
+    expired.rim_validity = Some(corim::types::ValidityMap {
+        not_before: None,
+        not_after: 1.into(),
+    });
+    assert!(try_compare(&expired, &expired).unwrap().is_conformant());
+    expired.rim_validity.as_mut().unwrap().not_before = Some(2.into());
+    assert!(try_compare(&expired, &valid).is_err());
+    assert!(try_compare(&valid, &expired).is_err());
+}
+
+#[test]
+fn checked_comparison_preserves_existing_difference_policy() {
+    let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for input in [
+        baseline.clone(),
+        corim_with(vec![0xBB; 48], SvnChoice::MinValue(2), "MRTD"),
+        corim_with(vec![0xAA; 48], SvnChoice::ExactValue(1), "MRTD"),
+    ] {
+        let expected = compare(&input, &baseline);
+        assert_eq!(try_compare(&input, &baseline).unwrap(), expected);
+        for tagged_inner in [false, true] {
+            assert_eq!(
+                try_compare(&tcg_corim(&input, tagged_inner), &baseline).unwrap(),
+                expected
+            );
+            assert_eq!(
+                try_compare(&input, &tcg_corim(&baseline, tagged_inner)).unwrap(),
+                expected
+            );
+        }
+    }
 }
 
 #[test]
