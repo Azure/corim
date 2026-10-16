@@ -271,12 +271,19 @@ hash-only document is incomplete for validation and exits `2`, as does an
 invalid attached payload. Use `--diagnose`, `--edn`, or `extract --header` for
 inspection. Unsigned CoRIMs have no `signed` object.
 
+CoSWID-only and CoTL-only documents are supported, as are CoMID documents.
+Library callers can use `decode_and_validate_document_at_with_limits` for
+unsigned complete-document validation; legacy validation APIs retain their
+CoMID prerequisite. Registered-profile checks remain a separate library step.
+
 `--skip-expiry` retains structural, header-consistency and profile checks but
 skips comparisons against the clock. Success exits `0` with `"valid": null`
 and `"time_validated": false`, and text output explicitly says temporal checks
 were skipped. It does not establish current validity. Failed checks report
 `"valid": false`, `"time_validated": false`, and an `errors` array (exit `2`);
-input I/O errors exit `1`. In particular, JSON validation failures remain JSON.
+input I/O errors exit `1`. Empty documents and present-null validity fields are
+invalid, including with `--skip-expiry`. In particular, JSON validation failures
+remain JSON.
 
 ### `validate --baseline` — structural conformance check
 
@@ -290,7 +297,8 @@ CoRIM ships.
 The same structural, registered-profile and optional clock checks apply to
 both files, including JSON baselines. `--skip-expiry` applies to both inputs;
 baseline JSON reports include `time_validated`. Invalid or incomplete baselines
-exit `2` instead of yielding a conformance result.
+exit `2` instead of yielding a conformance result. Missing or unreadable baseline
+files exit `1`. Both failure categories produce JSON errors in JSON mode.
 
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
