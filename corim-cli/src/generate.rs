@@ -218,15 +218,26 @@ pub(crate) fn build_corim_from_template_with_time(
                     .and_then(serde_json::Value::as_i64)
             })
         };
-        let epoch = |names: &[&str]| -> Option<i64> {
-            names.iter().find_map(|n| vo.get(*n)).and_then(as_epoch)
+        let epoch = |names: &[&str]| -> Result<Option<i64>, String> {
+            names
+                .iter()
+                .find_map(|name| vo.get(*name))
+                .map(|value| {
+                    as_epoch(value).ok_or_else(|| {
+                        format!(
+                            "rim-validity {} must be an epoch integer or a #6.1 tag envelope",
+                            names[0]
+                        )
+                    })
+                })
+                .transpose()
         };
-        let not_after = epoch(&["not-after", "1"]).ok_or_else(|| {
+        let not_after = epoch(&["not-after", "1"])?.ok_or_else(|| {
             "rim-validity requires \"not-after\" as an epoch integer or a \
              #6.1 tag envelope ({\"__cbor_tag\": 1, \"__cbor_value\": <epoch>})"
                 .to_string()
         })?;
-        let not_before = epoch(&["not-before", "0"]);
+        let not_before = epoch(&["not-before", "0"])?;
         builder = builder
             .set_validity(not_before, not_after)
             .map_err(|e| format!("rim-validity: {e}"))?;
@@ -320,6 +331,24 @@ fn decode_typed<T: serde::de::DeserializeOwned>(
     }
     let mut cbor_val = corim::json::json_to_value(&resolved);
     crate::prose::coerce_bytes(&mut cbor_val, root);
+    if matches!(root, Root::Cotl) {
+        use corim::cbor::value::Value;
+        use corim::types::tags::{COTL_KEY_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
+        if let Value::Map(entries) = &cbor_val {
+            for (key, value) in entries {
+                if *key == Value::Integer(COTL_KEY_VALIDITY.into()) {
+                    if let Value::Map(fields) = value {
+                        if fields.iter().any(|(key, value)| {
+                            *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into())
+                                && matches!(value, Value::Null)
+                        }) {
+                            return Err("tl-validity not-before must not be null".into());
+                        }
+                    }
+                }
+            }
+        }
+    }
     corim::cbor::value::from_value(&cbor_val)
 }
 
