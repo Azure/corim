@@ -556,6 +556,107 @@ fn skip_expiry_skips_rim_and_cotl_clocks_but_not_profile_or_header_rules() {
 }
 
 #[test]
+fn baseline_rejects_uncompared_tags_on_either_side() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::SWID_ROLE_TAG_CREATOR;
+    use corim::types::{
+        ConciseSwidTag, ConciseTagChoice, ConciseTlTag, SwidEntity, TagIdentity, ValidityMap,
+    };
+    let normal = sample_unsigned_corim();
+    for coswid in [false, true] {
+        for mixed in [false, true] {
+            let documents: Vec<Vec<u8>> = ["first", "second"]
+                .into_iter()
+                .map(|name| {
+                    let tag = if coswid {
+                        ConciseTagChoice::Coswid(
+                            cbor::encode(&ConciseSwidTag::new(
+                                TagIdChoice::Text(name.into()),
+                                name,
+                                0,
+                                vec![SwidEntity::new("issuer", vec![SWID_ROLE_TAG_CREATOR])],
+                            ))
+                            .unwrap(),
+                        )
+                    } else {
+                        let identity = TagIdentity {
+                            tag_id: TagIdChoice::Text(name.into()),
+                            tag_version: None,
+                        };
+                        ConciseTagChoice::Cotl(
+                            cbor::encode(&ConciseTlTag {
+                                tag_identity: identity.clone(),
+                                tags_list: vec![identity],
+                                tl_validity: ValidityMap {
+                                    not_before: None,
+                                    not_after: i64::MAX.into(),
+                                },
+                            })
+                            .unwrap(),
+                        )
+                    };
+                    let mut document: Tagged<corim::types::CorimMap> =
+                        cbor::decode_exact(&normal).unwrap();
+                    if !mixed {
+                        document.value.tags.clear();
+                    }
+                    document.value.tags.push(tag);
+                    cbor::encode(&document).unwrap()
+                })
+                .collect();
+            for (target, baseline) in [
+                (&documents[0], &documents[1]),
+                (&normal, &documents[0]),
+                (&documents[0], &normal),
+            ] {
+                for signed in [false, true] {
+                    let target = if signed {
+                        make_signed(target, false)
+                    } else {
+                        target.clone()
+                    };
+                    let baseline = if signed {
+                        make_signed(baseline, false)
+                    } else {
+                        baseline.clone()
+                    };
+                    assert!(validate_with_flags(&target, &[]).status.success());
+                    assert!(validate_with_flags(&baseline, &[]).status.success());
+                    let path = unique_temp("unsupported_baseline", "cbor");
+                    std::fs::write(&path, baseline).unwrap();
+                    for skip in [false, true] {
+                        for format in ["text", "json"] {
+                            let mut flags =
+                                vec!["--baseline", path.to_str().unwrap(), "--format", format];
+                            if skip {
+                                flags.push("--skip-expiry");
+                            }
+                            let output = validate_with_flags(&target, &flags);
+                            assert_eq!(
+                                output.status.code(),
+                                Some(2),
+                                "coswid={coswid}, mixed={mixed}, signed={signed}: {}",
+                                String::from_utf8_lossy(&output.stdout)
+                            );
+                            if format == "json" {
+                                let report: serde_json::Value =
+                                    serde_json::from_slice(&output.stdout).unwrap();
+                                assert_eq!(report["valid"], false);
+                                assert!(report["errors"][0]
+                                    .as_str()
+                                    .unwrap()
+                                    .contains("unsupported"));
+                            }
+                        }
+                    }
+                    std::fs::remove_file(path).unwrap();
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn baselines_use_same_time_and_structural_policy_as_input() {
     use corim::cbor::{self, value::Tagged};
     let target = sample_unsigned_corim();
