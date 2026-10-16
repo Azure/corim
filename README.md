@@ -300,6 +300,13 @@ baseline JSON reports include `time_validated`. Invalid or incomplete baselines
 exit `2` instead of yielding a conformance result. Missing or unreadable baseline
 files exit `1`. Both failure categories produce JSON errors in JSON mode.
 
+Baseline payload comparison currently supports CoMID tags only. A CoTL,
+CoSWID, or other unsupported tag on either side, including in a mixed-tag
+document, exits `2` instead of reporting conformance for unexamined content.
+Ordinary validation without `--baseline` continues to support CoTL and CoSWID.
+Malformed present JSON timestamps are rejected before template conversion;
+omitted optional timestamps remain supported.
+
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
 §8.2.4.4. **Structure** — which must match — is the environment, the
