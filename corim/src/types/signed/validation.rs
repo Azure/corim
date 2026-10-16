@@ -75,6 +75,29 @@ pub fn decode_and_validate_signed_corim_at_with_limits(
     now_epoch_secs: i64,
     limits: &DecodeLimits,
 ) -> Result<(CoseSign1Corim, ValidatedCorim), ValidationError> {
+    decode_and_validate_signed_corim_impl(bytes, detached_payload, Some(now_epoch_secs), limits)
+}
+
+/// Strict structural validation without clock comparisons (partial validation).
+///
+/// Media types, complete payload, header consistency, numeric time shapes and
+/// interval ordering still apply. Only current-time checks are skipped. Callers
+/// must explicitly report that temporal validity was not checked. No cryptographic
+/// or profile-specific checks are performed (RFC 9334 Section 8).
+pub fn decode_and_validate_signed_corim_structure_with_limits(
+    bytes: &[u8],
+    detached_payload: Option<&[u8]>,
+    limits: &DecodeLimits,
+) -> Result<(CoseSign1Corim, ValidatedCorim), ValidationError> {
+    decode_and_validate_signed_corim_impl(bytes, detached_payload, None, limits)
+}
+
+fn decode_and_validate_signed_corim_impl(
+    bytes: &[u8],
+    detached_payload: Option<&[u8]>,
+    now_epoch_secs: Option<i64>,
+    limits: &DecodeLimits,
+) -> Result<(CoseSign1Corim, ValidatedCorim), ValidationError> {
     let mut budget = cbor::DecodeBudget::new(limits)?;
     let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
     let Value::Tag(TAG_SIGNED_CORIM, inner) = value else {
@@ -179,8 +202,11 @@ pub fn decode_and_validate_signed_corim_at_with_limits(
             ))
         }
     };
-    let validated =
-        crate::validate::decode_and_validate_budget(selected, now_epoch_secs, &mut budget)?;
+    let validated = crate::validate::decode_and_validate_budget_with_time(
+        selected,
+        now_epoch_secs,
+        &mut budget,
+    )?;
     if validated.coswid_opaque_count != 0 {
         return Err(invalid(
             "strict validation cannot validate opaque CoSWID content",
@@ -279,7 +305,7 @@ fn same_time(left: Option<Number>, right: Option<Number>) -> bool {
 fn check_window(
     min: Option<Number>,
     max: Option<Number>,
-    now: i64,
+    now: Option<i64>,
     exclusive_end: bool,
 ) -> Result<(), ValidationError> {
     let range = NumberMatcher::Range { min, max };
@@ -287,6 +313,9 @@ fn check_window(
     if exclusive_end && min.is_some() && same_time(min, max) {
         return Err(invalid("CWT validity interval is empty"));
     }
+    let Some(now) = now else {
+        return Ok(());
+    };
     let clock = Number::Int(now.into());
     let observation = NumberMatcher::Exact(clock);
     if !(NumberMatcher::Range { min, max: None }).matches(&observation) {
