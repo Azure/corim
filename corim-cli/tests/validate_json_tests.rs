@@ -657,6 +657,87 @@ fn baseline_rejects_uncompared_tags_on_either_side() {
 }
 
 #[test]
+fn json_baselines_reject_invalid_present_timestamps_before_conversion() {
+    use serde_json::{json, Value};
+    let template = json!({"corim-id":"json-corim","comids":[{"tag-identity":{"id":"json-comid"},"triples":{"reference-triples":[[{"class":{"vendor":"TestVendor","model":"TestModel"}},[{"key":"firmware","value":{"svn":{"type":"min-svn","value":1}}}]]]}}]});
+    for cotl in [false, true] {
+        for (before, after) in [("not-before", "not-after"), ("0", "1")] {
+            for (value, valid) in [
+                (None, true),
+                (Some(json!(0)), true),
+                (Some(json!({"__cbor_tag":1,"__cbor_value":0})), true),
+                (Some(Value::Null), false),
+                (Some(json!("invalid")), false),
+                (Some(json!(u64::MAX)), false),
+                (Some(json!(0.5)), false),
+                (Some(json!(true)), false),
+                (Some(json!({"__cbor_tag":1,"__cbor_value":null})), false),
+            ] {
+                let mut baseline = template.clone();
+                let mut validity = serde_json::Map::new();
+                validity.insert(after.into(), json!(i64::MAX));
+                if let Some(value) = value {
+                    validity.insert(before.into(), value);
+                }
+                if cotl {
+                    baseline["cotls"] = json!([{"tag-identity":{"id":"list"},"tags-list":[{"id":"member"}],"tl-validity":validity}]);
+                } else {
+                    baseline["rim-validity"] = validity.into();
+                }
+                let path = unique_temp("json_validity_baseline", "json");
+                let generated = unique_temp("json_validity_generated", "cbor");
+                std::fs::write(&path, serde_json::to_vec(&baseline).unwrap()).unwrap();
+                for skip in [false, true] {
+                    let mut flags = vec!["--baseline", path.to_str().unwrap(), "--format", "json"];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&sample_unsigned_corim(), &flags);
+                    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if valid && !cotl { 0 } else { 2 }),
+                        "cotl={cotl}, skip={skip}, baseline={baseline}: {report}"
+                    );
+                    if !valid {
+                        assert_eq!(report["valid"], false);
+                        let message = report["errors"][0].as_str().unwrap();
+                        assert!(
+                            !message.contains("unsupported"),
+                            "invalid timestamp escaped conversion: {message}"
+                        );
+                    } else if cotl {
+                        assert!(report["errors"][0]
+                            .as_str()
+                            .unwrap()
+                            .contains("unsupported"));
+                    }
+                }
+                let output = Command::new(bin())
+                    .args([
+                        "generate",
+                        path.to_str().unwrap(),
+                        "-o",
+                        generated.to_str().unwrap(),
+                    ])
+                    .output()
+                    .unwrap();
+                assert_eq!(
+                    output.status.success(),
+                    valid,
+                    "baseline={baseline}: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
+                if valid {
+                    std::fs::remove_file(generated).unwrap();
+                }
+                std::fs::remove_file(path).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
 fn baselines_use_same_time_and_structural_policy_as_input() {
     use corim::cbor::{self, value::Tagged};
     let target = sample_unsigned_corim();
