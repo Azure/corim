@@ -31,7 +31,7 @@
 use crate::cbor::value::{to_value, Value};
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
-use crate::types::corim::{CorimMap, CorimMetaMap};
+use crate::types::corim::{ConciseTagChoice, CorimMap, CorimMetaMap};
 use crate::types::measurement::{
     Digest, DigestAlg, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
@@ -165,7 +165,74 @@ pub fn render_path(path: &[PathSegment]) -> String {
 ///
 /// Returns a [`ConformanceReport`]; the input conforms when
 /// [`ConformanceReport::is_conformant`] is `true`.
+///
+/// This legacy API skips undecodable and non-CoMID tags and substitutes null
+/// for serialization failures. Use [`try_compare`] for checked comparison.
 pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
+    compare_decoded(
+        input,
+        baseline,
+        &decode_comids(input),
+        &decode_comids(baseline),
+    )
+}
+
+/// Compare two CoRIM maps, rejecting invalid or unsupported input.
+///
+/// Both inputs must be structurally valid CoMID-only documents, including
+/// supported TCG bare-bstr forms (draft-ietf-rats-corim-11 Section 4.1).
+/// Embedded tags use exact decoding and shared default per-document resource
+/// limits (RFC 8949 Sections 3 and 10). Serialization, decoding and structural
+/// failures return an error rather than an incomplete conformance report.
+///
+/// This preserves [`compare`]'s pairing and structure/value policy. It does
+/// not check the clock, registered profiles, signatures or certificate trust.
+/// Callers must apply those checks separately when required.
+pub fn try_compare(
+    input: &CorimMap,
+    baseline: &CorimMap,
+) -> Result<ConformanceReport, crate::ValidationError> {
+    let input_comids = checked_comids(input)?;
+    let base_comids = checked_comids(baseline)?;
+    Ok(compare_decoded(
+        input,
+        baseline,
+        &input_comids,
+        &base_comids,
+    ))
+}
+
+fn checked_comids(corim: &CorimMap) -> Result<Vec<(String, ComidTag)>, crate::ValidationError> {
+    if corim.tags.iter().any(|tag| {
+        !matches!(
+            tag,
+            ConciseTagChoice::Comid(_) | ConciseTagChoice::BareBstr(_)
+        )
+    }) {
+        return Err(crate::ValidationError::Invalid(
+            "unsupported payload for baseline comparison: only CoMID tags are supported".into(),
+        ));
+    }
+    let bytes = crate::cbor::encode(corim)
+        .map_err(|error| crate::ValidationError::Invalid(error.to_string()))?;
+    let validated = crate::validate::decode_and_validate_structure_with_limits(
+        &bytes,
+        &crate::cbor::DecodeLimits::default(),
+    )?;
+    let mut comids = Vec::with_capacity(validated.comids.len());
+    for (index, comid) in validated.comids.into_iter().enumerate() {
+        to_value(&comid).map_err(crate::ValidationError::Invalid)?;
+        comids.push((tag_id_string(&comid, index), comid));
+    }
+    Ok(comids)
+}
+
+fn compare_decoded(
+    input: &CorimMap,
+    baseline: &CorimMap,
+    input_comids: &[(String, ComidTag)],
+    base_comids: &[(String, ComidTag)],
+) -> ConformanceReport {
     let mut r = ConformanceReport::default();
 
     // --- corim-level: profile is structural; the rest are values.
@@ -210,10 +277,7 @@ pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
         false,
     );
 
-    // --- CoMIDs: decode and pair by tag-identity id.
-    let base_comids = decode_comids(baseline);
-    let input_comids = decode_comids(input);
-    compare_comids(&base_comids, &input_comids, &mut r);
+    compare_comids(base_comids, input_comids, &mut r);
 
     r
 }
