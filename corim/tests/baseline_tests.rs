@@ -73,6 +73,122 @@ fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
 }
 
 #[test]
+fn uuid_tag_identity_is_not_a_position_or_display_string() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut first = baseline.tags[0].as_comid().unwrap();
+    first.tag_identity.tag_id = TagIdChoice::Uuid([1; 16]);
+    let mut second = first.clone();
+    second.tag_identity.tag_id = TagIdChoice::Uuid([2; 16]);
+    second.tag_identity.tag_version = Some(2);
+    baseline.tags = vec![
+        ConciseTagChoice::Comid(cbor::encode(&first).unwrap()),
+        ConciseTagChoice::Comid(cbor::encode(&second).unwrap()),
+    ];
+    let mut reordered = baseline.clone();
+    reordered.tags.reverse();
+    assert_eq!(
+        try_compare(&reordered, &baseline).unwrap(),
+        try_compare(&baseline, &baseline).unwrap()
+    );
+    for id in [TagIdChoice::Uuid([3; 16]), TagIdChoice::Text("#0".into())] {
+        let mut changed = baseline.clone();
+        first.tag_identity.tag_id = id;
+        changed.tags[0] = ConciseTagChoice::Comid(cbor::encode(&first).unwrap());
+        assert!(!try_compare(&changed, &baseline).unwrap().is_conformant());
+    }
+}
+
+#[test]
+fn repeated_identities_preserve_cardinality() {
+    let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for scope in ["tags", "triples", "measurements", "digests"] {
+        let mut input = baseline.clone();
+        if scope == "tags" {
+            input.tags.push(input.tags[0].clone());
+        } else {
+            let mut comid = input.tags[0].as_comid().unwrap();
+            let triples = comid.triples.reference_triples.as_mut().unwrap();
+            match scope {
+                "triples" => triples.push(triples[0].clone()),
+                "measurements" => {
+                    let duplicate = triples[0].1[0].clone();
+                    triples[0].1.push(duplicate);
+                }
+                "digests" => {
+                    let digests = triples[0].1[0].mval.digests.as_mut().unwrap();
+                    digests.push(digests[0].clone());
+                }
+                _ => panic!("scope"),
+            }
+            input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        }
+        assert!(
+            !try_compare(&input, &baseline).unwrap().is_conformant(),
+            "{scope}"
+        );
+        assert!(
+            !try_compare(&baseline, &input).unwrap().is_conformant(),
+            "{scope}"
+        );
+    }
+}
+
+#[test]
+fn extension_comparison_is_recursive_shape_not_whole_value() {
+    let make = |value: Value| {
+        let mut document = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+        let mut comid = document.tags[0].as_comid().unwrap();
+        comid.triples.reference_triples.as_mut().unwrap()[0].1[0]
+            .mval
+            .extra_entries
+            .insert(-9999, value);
+        document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        document
+    };
+    let nested = |value| {
+        Value::Map(vec![(
+            Value::Text("nested".into()),
+            Value::Array(vec![value]),
+        )])
+    };
+    for (baseline, input, conforms) in [
+        (nested(Value::Integer(1)), nested(Value::Integer(2)), true),
+        (
+            nested(Value::Integer(1)),
+            nested(Value::Text("1".into())),
+            false,
+        ),
+        (Value::Array(vec![Value::Null]), Value::Array(vec![]), false),
+        (
+            Value::Map(vec![]),
+            Value::Map(vec![(Value::Text("new".into()), Value::Null)]),
+            false,
+        ),
+        (
+            Value::Tag(TAG_CORIM, Box::new(Value::Integer(1))),
+            Value::Tag(TAG_COMID, Box::new(Value::Integer(1))),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            try_compare(&make(input), &make(baseline))
+                .unwrap()
+                .is_conformant(),
+            conforms
+        );
+    }
+    let entries = vec![
+        (Value::Text("a".into()), Value::Integer(1)),
+        (Value::Text("b".into()), Value::Integer(2)),
+    ];
+    let mut reversed = entries.clone();
+    reversed.reverse();
+    let report = try_compare(&make(Value::Map(entries)), &make(Value::Map(reversed))).unwrap();
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+}
+
+#[test]
 fn checked_comparison_rejects_skipped_tags_on_either_side() {
     let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for tag in [
