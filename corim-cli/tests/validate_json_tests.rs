@@ -127,6 +127,55 @@ fn validate_with_flags(bytes: &[u8], flags: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn empty_validation_input_is_invalid_not_an_io_failure() {
+    for format in ["text", "json"] {
+        for skip in [false, true] {
+            let mut flags = vec!["--format", format];
+            if skip {
+                flags.push("--skip-expiry");
+            }
+            let output = validate_with_flags(&[], &flags);
+            assert_eq!(output.status.code(), Some(2));
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false);
+                assert!(report["errors"][0].as_str().unwrap().contains("empty"));
+            }
+        }
+    }
+    for flag in ["--edn", "--diagnose"] {
+        assert_eq!(validate_with_flags(&[], &[flag]).status.code(), Some(1));
+    }
+}
+
+#[test]
+fn baseline_io_failures_are_distinct_from_invalid_content() {
+    let missing = unique_temp("missing_baseline", "cbor");
+    let invalid = unique_temp("invalid_baseline", "cbor");
+    std::fs::write(&invalid, []).unwrap();
+    for format in ["text", "json"] {
+        for (path, code) in [(&missing, 1), (&std::env::temp_dir(), 1), (&invalid, 2)] {
+            let output = validate_with_flags(
+                &sample_unsigned_corim(),
+                &["--baseline", path.to_str().unwrap(), "--format", format],
+            );
+            assert_eq!(
+                output.status.code(),
+                Some(code),
+                "{}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false);
+                assert!(!report["errors"].as_array().unwrap().is_empty());
+            }
+        }
+    }
+    std::fs::remove_file(invalid).unwrap();
+}
+
+#[test]
 fn validation_modes_reject_invalid_and_incomplete_documents() {
     use corim::cbor::{self, value::Tagged};
     use corim::types::tags::TAG_CORIM;
