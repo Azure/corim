@@ -277,6 +277,116 @@ fn tag_only_documents_validate_all_tags_in_both_time_modes() {
 }
 
 #[test]
+fn validity_nulls_are_rejected_without_changing_tolerant_inspection() {
+    use corim::cbor::{
+        self,
+        value::{Tagged, Value},
+    };
+    use corim::types::tags::*;
+    use corim::types::{ConciseTagChoice, ConciseTlTag, TagIdentity, ValidityMap};
+    let limits = cbor::DecodeLimits::default();
+    for location in ["rim-validity", "rim not-before", "cotl not-before"] {
+        for null in [true, false] {
+            let mut validity = vec![(
+                Value::Integer(VALIDITY_KEY_NOT_AFTER.into()),
+                Value::Tag(TAG_EPOCH_TIME, Box::new(Value::Integer(i64::MAX.into()))),
+            )];
+            if null {
+                validity.push((Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()), Value::Null));
+            }
+            let mut corim: Tagged<corim::types::CorimMap> =
+                cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+            if location == "cotl not-before" {
+                let identity = TagIdentity {
+                    tag_id: TagIdChoice::Text("list".into()),
+                    tag_version: None,
+                };
+                let cotl = ConciseTlTag {
+                    tag_identity: identity.clone(),
+                    tags_list: vec![identity],
+                    tl_validity: ValidityMap {
+                        not_before: None,
+                        not_after: i64::MAX.into(),
+                    },
+                };
+                let Value::Map(mut entries) =
+                    cbor::decode_exact(&cbor::encode(&cotl).unwrap()).unwrap()
+                else {
+                    panic!("CoTL map");
+                };
+                entries.retain(|(key, _)| *key != Value::Integer(COTL_KEY_VALIDITY.into()));
+                entries.push((
+                    Value::Integer(COTL_KEY_VALIDITY.into()),
+                    Value::Map(validity.clone()),
+                ));
+                let bytes = cbor::encode(&Value::Map(entries)).unwrap();
+                assert!(cbor::decode_exact::<ConciseTlTag>(&bytes).is_ok());
+                corim.value.tags.push(ConciseTagChoice::Cotl(bytes));
+            }
+            let Value::Tag(tag, map) = cbor::decode_exact(&cbor::encode(&corim).unwrap()).unwrap()
+            else {
+                panic!("tagged CoRIM");
+            };
+            let Value::Map(mut entries) = *map else {
+                panic!("CoRIM map");
+            };
+            if location == "rim-validity" && null {
+                entries.push((Value::Integer(CORIM_KEY_RIM_VALIDITY.into()), Value::Null));
+            } else if location == "rim not-before" {
+                entries.push((
+                    Value::Integer(CORIM_KEY_RIM_VALIDITY.into()),
+                    Value::Map(validity),
+                ));
+            }
+            let payload = cbor::encode(&Value::Tag(tag, Box::new(Value::Map(entries)))).unwrap();
+            assert!(cbor::decode_exact::<Tagged<corim::types::CorimMap>>(&payload).is_ok());
+            assert_eq!(
+                corim::validate::decode_and_validate_structure_with_limits(&payload, &limits)
+                    .is_ok(),
+                !null,
+                "{location}"
+            );
+            assert_eq!(
+                corim::validate::decode_and_validate_document_at_with_limits(
+                    &payload, 100, &limits
+                )
+                .is_ok(),
+                !null,
+                "{location}"
+            );
+            assert_eq!(
+                corim::validate::decode_and_validate_full_at_with_limits(&payload, 100, &limits)
+                    .is_ok(),
+                !null,
+                "{location}"
+            );
+            for bytes in [payload.clone(), make_signed(&payload, false)] {
+                assert!(validate_with_flags(&bytes, &["--edn"]).status.success());
+                for skip in [false, true] {
+                    let mut flags = vec!["--format", "json"];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&bytes, &flags);
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if null { 2 } else { 0 }),
+                        "{location}, skip={skip}: {}",
+                        String::from_utf8_lossy(&output.stdout)
+                    );
+                    if null {
+                        let report: serde_json::Value =
+                            serde_json::from_slice(&output.stdout).unwrap();
+                        assert_eq!(report["valid"], false);
+                        assert!(report["errors"][0].as_str().unwrap().contains("validity"));
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn validation_modes_reject_invalid_and_incomplete_documents() {
     use corim::cbor::{self, value::Tagged};
     use corim::types::tags::TAG_CORIM;
