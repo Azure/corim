@@ -21,7 +21,9 @@ use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{Digest, MeasurementMap, SvnChoice};
-use crate::types::tags::TAG_CORIM;
+use crate::types::tags::{
+    CORIM_KEY_RIM_VALIDITY, COTL_KEY_VALIDITY, TAG_CORIM, VALIDITY_KEY_NOT_BEFORE,
+};
 use crate::types::triples::{
     ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
 };
@@ -374,6 +376,36 @@ pub fn decode_and_validate_structure_with_limits(
     decode_and_validate_document_impl(bytes, None, limits)
 }
 
+fn check_validity_shape(
+    map: &cbor::value::Value,
+    validity_key: i64,
+    name: &str,
+) -> Result<(), ValidationError> {
+    use cbor::value::Value;
+    let Value::Map(entries) = map else {
+        return Ok(());
+    };
+    let Some((_, validity)) = entries
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(validity_key.into()))
+    else {
+        return Ok(());
+    };
+    let Value::Map(fields) = validity else {
+        return Err(ValidationError::Invalid(format!(
+            "{name} must be a validity map"
+        )));
+    };
+    if fields.iter().any(|(key, value)| {
+        *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()) && matches!(value, Value::Null)
+    }) {
+        return Err(ValidationError::Invalid(format!(
+            "{name} validity not-before must not be null"
+        )));
+    }
+    Ok(())
+}
+
 pub(crate) fn decode_and_validate_budget_with_time(
     bytes: &[u8],
     now_epoch_secs: Option<i64>,
@@ -395,6 +427,7 @@ pub(crate) fn decode_and_validate_budget_with_time(
         _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
     };
     cbor::map_keys::check(&map)?;
+    check_validity_shape(&map, CORIM_KEY_RIM_VALIDITY, "rim-validity")?;
     let corim: CorimMap =
         cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
@@ -433,7 +466,11 @@ pub(crate) fn decode_and_validate_budget_with_time(
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag = budget.decode_schema_exact(cotl_bytes)?;
+                let map = budget.decode_value_exact(cotl_bytes)?;
+                cbor::map_keys::check(&map)?;
+                check_validity_shape(&map, COTL_KEY_VALIDITY, "tl-validity")?;
+                let cotl: ConciseTlTag =
+                    cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }

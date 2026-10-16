@@ -18,6 +18,11 @@ versions.
   `--skip-expiry` remains available as explicit partial validation: successful
   runs exit 0 with `valid: null` and `time_validated: false`; structural and
   profile failures still exit 2. Inspection commands retain their behavior.
+  Empty documents exit 2; input and baseline filesystem failures exit 1, with
+  JSON errors preserved. CoSWID-only and CoTL-only documents are supported;
+  the additive `decode_and_validate_document_at_with_limits` API validates
+  them without changing legacy APIs' CoMID prerequisite. Present-null validity
+  fields are rejected before typed decoding, including with `--skip-expiry`.
 - **Reference-value appraisal accepted partial matches and returned reference
   constraints as evidence.** Core and profile-aware matching now require every
   reference measurement to match within a single evidence claim, then return
