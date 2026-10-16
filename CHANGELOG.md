@@ -86,6 +86,15 @@ versions.
 
 ### Added
 
+- **Checked baseline payload comparison.** `baseline::try_compare` accepts
+  `CorimMap` inputs and returns `Result<ConformanceReport, ValidationError>`.
+  Both inputs undergo structural validation with exact embedded-CBOR framing,
+  duplicate checks and shared default per-document decode limits. Unsupported
+  non-CoMID tags and report-value conversion failures return errors instead of
+  being skipped or replaced by null. Supported TCG CoMIDs retain the same
+  comparison results. The CLI adopts the checked path; legacy `compare()` and
+  header comparison remain available unchanged. Clock/profile/trust validation
+  and finer structure/value policy changes are not part of this API.
 - **Strict signed-document validation alongside tolerant inspection.**
   `decode_and_validate_signed_corim_at` and its limits-aware variant check
   COSE slot types, the exact payload media type, CWT and metadata time windows,
