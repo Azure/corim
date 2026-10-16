@@ -128,7 +128,12 @@ fn run_validate(cli: ValidateArgs) {
     let bytes = match input::read_input(cli.file.as_deref()) {
         Ok(b) => b,
         Err(e) => {
-            validation_failure(&cli.format, &format!("Error reading input: {e}"), 1);
+            let code = if e.kind() == std::io::ErrorKind::InvalidData && !cli.edn && !cli.diagnose {
+                2
+            } else {
+                1
+            };
+            validation_failure(&cli.format, &format!("Error reading input: {e}"), code);
         }
     };
 

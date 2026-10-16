@@ -23,6 +23,11 @@ versions.
   the additive `decode_and_validate_document_at_with_limits` API validates
   them without changing legacy APIs' CoMID prerequisite. Present-null validity
   fields are rejected before typed decoding, including with `--skip-expiry`.
+  JSON template conversion also rejects malformed present timestamps rather
+  than silently omitting them. Baseline comparisons containing unsupported
+  non-CoMID tags now exit 2 instead of claiming a match for unexamined content;
+  ordinary tag-only validation remains supported. Oversized target input exits
+  2, consistently with oversized baselines; inspection exit codes are unchanged.
 - **Reference-value appraisal accepted partial matches and returned reference
   constraints as evidence.** Core and profile-aware matching now require every
   reference measurement to match within a single evidence claim, then return
