@@ -55,7 +55,7 @@ fn duplicate(bytes: &[u8], key: i64) -> Vec<u8> {
 fn unsigned() -> Vec<u8> {
     let env = EnvironmentMap::for_class("V", "M");
     let comid = ComidBuilder::new(TagIdChoice::Text("comid".into()))
-        .add_dependency_triple_for(env.clone(), vec![env.into()])
+        .add_dependency_triple_for(env, vec![EnvironmentMap::for_class("V", "trustee").into()])
         .build()
         .unwrap();
     CorimBuilder::new(CorimId::Text("corim".into()))
@@ -144,17 +144,18 @@ fn extract_rejects_duplicate_header_metadata_payload_and_tag() {
 }
 
 #[test]
-fn detached_flat_alg_issuer_pair_remains_accepted_and_header_bytes_are_retained() {
+fn flat_alg_issuer_pair_remains_accepted_and_header_bytes_are_retained() {
     let mut h: Value = cbor::decode(&header()).unwrap();
     map(&mut h).retain(|(k, _)| *k != int(COSE_HEADER_CWT_CLAIMS));
     map(&mut h).push((int(CWT_CLAIM_ISS), Value::Text("issuer".into())));
     let bytes = cbor::encode(&h).unwrap();
     let envelope = signed(bytes.clone(), None);
     // Diagnose's separate schema walker does not model legacy flat claims.
-    for flags in [vec![], vec!["-f", "json"], vec!["--edn"]] {
+    for flags in [vec![], vec!["-f", "json"]] {
         let args: Vec<_> = ["validate", "-"].into_iter().chain(flags).collect();
-        run(&args, &envelope, true);
+        run(&args, &signed(bytes.clone(), Some(unsigned())), true);
     }
+    run(&["validate", "-", "--edn"], &envelope, true);
     let out = run(&["extract", "-", "--header"], &envelope, true);
     assert_eq!(out.stdout, bytes);
 }
