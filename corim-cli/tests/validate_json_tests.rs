@@ -176,6 +176,94 @@ fn baseline_io_failures_are_distinct_from_invalid_content() {
 }
 
 #[test]
+fn tag_only_documents_validate_all_tags_in_both_time_modes() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::SWID_ROLE_TAG_CREATOR;
+    use corim::types::{
+        ConciseSwidTag, ConciseTagChoice, ConciseTlTag, SwidEntity, TagIdentity, ValidityMap,
+    };
+    let swid = ConciseSwidTag::new(
+        TagIdChoice::Text("software".into()),
+        "Software",
+        0,
+        vec![SwidEntity::new("issuer", vec![SWID_ROLE_TAG_CREATOR])],
+    );
+    let cotl = ConciseTlTag {
+        tag_identity: TagIdentity {
+            tag_id: TagIdChoice::Text("list".into()),
+            tag_version: None,
+        },
+        tags_list: vec![TagIdentity {
+            tag_id: TagIdChoice::Text("software".into()),
+            tag_version: None,
+        }],
+        tl_validity: ValidityMap {
+            not_before: None,
+            not_after: i64::MAX.into(),
+        },
+    };
+    let mut expired = cotl.clone();
+    expired.tl_validity.not_after = 1.into();
+    for (tag, valid_now, valid_without_clock) in [
+        (
+            ConciseTagChoice::Coswid(cbor::encode(&swid).unwrap()),
+            true,
+            true,
+        ),
+        (
+            ConciseTagChoice::Cotl(cbor::encode(&cotl).unwrap()),
+            true,
+            true,
+        ),
+        (
+            ConciseTagChoice::Cotl(cbor::encode(&expired).unwrap()),
+            false,
+            true,
+        ),
+        (ConciseTagChoice::Coswid(vec![0xff]), false, false),
+        (ConciseTagChoice::Cotl(vec![0xff]), false, false),
+    ] {
+        let mut corim: Tagged<corim::types::CorimMap> =
+            cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+        corim.value.tags = vec![tag];
+        let payload = cbor::encode(&corim).unwrap();
+        for signed in [false, true] {
+            let bytes = if signed {
+                make_signed(&payload, false)
+            } else {
+                payload.clone()
+            };
+            for skip in [false, true] {
+                for format in ["text", "json"] {
+                    let mut flags = vec!["--format", format];
+                    if skip {
+                        flags.push("--skip-expiry");
+                    }
+                    let output = validate_with_flags(&bytes, &flags);
+                    let valid = if skip { valid_without_clock } else { valid_now };
+                    assert_eq!(
+                        output.status.code(),
+                        Some(if valid { 0 } else { 2 }),
+                        "signed={signed} skip={skip}: {}{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                    if format == "json" {
+                        let report: serde_json::Value =
+                            serde_json::from_slice(&output.stdout).unwrap();
+                        if valid {
+                            assert_eq!(report["comid_count"], 0);
+                        } else {
+                            assert_eq!(report["valid"], false);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn validation_modes_reject_invalid_and_incomplete_documents() {
     use corim::cbor::{self, value::Tagged};
     use corim::types::tags::TAG_CORIM;
