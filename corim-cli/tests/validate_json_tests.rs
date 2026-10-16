@@ -113,6 +113,118 @@ fn validate_json_status(bytes: &[u8], ext: &str) -> (std::process::ExitStatus, s
     (out.status, parsed)
 }
 
+fn validate_with_flags(bytes: &[u8], flags: &[&str]) -> std::process::Output {
+    let path = unique_temp("strict_validation", "cbor");
+    std::fs::write(&path, bytes).unwrap();
+    let result = Command::new(bin())
+        .arg("validate")
+        .arg(&path)
+        .args(flags)
+        .output()
+        .unwrap();
+    std::fs::remove_file(path).unwrap();
+    result
+}
+
+#[test]
+fn validation_modes_reject_invalid_and_incomplete_documents() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::tags::TAG_CORIM;
+    let payload = sample_unsigned_corim();
+    let build = |payload: Vec<u8>, claims: CwtClaims| {
+        SignedCorimBuilder::new(-38, payload)
+            .set_cwt_claims(claims)
+            .build_with_signature(vec![1; 64])
+            .unwrap()
+    };
+    let mut corim: Tagged<corim::types::CorimMap> = cbor::decode_exact(&payload).unwrap();
+    corim
+        .value
+        .tags
+        .push(corim::types::ConciseTagChoice::Cotl(vec![0xff]));
+    let malformed_cotl = cbor::encode(&Tagged {
+        tag: TAG_CORIM,
+        value: corim.value,
+    })
+    .unwrap();
+    let mut future: Tagged<corim::types::CorimMap> = cbor::decode_exact(&payload).unwrap();
+    future.value.rim_validity = Some(corim::types::ValidityMap {
+        not_before: Some(i64::MAX.into()),
+        not_after: i64::MAX.into(),
+    });
+    for (name, bytes) in [
+        (
+            "malformed signed payload",
+            build(vec![0xff], CwtClaims::new("issuer")),
+        ),
+        (
+            "expired header",
+            build(payload.clone(), CwtClaims::new("issuer").with_exp(1)),
+        ),
+        (
+            "future header",
+            build(payload.clone(), CwtClaims::new("issuer").with_nbf(i64::MAX)),
+        ),
+        ("conflicting issuer", make_signed(&payload, false)),
+        (
+            "detached payload",
+            SignedCorimBuilder::new(-38, payload.clone())
+                .set_cwt_claims(CwtClaims::new("issuer"))
+                .build_detached_with_signature(vec![1; 64])
+                .unwrap(),
+        ),
+        ("malformed CoTL", malformed_cotl),
+        ("future rim", cbor::encode(&future).unwrap()),
+    ] {
+        for format in ["text", "json"] {
+            let output = validate_with_flags(&bytes, &["--format", format]);
+            assert_eq!(
+                output.status.code(),
+                Some(2),
+                "{name}: {}",
+                String::from_utf8_lossy(&output.stdout)
+            );
+            if format == "json" {
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(report["valid"], false, "{name}");
+                assert!(!report["errors"].as_array().unwrap().is_empty());
+            }
+        }
+    }
+}
+
+#[test]
+fn skip_expiry_reports_partial_validation_without_hiding_structure_errors() {
+    let payload = sample_unsigned_corim();
+    for malformed in [false, true] {
+        let bytes = SignedCorimBuilder::new(
+            -38,
+            if malformed {
+                vec![0xff]
+            } else {
+                payload.clone()
+            },
+        )
+        .set_cwt_claims(CwtClaims::new("issuer").with_exp(1))
+        .build_with_signature(vec![1; 64])
+        .unwrap();
+        let output = validate_with_flags(&bytes, &["--format", "json", "--skip-expiry"]);
+        assert_eq!(output.status.code(), Some(if malformed { 2 } else { 0 }));
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(report["time_validated"], false);
+        if malformed {
+            assert_eq!(report["valid"], false);
+        } else {
+            assert!(report["valid"].is_null());
+        }
+    }
+    let output = validate_with_flags(&sample_unsigned_corim(), &["--skip-expiry"]);
+    assert!(output.status.success());
+    assert!(String::from_utf8(output.stdout)
+        .unwrap()
+        .contains("temporal checks skipped"));
+}
+
 fn cca_platform_environment() -> EnvironmentMap {
     EnvironmentMap {
         class: Some(ClassMap {
