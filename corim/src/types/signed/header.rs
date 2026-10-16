@@ -378,7 +378,7 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
         let val = Value::deserialize(d)?;
         let mut budget = cbor::DecodeBudget::new(&cbor::DecodeLimits::default())
             .map_err(serde::de::Error::custom)?;
-        Self::from_value_with_budget(val, &mut budget, &mut None)
+        Self::from_value_with_budget(val, &mut budget, &mut None, false)
     }
 }
 
@@ -390,8 +390,12 @@ impl ProtectedCorimHeaderMap {
         let val = budget.decode_value_exact(bytes)?;
         cbor::map_keys::check_header(&val)?;
         let mut nested_error = None;
-        let result =
-            Self::from_value_with_budget::<serde::de::value::Error>(val, budget, &mut nested_error);
+        let result = Self::from_value_with_budget::<serde::de::value::Error>(
+            val,
+            budget,
+            &mut nested_error,
+            false,
+        );
         budget.check()?;
         if let Some(error) = nested_error {
             return Err(error);
@@ -412,10 +416,11 @@ impl ProtectedCorimHeaderMap {
         Self::decode_with_budget(bytes, &mut cbor::DecodeBudget::new(limits)?)
     }
 
-    fn from_value_with_budget<E: serde::de::Error>(
+    pub(super) fn from_value_with_budget<E: serde::de::Error>(
         val: Value,
         budget: &mut cbor::DecodeBudget,
         nested_error: &mut Option<crate::DecodeError>,
+        strict_metadata: bool,
     ) -> Result<Self, E> {
         cbor::map_keys::check_header(&val).map_err(serde::de::Error::custom)?;
         let map = match val {
@@ -527,7 +532,7 @@ impl ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match budget.decode_schema_exact::<CorimMetaMap>(&b) {
+                            match Self::decode_metadata(&b, budget, strict_metadata) {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
                                 }
@@ -540,6 +545,11 @@ impl ProtectedCorimHeaderMap {
                                 ) => {
                                     let message = e.to_string();
                                     *nested_error = Some(e);
+                                    return Err(serde::de::Error::custom(message));
+                                }
+                                Err(error) if strict_metadata => {
+                                    let message = error.to_string();
+                                    *nested_error = Some(error);
                                     return Err(serde::de::Error::custom(message));
                                 }
                                 Err(_) => {
@@ -647,6 +657,42 @@ impl ProtectedCorimHeaderMap {
             x5u,
             extra,
         })
+    }
+}
+
+impl ProtectedCorimHeaderMap {
+    fn decode_metadata(
+        bytes: &[u8],
+        budget: &mut cbor::DecodeBudget,
+        strict: bool,
+    ) -> Result<CorimMetaMap, crate::DecodeError> {
+        if !strict {
+            return budget.decode_schema_exact(bytes);
+        }
+        use crate::types::tags::{META_KEY_SIGNATURE_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
+        let value = budget.decode_value_exact(bytes)?;
+        cbor::map_keys::check(&value)?;
+        if let Value::Map(fields) = &value {
+            if let Some((_, validity)) = fields
+                .iter()
+                .find(|(key, _)| *key == Value::Integer(META_KEY_SIGNATURE_VALIDITY.into()))
+            {
+                let Value::Map(bounds) = validity else {
+                    return Err(crate::DecodeError::InvalidStructure(
+                        "signature-validity must be a map when present".into(),
+                    ));
+                };
+                if bounds.iter().any(|(key, value)| {
+                    *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into())
+                        && matches!(value, Value::Null)
+                }) {
+                    return Err(crate::DecodeError::InvalidStructure(
+                        "signature-validity not-before must not be null".into(),
+                    ));
+                }
+            }
+        }
+        cbor::from_parsed_value(value).map_err(crate::DecodeError::Deserialization)
     }
 }
 

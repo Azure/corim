@@ -331,6 +331,9 @@ fn decode_signed_budget(
 ///
 /// This is useful when the caller has already verified the signature externally
 /// and wants to inspect/validate the inner CoRIM.
+/// For strict header media-type, time and consistency checks, prefer
+/// [`super::decode_and_validate_signed_corim_at`] on the original envelope bytes.
+/// This legacy payload API remains available throughout 0.2.x.
 pub fn validate_signed_corim_payload(
     signed: &CoseSign1Corim,
     now_epoch_secs: i64,
@@ -385,6 +388,9 @@ pub fn validate_signed_corim_payload_with_limits(
 ///
 /// This is not a hash-envelope preimage-validation API. Hash mode is rejected:
 /// its COSE payload is a digest even when transported separately.
+/// For strict validation of the original envelope and supplied payload, prefer
+/// [`super::decode_and_validate_signed_corim_at`]. This legacy API remains
+/// available throughout 0.2.x.
 pub fn validate_signed_corim_payload_detached(
     signed: &CoseSign1Corim,
     detached_payload: &[u8],
