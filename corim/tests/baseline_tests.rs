@@ -119,6 +119,49 @@ fn checked_comparison_validates_structure_without_reading_clock() {
 }
 
 #[test]
+fn checked_comparison_preserves_decode_errors_and_limits() {
+    use corim::{DecodeError, ValidationError};
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let ConciseTagChoice::Comid(bytes) = &valid.tags[0] else {
+        panic!("CoMID fixture");
+    };
+    let mut trailing_bytes = bytes.clone();
+    trailing_bytes.push(0xff);
+    let Value::Map(mut entries) = cbor::decode_exact(bytes).unwrap() else {
+        panic!("CoMID map");
+    };
+    entries.push(entries[0].clone());
+    let duplicate_bytes = cbor::encode(&Value::Map(entries)).unwrap();
+    for (bytes, duplicate) in [(trailing_bytes, false), (duplicate_bytes, true)] {
+        let mut invalid = valid.clone();
+        invalid.tags[0] = ConciseTagChoice::Comid(bytes);
+        for (input, baseline) in [(&invalid, &valid), (&valid, &invalid)] {
+            let error = try_compare(input, baseline).unwrap_err();
+            if duplicate {
+                assert!(matches!(
+                    error,
+                    ValidationError::Decode(DecodeError::DuplicateKey { .. })
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    ValidationError::Decode(DecodeError::TrailingData { .. })
+                ));
+            }
+        }
+    }
+    let mut oversized = valid.clone();
+    oversized.tags[0] =
+        ConciseTagChoice::Comid(vec![0; cbor::DecodeLimits::default().max_input_bytes]);
+    for (input, baseline) in [(&oversized, &valid), (&valid, &oversized)] {
+        assert!(matches!(
+            try_compare(input, baseline),
+            Err(ValidationError::Decode(DecodeError::LimitExceeded { .. }))
+        ));
+    }
+}
+
+#[test]
 fn checked_comparison_preserves_existing_difference_policy() {
     let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for input in [

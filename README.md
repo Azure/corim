@@ -307,6 +307,15 @@ Ordinary validation without `--baseline` continues to support CoTL and CoSWID.
 Malformed present JSON timestamps are rejected before template conversion;
 omitted optional timestamps remain supported.
 
+Library callers should use `corim::baseline::try_compare(&input, &baseline)`,
+which returns `Result<ConformanceReport, ValidationError>`. It checks both
+CoMID-only payloads with default per-document decode limits and rejects
+malformed tags or failed report-value conversions. Clock, registered-profile,
+signature and certificate checks remain separate responsibilities. The CLI uses
+this checked payload path after its document validation. Legacy `compare()`
+remains available in 0.2.x with its existing permissive behavior; header
+comparison and the existing field-pairing and structure/value policy are unchanged.
+
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
 §8.2.4.4. **Structure** — which must match — is the environment, the
