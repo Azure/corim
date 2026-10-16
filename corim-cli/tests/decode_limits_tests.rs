@@ -121,6 +121,9 @@ fn oversized_document_files_fail_in_every_reader() {
     let file = InputFile::oversized();
     for args in [
         vec!["validate", file.path()],
+        vec!["validate", file.path(), "--format", "json"],
+        vec!["validate", file.path(), "--skip-expiry"],
+        vec!["validate", file.path(), "--skip-expiry", "--format", "json"],
         vec!["validate", file.path(), "--edn"],
         vec!["validate", file.path(), "--diagnose"],
         vec!["convert", file.path()],
@@ -149,7 +152,31 @@ fn oversized_document_files_fail_in_every_reader() {
             "/dev/null",
         ],
     ] {
-        assert_failure(&run(&args), "input exceeds maximum size");
+        let output = run(&args);
+        if args.contains(&"json") {
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["valid"], false);
+            assert!(report["errors"][0]
+                .as_str()
+                .unwrap()
+                .contains("input exceeds maximum size"));
+        } else {
+            assert_failure(&output, "input exceeds maximum size");
+        }
+        if args[0] == "validate" {
+            let inspection = args.contains(&"--edn") || args.contains(&"--diagnose");
+            assert_eq!(output.status.code(), Some(if inspection { 1 } else { 2 }));
+        }
+    }
+    fs::remove_file(&file.0).unwrap();
+    for format in ["text", "json"] {
+        let output = run(&["validate", file.path(), "--format", format]);
+        assert_eq!(output.status.code(), Some(1));
+        if format == "json" {
+            let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(report["valid"], false);
+            assert!(!report["errors"].as_array().unwrap().is_empty());
+        }
     }
 }
 
@@ -173,10 +200,11 @@ fn oversized_piped_stdin_fails_with_and_without_dash() {
             if let Err(e) = result {
                 assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe);
             }
-            assert_failure(
-                &child.wait_with_output().unwrap(),
-                "input exceeds maximum size",
-            );
+            let output = child.wait_with_output().unwrap();
+            assert_failure(&output, "input exceeds maximum size");
+            if command == "validate" {
+                assert_eq!(output.status.code(), Some(2));
+            }
         }
     }
 }
