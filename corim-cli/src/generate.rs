@@ -251,7 +251,6 @@ pub(crate) fn build_corim_from_template_with_time(
     }
 
     let mut tag_count = 0usize;
-    let mut comid_count = 0usize;
 
     // comids (optional): decoded CoMID tags (full triples tree).
     if let Some(arr) = obj.get("comids").and_then(|v| v.as_array()) {
@@ -262,7 +261,6 @@ pub(crate) fn build_corim_from_template_with_time(
                 .add_comid_tag(comid)
                 .map_err(|e| format!("comids[{i}]: add_comid_tag: {e}"))?;
             tag_count += 1;
-            comid_count += 1;
         }
     }
 
@@ -298,18 +296,8 @@ pub(crate) fn build_corim_from_template_with_time(
         .build_bytes()
         .map_err(|e| format!("building CoRIM: {e}"))?;
 
-    // Validate core and registered-profile constraints before writing. The
-    // strict validator requires at least one CoMID, so CoSWID/CoTL-only
-    // CoRIMs use a structural tag-501 decode instead.
-    if comid_count > 0 {
-        crate::validation::document(&bytes, now, &registry)
-            .map_err(|e| format!("post-build validation failed: {e}"))?;
-    } else {
-        corim::cbor::decode_exact::<corim::cbor::value::Tagged<corim::types::corim::CorimMap>>(
-            &bytes,
-        )
-        .map_err(|e| format!("post-build decode failed: {e}"))?;
-    }
+    crate::validation::document(&bytes, now, &registry)
+        .map_err(|e| format!("post-build validation failed: {e}"))?;
 
     Ok(bytes)
 }

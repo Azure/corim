@@ -227,6 +227,19 @@ fn tag_only_documents_validate_all_tags_in_both_time_modes() {
             cbor::decode_exact(&sample_unsigned_corim()).unwrap();
         corim.value.tags = vec![tag];
         let payload = cbor::encode(&corim).unwrap();
+        if valid_now {
+            let limits = cbor::DecodeLimits::default();
+            assert!(matches!(
+                corim::validate::decode_and_validate_full_at_with_limits(&payload, 100, &limits),
+                Err(corim::ValidationError::NoComidTags)
+            ));
+            assert!(
+                corim::validate::decode_and_validate_document_at_with_limits(
+                    &payload, 100, &limits
+                )
+                .is_ok()
+            );
+        }
         for signed in [false, true] {
             let bytes = if signed {
                 make_signed(&payload, false)

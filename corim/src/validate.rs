@@ -319,20 +319,59 @@ pub(crate) fn decode_and_validate_budget(
     now_epoch_secs: i64,
     budget: &mut cbor::DecodeBudget,
 ) -> Result<ValidatedCorim, ValidationError> {
-    decode_and_validate_budget_with_time(bytes, Some(now_epoch_secs), budget)
+    let validated = decode_and_validate_budget_with_time(bytes, Some(now_epoch_secs), budget)?;
+    if validated.comids.is_empty() {
+        return Err(ValidationError::NoComidTags);
+    }
+    Ok(validated)
+}
+
+/// Validate a complete unsigned document with an explicit clock and limits.
+///
+/// Per draft-ietf-rats-corim-11 Section 4.1, the non-empty tags array may
+/// contain any supported tag type; a CoMID is not required. Unlike the legacy
+/// [`decode_and_validate_full_at_with_limits`], opaque CoSWID content is an
+/// error. Apply registered profile validation separately. This does not
+/// establish authenticity (RFC 9334 Section 8).
+pub fn decode_and_validate_document_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_document_impl(bytes, Some(now_epoch_secs), limits)
+}
+
+fn decode_and_validate_document_impl(
+    bytes: &[u8],
+    now_epoch_secs: Option<i64>,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_budget_with_time(
+        bytes,
+        now_epoch_secs,
+        &mut cbor::DecodeBudget::new(limits)?,
+    )?;
+    validated.corim.valid().map_err(ValidationError::Invalid)?;
+    if validated.coswid_opaque_count != 0 {
+        return Err(ValidationError::Invalid(
+            "cannot validate opaque CoSWID content".into(),
+        ));
+    }
+    Ok(validated)
 }
 
 /// Validate CoRIM structure without checking time validity (partial validation).
 ///
 /// All tag decoding, structural rules and parser limits still apply. Reversed
-/// validity windows are rejected. Callers must explicitly report that temporal
+/// validity windows and opaque CoSWID content are rejected. A CoMID is not
+/// required. Callers must explicitly report that temporal
 /// validity was not checked and apply any registered profile validation separately.
 /// This does not establish freshness or authenticity (RFC 9334 Section 8).
 pub fn decode_and_validate_structure_with_limits(
     bytes: &[u8],
     limits: &cbor::DecodeLimits,
 ) -> Result<ValidatedCorim, ValidationError> {
-    decode_and_validate_budget_with_time(bytes, None, &mut cbor::DecodeBudget::new(limits)?)
+    decode_and_validate_document_impl(bytes, None, limits)
 }
 
 pub(crate) fn decode_and_validate_budget_with_time(
@@ -427,10 +466,6 @@ pub(crate) fn decode_and_validate_budget_with_time(
                 // Unknown tag types: forward-compat, skip silently
             }
         }
-    }
-
-    if comids.is_empty() {
-        return Err(ValidationError::NoComidTags);
     }
 
     Ok(ValidatedCorim {

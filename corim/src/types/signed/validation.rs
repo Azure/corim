@@ -207,6 +207,7 @@ fn decode_and_validate_signed_corim_impl(
         now_epoch_secs,
         &mut budget,
     )?;
+    validated.corim.valid().map_err(ValidationError::Invalid)?;
     if validated.coswid_opaque_count != 0 {
         return Err(invalid(
             "strict validation cannot validate opaque CoSWID content",
