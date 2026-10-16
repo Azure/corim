@@ -20,6 +20,35 @@ use corim::cbor::value::Value;
 use corim::types::corim::CorimMap;
 use corim::types::signed::ProtectedCorimHeaderMap;
 
+#[derive(Debug)]
+pub(crate) enum BaselineError {
+    Io(String),
+    Invalid(String),
+}
+
+impl BaselineError {
+    pub(crate) fn exit_code(&self) -> i32 {
+        match self {
+            Self::Io(_) => 1,
+            Self::Invalid(_) => 2,
+        }
+    }
+}
+
+impl std::fmt::Display for BaselineError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(message) | Self::Invalid(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for BaselineError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
 /// Compare the input against the baseline at `path`. Returns `Ok(true)`
 /// when the input is structurally conformant.
 ///
@@ -33,7 +62,7 @@ pub fn run(
     path: &str,
     format: &str,
     now: Option<i64>,
-) -> Result<bool, String> {
+) -> Result<bool, BaselineError> {
     let baseline = load_corim(path, now)?;
 
     let mut report = ConformanceReport::default();
@@ -67,7 +96,8 @@ pub fn run(
             "nothing to compare (baseline: {baseline_desc}; target: {target}). \
              Header comparison needs both sides signed; payload comparison needs \
              both sides to carry a payload."
-        ));
+        )
+        .into());
     }
 
     if format == "json" {
@@ -123,10 +153,17 @@ fn compared_scope(header: bool, payload: bool) -> &'static str {
 
 /// Load a CoRIM from a JSON template, a CBOR CoRIM, or a signed CoRIM,
 /// retaining the protected header (if signed) and payload (if present).
-fn load_corim(path: &str, now: Option<i64>) -> Result<LoadedBaseline, String> {
-    let raw = crate::input::read_file(path).map_err(|e| format!("reading baseline {path}: {e}"))?;
+fn load_corim(path: &str, now: Option<i64>) -> Result<LoadedBaseline, BaselineError> {
+    let raw = crate::input::read_file(path).map_err(|error| {
+        let message = format!("reading baseline {path}: {error}");
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            BaselineError::Invalid(message)
+        } else {
+            BaselineError::Io(message)
+        }
+    })?;
     if raw.is_empty() {
-        return Err("baseline is empty".into());
+        return Err(BaselineError::Invalid("baseline is empty".into()));
     }
 
     if is_json(&raw) {

@@ -133,7 +133,11 @@ fn run_validate(cli: ValidateArgs) {
     };
 
     if bytes.is_empty() {
-        validation_failure(&cli.format, "input is empty", 1);
+        validation_failure(
+            &cli.format,
+            "input is empty",
+            if cli.edn || cli.diagnose { 1 } else { 2 },
+        );
     }
 
     // --edn: render the raw CBOR as Extended Diagnostic Notation and
@@ -218,7 +222,7 @@ fn run_validate(cli: ValidateArgs) {
             Ok(true) => process::exit(0),
             Ok(false) => process::exit(3),
             Err(e) => {
-                validation_failure(&cli.format, &e, 2);
+                validation_failure(&cli.format, &e.to_string(), e.exit_code());
             }
         }
     }
