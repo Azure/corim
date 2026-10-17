@@ -103,6 +103,27 @@ fn uuid_tag_identity_is_not_a_position_or_display_string() {
 }
 
 #[test]
+fn duplicate_tag_ids_pair_exact_values_before_residual_changes() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut second = baseline.tags[0].as_comid().unwrap();
+    second.tag_identity.tag_version = Some(2);
+    baseline
+        .tags
+        .push(ConciseTagChoice::Comid(cbor::encode(&second).unwrap()));
+    let mut reordered = baseline.clone();
+    reordered.tags.reverse();
+    assert_eq!(
+        compare(&reordered, &baseline),
+        compare(&baseline, &baseline)
+    );
+    second.tag_identity.tag_version = Some(3);
+    reordered.tags[0] = ConciseTagChoice::Comid(cbor::encode(&second).unwrap());
+    let report = compare(&reordered, &baseline);
+    assert!(report.is_conformant());
+    assert_eq!(report.value_differences.len(), 1);
+}
+
+#[test]
 fn repeated_identities_preserve_cardinality() {
     let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for scope in ["tags", "triples", "measurements", "digests"] {
