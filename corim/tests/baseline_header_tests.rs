@@ -4,7 +4,7 @@
 //! Tests for `corim::baseline::compare_headers` — protected-header
 //! structural conformance of signed CoRIMs.
 
-use corim::baseline::{compare_headers, render_path, MismatchKind, PathSegment};
+use corim::baseline::{render_path, MismatchKind, PathSegment};
 use corim::cbor::value::Value;
 use corim::types::corim::{CorimMetaMap, CorimSignerMap};
 use corim::types::signed::{
@@ -13,6 +13,13 @@ use corim::types::signed::{
 
 fn header() -> ProtectedCorimHeaderMapBuilder {
     ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).content_type("application/rim+cbor")
+}
+
+fn compare_headers(
+    input: &ProtectedCorimHeaderMap,
+    baseline: &ProtectedCorimHeaderMap,
+) -> corim::baseline::ConformanceReport {
+    corim::baseline::compare_headers(input, baseline).unwrap()
 }
 
 fn meta(name: &str) -> CorimMetaMap {
@@ -27,6 +34,21 @@ fn meta(name: &str) -> CorimMetaMap {
 
 fn has_field(paths: &[Vec<PathSegment>], field: &'static str) -> bool {
     paths.iter().any(|p| p.contains(&PathSegment::Field(field)))
+}
+
+#[test]
+fn header_extensions_compare_shape_and_reject_invalid_cbor() {
+    let baseline = header()
+        .extra(10001, Value::Array(vec![Value::Integer(1)]))
+        .build();
+    let changed = header()
+        .extra(10001, Value::Array(vec![Value::Text("1".into())]))
+        .build();
+    assert!(!compare_headers(&changed, &baseline).is_conformant());
+    let invalid = header().extra(10001, Value::Integer(i128::MAX)).build();
+    assert!(corim::baseline::compare_headers(&invalid, &invalid).is_err());
+    assert!(corim::baseline::compare_headers(&invalid, &baseline).is_err());
+    assert!(corim::baseline::compare_headers(&baseline, &invalid).is_err());
 }
 
 #[test]
@@ -152,7 +174,7 @@ fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
     let i = header().build();
     let r = compare_headers(&i, &b);
     assert!(
-        r.value_differences
+        r.structural_mismatches
             .iter()
             .any(|v| render_path(&v.path) == "$.protected-header.header-extension[9]"),
         "a baseline extension key (even a null one) missing from the input is a difference"
@@ -173,7 +195,7 @@ fn text_claim_key_path_is_escaped() {
         let b = header().cwt_claims(claims).build();
         let i = header().cwt_claims(CwtClaims::new("iss")).build();
         let r = compare_headers(&i, &b);
-        r.value_differences
+        r.structural_mismatches
             .iter()
             .map(|v| render_path(&v.path))
             .find(|p| p.contains("cwt-extension"))
