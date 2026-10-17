@@ -23,6 +23,11 @@
 //! digest's *algorithm* (§8.2.4.4.5.4) are identity/structure; the
 //! concrete per-attribute payloads are values.
 //!
+//! Typed identities pair one-to-one, reserving exact matches before pairing
+//! remaining entries in encounter order. Unknown extensions compare recursive
+//! CBOR shape: keys, types, tags and container structure are structural;
+//! leaf contents are values. Maps are unordered and arrays positional.
+//!
 //! This module performs the comparison and returns a structured
 //! [`ConformanceReport`](crate::baseline::ConformanceReport). It does not
 //! impose any serialization format — callers (e.g. `corim-cli`) render the
@@ -279,9 +284,10 @@ fn compare_decoded(
 /// (`payload_hash_alg` / `payload_preimage_content_type`), the *presence*
 /// of `corim-meta` / `CWT-Claims` / `kid` / `x5bag` / `x5chain` / `x5t` /
 /// `x5u`, and the CWT `iss` (the signer identity). Everything else — signer
-/// name/uri, signature-validity, CWT `sub`/`exp`/`nbf` and extra claims,
-/// certificate/key bytes, `payload-location`, extra header labels — is
-/// reported as a value difference only.
+/// name/uri, signature-validity, CWT `sub`/`exp`/`nbf`, certificate/key bytes,
+/// and `payload-location` is reported as a value difference. Unknown header
+/// and CWT extensions compare recursively by CBOR shape.
+/// Encoding or conversion failures return an error; signatures are not verified.
 ///
 /// Findings are located under `$.protected-header`.
 pub fn compare_headers(
@@ -397,7 +403,6 @@ pub fn compare_headers(
         Value::Text(s.clone())
     });
 
-    // Extra header labels — reported as value differences.
     compare_extra_values(
         &base,
         "header-extension",

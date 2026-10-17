@@ -352,14 +352,29 @@ Ordinary validation without `--baseline` continues to support CoTL and CoSWID.
 Malformed present JSON timestamps are rejected before template conversion;
 omitted optional timestamps remain supported.
 
-Library callers should use `corim::baseline::try_compare(&input, &baseline)`,
-which returns `Result<ConformanceReport, ValidationError>`. It checks both
-CoMID-only payloads with default per-document decode limits and rejects
-malformed tags or failed report-value conversions. Clock, registered-profile,
-signature and certificate checks remain separate responsibilities. The CLI uses
-this checked payload path after its document validation. Legacy `compare()`
-remains available in 0.2.x with its existing permissive behavior; header
-comparison and the existing field-pairing and structure/value policy are unchanged.
+`corim::baseline::compare(&input, &baseline)` and `compare_headers()` return
+`Result<ConformanceReport, ValidationError>`. Propagate errors with `?`, then
+inspect `report.is_conformant()` for structural mismatches. Payload comparison
+checks CoMID-only documents with default per-document decode limits; malformed
+tags, unsupported tags and conversion failures return errors, not partial
+reports. Clock, registered-profile, signature and certificate checks remain
+separate responsibilities. The CLI performs those document checks before
+comparison, excluding cryptographic verification.
+
+CoMIDs, environments, keyed measurements, digests and key representations pair
+one-to-one by typed identity. Exact matches are reserved first; remaining
+same-identity entries pair in encounter order. Reordering keyed entries does
+not reuse or discard duplicates. Unkeyed measurements and ordered series remain
+positional. UUID IDs are identities, not array positions.
+
+Register IDs and digest algorithms, key representations and thumbprint
+algorithms, range forms and bound presence, and matcher forms and cardinality
+are structural. Their leaf contents are values. Matcher sets are unordered.
+Unknown measurement, header and CWT extensions use recursive CBOR shape:
+map keys, value types, semantic tags and container structure are structural;
+leaf contents are values. Map order is ignored; array order is significant.
+No profile-specific meaning is inferred for unknown extension values.
+Non-finite numeric differences use the existing `float-bits` JSON representation.
 
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
