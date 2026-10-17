@@ -493,6 +493,33 @@ fn baseline_reports_matcher_presence_and_value_differences() {
     }
 }
 
+#[test]
+fn baseline_matcher_sets_are_unordered_and_shape_sensitive() {
+    let baseline = corim_with_matchers(MeasurementValuesMap {
+        text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
+        ..Default::default()
+    });
+    let reordered = corim_with_matchers(MeasurementValuesMap {
+        text: Some(TextMatcher::Set(vec!["b".into(), "a".into()])),
+        ..Default::default()
+    });
+    let report = corim::baseline::compare(&reordered, &baseline).unwrap();
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    for matcher in [
+        TextMatcher::Exact("a".into()),
+        TextMatcher::Set(vec!["a".into(), "b".into(), "c".into()]),
+    ] {
+        let changed = corim_with_matchers(MeasurementValuesMap {
+            text: Some(matcher),
+            ..Default::default()
+        });
+        assert!(!corim::baseline::compare(&changed, &baseline)
+            .unwrap()
+            .is_conformant());
+    }
+}
+
 #[cfg(feature = "profile-cca")]
 #[test]
 fn cca_profile_does_not_silently_accept_new_matcher_fields() {
