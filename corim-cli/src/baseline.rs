@@ -477,7 +477,12 @@ fn value_to_json(v: &Value) -> serde_json::Value {
         }
         Value::Float(f) => serde_json::Number::from_f64(*f)
             .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
+            .unwrap_or_else(|| {
+                serde_json::json!({
+                    "type": "float-bits",
+                    "value": format!("{:016x}", f.to_bits()),
+                })
+            }),
         Value::Bool(b) => serde_json::Value::Bool(*b),
         Value::Null => serde_json::Value::Null,
         Value::Array(a) => serde_json::Value::Array(a.iter().map(value_to_json).collect()),
