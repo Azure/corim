@@ -288,6 +288,8 @@ pub fn compare_headers(
     input: &ProtectedCorimHeaderMap,
     baseline: &ProtectedCorimHeaderMap,
 ) -> Result<ConformanceReport, crate::ValidationError> {
+    checked_value(input)?;
+    checked_value(baseline)?;
     let mut r = ConformanceReport::default();
     let base = [PathSegment::Field("protected-header")];
 
@@ -555,8 +557,7 @@ fn compare_cwt_claims(
     Ok(())
 }
 
-/// Report presence and content differences of an extension map as value
-/// differences (never structural). `seg` renders a key as a path segment.
+/// Compare extension presence and recursive CBOR shape; `seg` renders a key.
 fn compare_extra_values<K: Ord>(
     base: &[PathSegment],
     field: &'static str,
@@ -566,32 +567,20 @@ fn compare_extra_values<K: Ord>(
     seg: impl Fn(&K) -> PathSegment,
 ) {
     for (k, bv) in baseline {
-        // Compare on presence: a key absent from the input is a difference
-        // even when the baseline value is `Value::Null`.
-        if input.get(k) != Some(bv) {
-            let iv = input.get(k).cloned().unwrap_or(Value::Null);
-            let mut p = base.to_vec();
-            p.push(PathSegment::Field(field));
-            p.push(seg(k));
-            r.value_differences.push(ValueDifference {
-                path: p,
-                field,
-                baseline: bv.clone(),
-                input: iv,
-            });
+        let mut p = base.to_vec();
+        p.push(PathSegment::Field(field));
+        p.push(seg(k));
+        match input.get(k) {
+            Some(value) => compare_value_shape(&p, field, bv, value, r),
+            None => push_missing_field_at(&p, field, r),
         }
     }
-    for (k, iv) in input {
+    for k in input.keys() {
         if !baseline.contains_key(k) {
             let mut p = base.to_vec();
             p.push(PathSegment::Field(field));
             p.push(seg(k));
-            r.value_differences.push(ValueDifference {
-                path: p,
-                field,
-                baseline: Value::Null,
-                input: iv.clone(),
-            });
+            push_unexpected_field_at(&p, field, r);
         }
     }
 }
@@ -1220,23 +1209,14 @@ fn compare_mval(
         r,
     );
 
-    // Coarse (refined in a later commit): presence = structure, whole-field
-    // inequality = value difference. Never a false structural failure.
-    scalar(
+    compare_keys(path, b.cryptokeys.as_deref(), i.cryptokeys.as_deref(), r)?;
+    compare_registers(
         path,
-        "cryptokeys",
-        opt_val(&b.cryptokeys)?,
-        opt_val(&i.cryptokeys)?,
+        b.integrity_registers.as_ref(),
+        i.integrity_registers.as_ref(),
         r,
-    );
-    scalar(
-        path,
-        "integrity-registers",
-        opt_val(&b.integrity_registers)?,
-        opt_val(&i.integrity_registers)?,
-        r,
-    );
-    scalar(
+    )?;
+    shape_field(
         path,
         "int-range",
         opt_val(&b.int_range)?,
@@ -1245,28 +1225,159 @@ fn compare_mval(
     );
 
     scalar(path, "bool", opt_val(&b.r#bool)?, opt_val(&i.r#bool)?, r);
-    scalar(
-        path,
-        "number",
-        b.number
-            .as_ref()
-            .map(crate::cbor::value::to_human_readable_value)
-            .transpose()
-            .map_err(crate::ValidationError::Invalid)?,
-        i.number
-            .as_ref()
-            .map(crate::cbor::value::to_human_readable_value)
-            .transpose()
-            .map_err(crate::ValidationError::Invalid)?,
-        r,
-    );
-    scalar(path, "text", opt_val(&b.text)?, opt_val(&i.text)?, r);
-    scalar(path, "bytes", opt_val(&b.bytes)?, opt_val(&i.bytes)?, r);
+    shape_field(path, "number", opt_val(&b.number)?, opt_val(&i.number)?, r);
+    shape_field(path, "text", opt_val(&b.text)?, opt_val(&i.text)?, r);
+    shape_field(path, "bytes", opt_val(&b.bytes)?, opt_val(&i.bytes)?, r);
 
-    // Profile-defined extension attributes: key presence = structure,
-    // value = value difference.
     compare_extra_entries(path, &b.extra_entries, &i.extra_entries, r);
     Ok(())
+}
+
+fn compare_keys(
+    path: &[PathSegment],
+    baseline: Option<&[crate::types::common::CryptoKey]>,
+    input: Option<&[crate::types::common::CryptoKey]>,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    use crate::types::common::CryptoKey;
+    compare_presence(
+        path,
+        "cryptokeys",
+        baseline.is_some(),
+        input.is_some(),
+        report,
+    );
+    if let (Some(base), Some(candidate)) = (baseline, input) {
+        let pairs = pair_indices(base, candidate, |base_index, input_index| {
+            match (&base[base_index], &candidate[input_index]) {
+                (CryptoKey::KeyThumbprint(base), CryptoKey::KeyThumbprint(candidate))
+                | (CryptoKey::CertThumbprint(base), CryptoKey::CertThumbprint(candidate))
+                | (CryptoKey::CertPathThumbprint(base), CryptoKey::CertPathThumbprint(candidate)) => {
+                    base.0 == candidate.0
+                }
+                (base, candidate) => {
+                    core::mem::discriminant(base) == core::mem::discriminant(candidate)
+                }
+            }
+        });
+        for (index, key) in base.iter().enumerate() {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field("cryptokeys"));
+            nested.push(PathSegment::Index(index));
+            match pairs[index] {
+                Some(input_index) => compare_value_shape(
+                    &nested,
+                    "cryptokeys",
+                    &checked_value(key)?,
+                    &checked_value(&candidate[input_index])?,
+                    report,
+                ),
+                None => push_missing_field_at(&nested, "key representation or algorithm", report),
+            }
+        }
+        for index in 0..candidate.len() {
+            if !pairs.contains(&Some(index)) {
+                let mut nested = path.to_vec();
+                nested.push(PathSegment::Field("cryptokeys"));
+                nested.push(PathSegment::Index(index));
+                push_unexpected_field_at(&nested, "key representation or algorithm", report);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn compare_registers(
+    path: &[PathSegment],
+    baseline: Option<&crate::types::measurement::IntegrityRegisters>,
+    input: Option<&crate::types::measurement::IntegrityRegisters>,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    compare_presence(
+        path,
+        "integrity-registers",
+        baseline.is_some(),
+        input.is_some(),
+        report,
+    );
+    if let (Some(base), Some(candidate)) = (baseline, input) {
+        for (key, digests) in &base.0 {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field("integrity-registers"));
+            nested.push(value_key(&checked_value(key)?));
+            match candidate.0.get(key) {
+                Some(input_digests) => {
+                    compare_digests(&nested, Some(digests), Some(input_digests), report)
+                }
+                None => push_missing_field_at(&nested, "register", report),
+            }
+        }
+        for key in candidate.0.keys() {
+            if !base.0.contains_key(key) {
+                let mut nested = path.to_vec();
+                nested.push(PathSegment::Field("integrity-registers"));
+                nested.push(value_key(&checked_value(key)?));
+                push_unexpected_field_at(&nested, "register", report);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn shape_field(
+    path: &[PathSegment],
+    field: &'static str,
+    baseline: Option<Value>,
+    input: Option<Value>,
+    report: &mut ConformanceReport,
+) {
+    match (baseline, input) {
+        (Some(base), Some(candidate)) => {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field(field));
+            if matches!(field, "number" | "text" | "bytes") {
+                if let (Value::Tag(base_tag, base_values), Value::Tag(input_tag, input_values)) =
+                    (&base, &candidate)
+                {
+                    if *base_tag == crate::types::tags::TAG_MATCHER_SET && base_tag == input_tag {
+                        if let (Value::Array(base), Value::Array(candidate)) =
+                            (base_values.as_ref(), input_values.as_ref())
+                        {
+                            let pairs = pair_indices(base, candidate, |base_index, input_index| {
+                                value_kind(&base[base_index]) == value_kind(&candidate[input_index])
+                            });
+                            for (index, value) in base.iter().enumerate() {
+                                let mut element = nested.clone();
+                                element.push(PathSegment::Index(index));
+                                match pairs[index] {
+                                    Some(input_index) => compare_value_shape(
+                                        &element,
+                                        field,
+                                        value,
+                                        &candidate[input_index],
+                                        report,
+                                    ),
+                                    None => push_missing_field_at(&element, field, report),
+                                }
+                            }
+                            for index in 0..candidate.len() {
+                                if !pairs.contains(&Some(index)) {
+                                    let mut element = nested.clone();
+                                    element.push(PathSegment::Index(index));
+                                    push_unexpected_field_at(&element, field, report);
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+            compare_value_shape(&nested, field, &base, &candidate, report);
+        }
+        (Some(_), None) => push_missing_field(path, field, report),
+        (None, Some(_)) => push_unexpected_field(path, field, report),
+        (None, None) => {}
+    }
 }
 
 fn compare_digests(
