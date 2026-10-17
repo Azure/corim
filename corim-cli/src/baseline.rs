@@ -7,14 +7,14 @@
 //! The baseline may be a CBOR CoRIM (tag 501), a signed CoRIM (tag 18,
 //! attached payload), or a JSON template (same shape `generate` accepts).
 //! It is decoded and validated, then compared with the input via
-//! [`corim::baseline::try_compare`]. The library returns a structured report;
+//! [`corim::baseline::compare`]. The library returns a structured report;
 //! this module owns the text and JSON presentation and the exit-code
 //! semantics.
 
 use std::fmt::Write as _;
 
 use corim::baseline::{
-    try_compare, ConformanceReport, MismatchKind, StructuralMismatch, ValueDifference,
+    compare, ConformanceReport, MismatchKind, StructuralMismatch, ValueDifference,
 };
 use corim::cbor::value::Value;
 use corim::types::corim::CorimMap;
@@ -71,12 +71,12 @@ pub fn run(
 
     // Header: only when both baseline and target are signed.
     if let (Some(ih), Some(bh)) = (input_header, baseline.header.as_ref()) {
-        report.merge(corim::baseline::compare_headers(ih, bh));
+        report.merge(corim::baseline::compare_headers(ih, bh).map_err(|error| error.to_string())?);
         compared_header = true;
     }
     // Payload: whenever both sides carry one.
     if let (Some(ip), Some(bp)) = (input_payload, baseline.payload.as_ref()) {
-        report.merge(try_compare(ip, bp).map_err(|error| error.to_string())?);
+        report.merge(compare(ip, bp).map_err(|error| error.to_string())?);
         compared_payload = true;
     }
 

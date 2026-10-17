@@ -449,7 +449,7 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         ..Default::default()
     };
     let baseline = corim_with_matchers(base.clone());
-    let identical = corim::baseline::compare(&baseline, &baseline);
+    let identical = corim::baseline::compare(&baseline, &baseline).unwrap();
     assert!(identical.structural_mismatches.is_empty());
     assert!(identical.value_differences.is_empty());
     let changed = corim_with_matchers(MeasurementValuesMap {
@@ -459,7 +459,7 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         bytes: Some(BytesMatcher::Exact(vec![2])),
         ..Default::default()
     });
-    let report = corim::baseline::compare(&changed, &baseline);
+    let report = corim::baseline::compare(&changed, &baseline).unwrap();
     assert!(report.structural_mismatches.is_empty());
     for field in ["bool", "number", "text", "bytes"] {
         assert!(report
@@ -482,6 +482,7 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         }
         assert_eq!(
             corim::baseline::compare(&corim_with_matchers(missing), &baseline)
+                .unwrap()
                 .structural_mismatches
                 .len(),
             1
