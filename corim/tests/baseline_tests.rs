@@ -3,7 +3,7 @@
 
 //! Tests for `corim::baseline` structural conformance comparison.
 
-use corim::baseline::{compare, try_compare, MismatchKind};
+use corim::baseline::{compare as try_compare, MismatchKind};
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::cbor::{self, value::Tagged, value::Value};
 use corim::types::common::{MeasuredElement, TagIdChoice};
@@ -12,6 +12,10 @@ use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
 use corim::types::tags::{TAG_COMID, TAG_CORIM};
 use corim::types::triples::ReferenceTriple;
+
+fn compare(input: &CorimMap, baseline: &CorimMap) -> corim::baseline::ConformanceReport {
+    try_compare(input, baseline).unwrap()
+}
 
 /// Build a one-CoMID, one-reference-triple CoRIM with a single MRTD
 /// measurement carrying the given digest bytes and svn.
@@ -204,7 +208,6 @@ fn checked_comparison_rejects_skipped_tags_on_either_side() {
                 invalid.tags.clear();
             }
             invalid.tags.push(tag.clone());
-            assert!(compare(&invalid, &invalid).is_conformant());
             assert!(try_compare(&invalid, &valid).is_err(), "input: {tag:?}");
             assert!(try_compare(&valid, &invalid).is_err(), "baseline: {tag:?}");
             assert!(try_compare(&invalid, &invalid).is_err(), "both: {tag:?}");
@@ -278,7 +281,7 @@ fn checked_comparison_preserves_decode_errors_and_limits() {
 }
 
 #[test]
-fn checked_comparison_preserves_existing_difference_policy() {
+fn tcg_comparison_matches_canonical_difference_reports() {
     let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for input in [
         baseline.clone(),

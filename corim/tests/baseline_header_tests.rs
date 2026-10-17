@@ -4,7 +4,7 @@
 //! Tests for `corim::baseline::compare_headers` — protected-header
 //! structural conformance of signed CoRIMs.
 
-use corim::baseline::{compare_headers, render_path, MismatchKind, PathSegment};
+use corim::baseline::{render_path, MismatchKind, PathSegment};
 use corim::cbor::value::Value;
 use corim::types::corim::{CorimMetaMap, CorimSignerMap};
 use corim::types::signed::{
@@ -13,6 +13,13 @@ use corim::types::signed::{
 
 fn header() -> ProtectedCorimHeaderMapBuilder {
     ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).content_type("application/rim+cbor")
+}
+
+fn compare_headers(
+    input: &ProtectedCorimHeaderMap,
+    baseline: &ProtectedCorimHeaderMap,
+) -> corim::baseline::ConformanceReport {
+    corim::baseline::compare_headers(input, baseline).unwrap()
 }
 
 fn meta(name: &str) -> CorimMetaMap {
