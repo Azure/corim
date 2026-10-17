@@ -738,6 +738,52 @@ fn json_baselines_reject_invalid_present_timestamps_before_conversion() {
 }
 
 #[test]
+fn baseline_nonfinite_differences_preserve_float_bits() {
+    use corim::cbor::{self, value::Tagged};
+    use corim::types::matcher::{Number, NumberMatcher};
+    let make = |number| {
+        let mut document: Tagged<corim::types::CorimMap> =
+            cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+        let mut comid = document.value.tags[0].as_comid().unwrap();
+        comid.triples.reference_triples.as_mut().unwrap()[0].1[0]
+            .mval
+            .number = Some(NumberMatcher::Exact(Number::Float(number)));
+        document.value.tags[0] =
+            corim::types::ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        cbor::encode(&document).unwrap()
+    };
+    let baseline_number = f64::from_bits(0x7ff8_0000_0000_0042);
+    let path = unique_temp("baseline_float_bits", "cbor");
+    std::fs::write(&path, make(baseline_number)).unwrap();
+    let output = validate_with_flags(
+        &make(f64::INFINITY),
+        &["--baseline", path.to_str().unwrap(), "-f", "json"],
+    );
+    std::fs::remove_file(path).unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let difference = report["value_differences"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|value| value["field"] == "number")
+        .unwrap();
+    assert_eq!(difference["baseline"]["type"], "float-bits");
+    assert_eq!(
+        difference["baseline"]["value"],
+        format!("{:016x}", baseline_number.to_bits())
+    );
+    assert_eq!(
+        difference["input"]["value"],
+        format!("{:016x}", f64::INFINITY.to_bits())
+    );
+}
+
+#[test]
 fn baselines_use_same_time_and_structural_policy_as_input() {
     use corim::cbor::{self, value::Tagged};
     let target = sample_unsigned_corim();
