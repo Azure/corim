@@ -193,6 +193,87 @@ fn extension_comparison_is_recursive_shape_not_whole_value() {
 }
 
 #[test]
+fn typed_field_shapes_are_structural_but_contents_are_values() {
+    use corim::types::common::CryptoKey;
+    use corim::types::measurement::{IntRangeChoice, IntegrityRegisterId, IntegrityRegisters};
+    let make = |mval| {
+        let mut document = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+        let mut comid = document.tags[0].as_comid().unwrap();
+        comid.triples.reference_triples.as_mut().unwrap()[0].1[0].mval = mval;
+        document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        document
+    };
+    let registers = |id, algorithm, byte| MeasurementValuesMap {
+        integrity_registers: Some(IntegrityRegisters(
+            [(
+                IntegrityRegisterId::Uint(id),
+                vec![Digest::new(algorithm, vec![byte; 48])],
+            )]
+            .into(),
+        )),
+        ..Default::default()
+    };
+    let keys = |key| MeasurementValuesMap {
+        cryptokeys: Some(vec![key]),
+        ..Default::default()
+    };
+    let range = |value| MeasurementValuesMap {
+        int_range: Some(value),
+        ..Default::default()
+    };
+    for (baseline, input, conforms) in [
+        (registers(0, 7, 1), registers(1, 7, 1), false),
+        (registers(0, 7, 1), registers(0, 8, 1), false),
+        (registers(0, 7, 1), registers(0, 7, 2), true),
+        (
+            keys(CryptoKey::Bytes(vec![1])),
+            keys(CryptoKey::CoseKey(vec![1])),
+            false,
+        ),
+        (
+            keys(CryptoKey::KeyThumbprint(Digest::new(7, vec![1]))),
+            keys(CryptoKey::KeyThumbprint(Digest::new(8, vec![1]))),
+            false,
+        ),
+        (
+            keys(CryptoKey::Bytes(vec![1])),
+            keys(CryptoKey::Bytes(vec![2])),
+            true,
+        ),
+        (
+            range(IntRangeChoice::Int(1)),
+            range(IntRangeChoice::Int(2)),
+            true,
+        ),
+        (
+            range(IntRangeChoice::Int(1)),
+            range(IntRangeChoice::Range {
+                min: Some(0),
+                max: Some(2),
+            }),
+            false,
+        ),
+        (
+            range(IntRangeChoice::Range {
+                min: None,
+                max: Some(2),
+            }),
+            range(IntRangeChoice::Range {
+                min: Some(0),
+                max: Some(2),
+            }),
+            false,
+        ),
+    ] {
+        let report = try_compare(&make(input), &make(baseline)).unwrap();
+        assert_eq!(report.is_conformant(), conforms, "{report:?}");
+        if conforms {
+            assert!(!report.value_differences.is_empty());
+        }
+    }
+}
+
+#[test]
 fn checked_comparison_rejects_skipped_tags_on_either_side() {
     let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for tag in [
