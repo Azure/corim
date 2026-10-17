@@ -460,8 +460,11 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         ..Default::default()
     });
     let report = corim::baseline::compare(&changed, &baseline).unwrap();
-    assert!(report.structural_mismatches.is_empty());
-    for field in ["bool", "number", "text", "bytes"] {
+    assert_eq!(report.structural_mismatches.len(), 1);
+    assert!(report.structural_mismatches[0]
+        .path
+        .contains(&corim::baseline::PathSegment::Field("number")));
+    for field in ["bool", "text", "bytes"] {
         assert!(report
             .value_differences
             .iter()
