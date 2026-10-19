@@ -124,6 +124,28 @@ fn duplicate_tag_ids_pair_exact_values_before_residual_changes() {
 }
 
 #[test]
+fn nested_unordered_content_reserves_the_correct_duplicate_identity() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    let mut second = measurements[0].clone();
+    measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]), Digest::new(8, vec![2])]);
+    second.mval.digests = Some(vec![Digest::new(9, vec![3]), Digest::new(10, vec![4])]);
+    measurements.push(second);
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    measurements.reverse();
+    for measurement in measurements {
+        measurement.mval.digests.as_mut().unwrap().reverse();
+    }
+    let mut reordered = baseline.clone();
+    reordered.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let report = compare(&reordered, &baseline);
+    assert!(report.is_conformant(), "{report:?}");
+    assert!(report.value_differences.is_empty(), "{report:?}");
+}
+
+#[test]
 fn repeated_identities_preserve_cardinality() {
     let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     for scope in ["tags", "triples", "measurements", "digests"] {
