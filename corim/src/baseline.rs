@@ -606,6 +606,22 @@ fn pair_indices<T: PartialEq>(
     input: &[T],
     same_key: impl Fn(usize, usize) -> bool,
 ) -> Vec<Option<usize>> {
+    let result: Result<_, core::convert::Infallible> =
+        pair_indices_by(baseline, input, same_key, |base, candidate| {
+            Ok(base == candidate)
+        });
+    match result {
+        Ok(pairs) => pairs,
+        Err(never) => match never {},
+    }
+}
+
+fn pair_indices_by<T, Error>(
+    baseline: &[T],
+    input: &[T],
+    same_key: impl Fn(usize, usize) -> bool,
+    exact_equal: impl Fn(&T, &T) -> Result<bool, Error>,
+) -> Result<Vec<Option<usize>>, Error> {
     let mut pairs = alloc::vec![None; baseline.len()];
     let mut used = alloc::vec![false; input.len()];
     for exact in [true, false] {
@@ -613,15 +629,27 @@ fn pair_indices<T: PartialEq>(
             if pairs[base_index].is_some() {
                 continue;
             }
-            if let Some(input_index) = input.iter().enumerate().position(|(index, entry)| {
-                !used[index] && same_key(base_index, index) && (!exact || entry == baseline_entry)
-            }) {
-                pairs[base_index] = Some(input_index);
-                used[input_index] = true;
+            for (index, entry) in input.iter().enumerate() {
+                if !used[index]
+                    && same_key(base_index, index)
+                    && (!exact || exact_equal(baseline_entry, entry)?)
+                {
+                    pairs[base_index] = Some(index);
+                    used[index] = true;
+                    break;
+                }
             }
         }
     }
-    pairs
+    Ok(pairs)
+}
+
+fn exact_comparison(
+    compare: impl FnOnce(&mut ConformanceReport) -> Result<(), crate::ValidationError>,
+) -> Result<bool, crate::ValidationError> {
+    let mut report = ConformanceReport::default();
+    compare(&mut report)?;
+    Ok(report.structural_mismatches.is_empty() && report.value_differences.is_empty())
 }
 
 fn compare_comids(
@@ -629,9 +657,19 @@ fn compare_comids(
     input: &[(String, ComidTag)],
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices(baseline, input, |base_index, input_index| {
-        baseline[base_index].1.tag_identity.tag_id == input[input_index].1.tag_identity.tag_id
-    });
+    let pairs = pair_indices_by(
+        baseline,
+        input,
+        |base_index, input_index| {
+            baseline[base_index].1.tag_identity.tag_id == input[input_index].1.tag_identity.tag_id
+        },
+        |base, candidate| {
+            exact_comparison(|report| {
+                compare_comid_metadata(&[], &base.1, &candidate.1, report)?;
+                compare_triples(&[], &base.1.triples, &candidate.1.triples, report)
+            })
+        },
+    )?;
     for (base_index, (id, b_comid)) in baseline.iter().enumerate() {
         match pairs[base_index].map(|index| &input[index]) {
             Some((_, i_comid)) => {
@@ -795,26 +833,23 @@ fn compare_ces(
     let b = baseline.unwrap_or(&[]);
     let i = input.unwrap_or(&[]);
     let kind = "conditional-endorsement-series";
-    let pairs = pair_indices(b, i, |base_index, input_index| {
-        b[base_index].common_condition().environment
-            == i[input_index].common_condition().environment
-    });
+    let pairs = pair_indices_by(
+        b,
+        i,
+        |base_index, input_index| {
+            b[base_index].common_condition().environment
+                == i[input_index].common_condition().environment
+        },
+        |base, candidate| {
+            exact_comparison(|report| compare_ces_entry(&[], base, candidate, report))
+        },
+    )?;
     for (index, bt) in b.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
         match pairs[index].map(|input_index| &i[input_index]) {
             Some(it) => {
-                meas_list(
-                    &path,
-                    "claims-list",
-                    &bt.common_condition().claims_list,
-                    &it.common_condition().claims_list,
-                    r,
-                )?;
-                if bt.common_condition().authorized_by != it.common_condition().authorized_by {
-                    push_authority_mismatch(&path, r);
-                }
-                compare_series(&path, bt.series(), it.series(), r)?;
+                compare_ces_entry(&path, bt, it, r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -840,6 +875,25 @@ fn compare_ces(
         }
     }
     Ok(())
+}
+
+fn compare_ces_entry(
+    path: &[PathSegment],
+    baseline: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+    input: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    meas_list(
+        path,
+        "claims-list",
+        &baseline.common_condition().claims_list,
+        &input.common_condition().claims_list,
+        report,
+    )?;
+    if baseline.common_condition().authorized_by != input.common_condition().authorized_by {
+        push_authority_mismatch(path, report);
+    }
+    compare_series(path, baseline.series(), input.series(), report)
 }
 
 /// Compare CES series records by position (order is significant — first
@@ -938,9 +992,14 @@ fn compare_env_meas(
     input: &EnvMeas<'_>,
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices(baseline, input, |base_index, input_index| {
-        baseline[base_index].0 == input[input_index].0
-    });
+    let pairs = pair_indices_by(
+        baseline,
+        input,
+        |base_index, input_index| baseline[base_index].0 == input[input_index].0,
+        |base, candidate| {
+            exact_comparison(|report| compare_measurements(&[], base.1, candidate.1, report))
+        },
+    )?;
     for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Field(field));
@@ -1059,9 +1118,14 @@ fn compare_measurement_triples(
 ) -> Result<(), crate::ValidationError> {
     let baseline = baseline.unwrap_or_default();
     let input = input.unwrap_or_default();
-    let pairs = pair_indices(&baseline, &input, |base_index, input_index| {
-        baseline[base_index].0 == input[input_index].0
-    });
+    let pairs = pair_indices_by(
+        &baseline,
+        &input,
+        |base_index, input_index| baseline[base_index].0 == input[input_index].0,
+        |base, candidate| {
+            exact_comparison(|report| compare_measurements(&[], base.1, candidate.1, report))
+        },
+    )?;
     for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
@@ -1098,10 +1162,17 @@ fn compare_measurements(
     input: &[MeasurementMap],
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices(baseline, input, |base_index, input_index| {
-        baseline[base_index].mkey == input[input_index].mkey
-            && (baseline[base_index].mkey.is_some() || base_index == input_index)
-    });
+    let pairs = pair_indices_by(
+        baseline,
+        input,
+        |base_index, input_index| {
+            baseline[base_index].mkey == input[input_index].mkey
+                && (baseline[base_index].mkey.is_some() || base_index == input_index)
+        },
+        |base, candidate| {
+            exact_comparison(|report| compare_measurement(&[], base, candidate, report))
+        },
+    )?;
     for (idx, b) in baseline.iter().enumerate() {
         let key = mkey_string(b, idx);
         let mut path = base_path.to_vec();
@@ -1110,12 +1181,7 @@ fn compare_measurements(
         let matched = pairs[idx].map(|input_index| &input[input_index]);
         match matched {
             Some(i) => {
-                // `authorized-by` (the measurement's authority keys) is part
-                // of the structural identity (§8.2.4.4.2), not a value.
-                if b.authorized_by != i.authorized_by {
-                    push_authority_mismatch(&path, r);
-                }
-                compare_mval(&path, &b.mval, &i.mval, r)?;
+                compare_measurement(&path, b, i, r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -1137,6 +1203,18 @@ fn compare_measurements(
         }
     }
     Ok(())
+}
+
+fn compare_measurement(
+    path: &[PathSegment],
+    baseline: &MeasurementMap,
+    input: &MeasurementMap,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    if baseline.authorized_by != input.authorized_by {
+        push_authority_mismatch(path, report);
+    }
+    compare_mval(path, &baseline.mval, &input.mval, report)
 }
 
 fn mkey_string(m: &MeasurementMap, index: usize) -> String {
@@ -1348,9 +1426,15 @@ fn shape_field(
                         if let (Value::Array(base), Value::Array(candidate)) =
                             (base_values.as_ref(), input_values.as_ref())
                         {
-                            let pairs = pair_indices(base, candidate, |base_index, input_index| {
-                                value_kind(&base[base_index]) == value_kind(&candidate[input_index])
-                            });
+                            let base_identities: Vec<_> = base
+                                .iter()
+                                .map(|value| (value_kind(value), ValueIdentity::from(value)))
+                                .collect();
+                            let input_identities: Vec<_> = candidate
+                                .iter()
+                                .map(|value| (value_kind(value), ValueIdentity::from(value)))
+                                .collect();
+                            let (pairs, used) = pair_indexed(&base_identities, &input_identities);
                             for (index, value) in base.iter().enumerate() {
                                 let mut element = nested.clone();
                                 element.push(PathSegment::Index(index));
@@ -1365,8 +1449,8 @@ fn shape_field(
                                     None => push_missing_field_at(&element, field, report),
                                 }
                             }
-                            for index in 0..candidate.len() {
-                                if !pairs.contains(&Some(index)) {
+                            for (index, matched) in used.iter().enumerate() {
+                                if !matched {
                                     let mut element = nested.clone();
                                     element.push(PathSegment::Index(index));
                                     push_unexpected_field_at(&element, field, report);
@@ -1667,42 +1751,81 @@ fn value_key(key: &Value) -> PathSegment {
     }
 }
 
-fn values_equal(baseline: &Value, input: &Value) -> bool {
-    match (baseline, input) {
-        (Value::Float(base), Value::Float(candidate)) => base.to_bits() == candidate.to_bits(),
-        (Value::Tag(base_tag, base), Value::Tag(input_tag, candidate)) => {
-            base_tag == input_tag && values_equal(base, candidate)
-        }
-        (Value::Array(base), Value::Array(candidate)) => {
-            base.len() == candidate.len()
-                && base
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ValueIdentity<'a> {
+    Integer(i128),
+    Float(u64),
+    Bytes(&'a [u8]),
+    Text(&'a str),
+    Bool(bool),
+    Null,
+    Array(Vec<Self>),
+    Map(Vec<(Self, Self)>),
+    Tag(u64, Box<Self>),
+}
+
+impl<'a> From<&'a Value> for ValueIdentity<'a> {
+    fn from(value: &'a Value) -> Self {
+        match value {
+            Value::Integer(number) => Self::Integer(*number),
+            Value::Float(number) => Self::Float(number.to_bits()),
+            Value::Bytes(bytes) => Self::Bytes(bytes),
+            Value::Text(text) => Self::Text(text),
+            Value::Bool(value) => Self::Bool(*value),
+            Value::Null => Self::Null,
+            Value::Array(values) => Self::Array(values.iter().map(Self::from).collect()),
+            Value::Map(entries) => {
+                let mut entries: Vec<_> = entries
                     .iter()
-                    .zip(candidate)
-                    .all(|(base, candidate)| values_equal(base, candidate))
-        }
-        (Value::Map(base), Value::Map(candidate)) => {
-            if base.len() != candidate.len() {
-                return false;
+                    .map(|(key, value)| (Self::from(key), Self::from(value)))
+                    .collect();
+                entries.sort_unstable();
+                Self::Map(entries)
             }
-            let mut used = alloc::vec![false; candidate.len()];
-            for (base_key, base_value) in base {
-                let Some(index) = candidate
-                    .iter()
-                    .enumerate()
-                    .position(|(index, (key, value))| {
-                        !used[index]
-                            && values_equal(base_key, key)
-                            && values_equal(base_value, value)
-                    })
-                else {
-                    return false;
-                };
-                used[index] = true;
-            }
-            true
+            Value::Tag(tag, inner) => Self::Tag(*tag, Box::new(Self::from(inner.as_ref()))),
         }
-        _ => baseline == input,
     }
+}
+
+fn values_equal(baseline: &Value, input: &Value) -> bool {
+    ValueIdentity::from(baseline) == ValueIdentity::from(input)
+}
+
+fn pair_indexed<Key: Ord, Exact: Ord>(
+    baseline: &[(Key, Exact)],
+    input: &[(Key, Exact)],
+) -> (Vec<Option<usize>>, Vec<bool>) {
+    let mut by_key: BTreeMap<_, alloc::collections::VecDeque<usize>> = BTreeMap::new();
+    let mut by_entry: BTreeMap<_, alloc::collections::VecDeque<usize>> = BTreeMap::new();
+    for (index, (key, value)) in input.iter().enumerate() {
+        by_key.entry(key).or_default().push_back(index);
+        by_entry.entry((key, value)).or_default().push_back(index);
+    }
+    let mut pairs = alloc::vec![None; baseline.len()];
+    let mut used = alloc::vec![false; input.len()];
+    for (index, (key, value)) in baseline.iter().enumerate() {
+        if let Some(candidates) = by_entry.get_mut(&(key, value)) {
+            if let Some(candidate) = candidates.pop_front() {
+                pairs[index] = Some(candidate);
+                used[candidate] = true;
+            }
+        }
+    }
+    for (index, (key, _)) in baseline.iter().enumerate() {
+        if pairs[index].is_some() {
+            continue;
+        }
+        if let Some(candidates) = by_key.get_mut(key) {
+            while let Some(candidate) = candidates.pop_front() {
+                if !used[candidate] {
+                    pairs[index] = Some(candidate);
+                    used[candidate] = true;
+                    break;
+                }
+            }
+        }
+    }
+    (pairs, used)
 }
 
 fn value_kind(value: &Value) -> String {
@@ -1728,9 +1851,15 @@ fn compare_value_shape(
 ) {
     match (baseline, input) {
         (Value::Map(base), Value::Map(candidate)) => {
-            let pairs = pair_indices(base, candidate, |base_index, input_index| {
-                values_equal(&base[base_index].0, &candidate[input_index].0)
-            });
+            let base_identities: Vec<_> = base
+                .iter()
+                .map(|(key, value)| (ValueIdentity::from(key), ValueIdentity::from(value)))
+                .collect();
+            let input_identities: Vec<_> = candidate
+                .iter()
+                .map(|(key, value)| (ValueIdentity::from(key), ValueIdentity::from(value)))
+                .collect();
+            let (pairs, used) = pair_indexed(&base_identities, &input_identities);
             for (index, (key, value)) in base.iter().enumerate() {
                 let mut nested = path.to_vec();
                 nested.push(value_key(key));
@@ -1746,7 +1875,7 @@ fn compare_value_shape(
                 }
             }
             for (index, (key, _)) in candidate.iter().enumerate() {
-                if !pairs.contains(&Some(index)) {
+                if !used[index] {
                     let mut nested = path.to_vec();
                     nested.push(value_key(key));
                     push_unexpected_field_at(&nested, field, report);

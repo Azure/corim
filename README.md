@@ -362,7 +362,9 @@ separate responsibilities. The CLI performs those document checks before
 comparison, excluding cryptographic verification.
 
 CoMIDs, environments, keyed measurements, digests and key representations pair
-one-to-one by typed identity. Exact matches are reserved first; remaining
+one-to-one by typed identity. Matches with no differences under the same
+comparison rules are reserved first, including nested unordered collections
+and float-bit identity; remaining
 same-identity entries pair in encounter order. Reordering keyed entries does
 not reuse or discard duplicates. Unkeyed measurements and ordered series remain
 positional. UUID IDs are identities, not array positions.
@@ -373,6 +375,8 @@ are structural. Their leaf contents are values. Matcher sets are unordered.
 Unknown measurement, header and CWT extensions use recursive CBOR shape:
 map keys, value types, semantic tags and container structure are structural;
 leaf contents are values. Map order is ignored; array order is significant.
+Extension maps and matcher sets use indexed reservation rather than repeated
+candidate scans; recursive key identity and duplicate multiplicity are retained.
 No profile-specific meaning is inferred for unknown extension values.
 Non-finite numeric differences use the existing `float-bits` JSON representation.
 

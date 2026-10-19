@@ -66,6 +66,55 @@ fn large_extension_map_comparison_preserves_all_entries() {
 }
 
 #[test]
+fn indexed_extension_keys_preserve_recursive_identity_and_multiplicity() {
+    let key = Value::Map(vec![
+        (Value::Text("a".into()), Value::Integer(1)),
+        (Value::Text("b".into()), Value::Integer(2)),
+    ]);
+    let Value::Map(mut reordered_key) = key.clone() else {
+        panic!("map key");
+    };
+    reordered_key.reverse();
+    let reordered_key = Value::Map(reordered_key);
+    let baseline_entries = vec![
+        (key.clone(), Value::Float(0.0)),
+        (key.clone(), Value::Float(-0.0)),
+    ];
+    let baseline = header().extra(10001, Value::Map(baseline_entries)).build();
+    let input = header()
+        .extra(
+            10001,
+            Value::Map(vec![
+                (reordered_key.clone(), Value::Float(-0.0)),
+                (reordered_key.clone(), Value::Float(0.0)),
+            ]),
+        )
+        .build();
+    let report = compare_headers(&input, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    let missing = header()
+        .extra(
+            10001,
+            Value::Map(vec![(reordered_key.clone(), Value::Float(0.0))]),
+        )
+        .build();
+    assert!(!compare_headers(&missing, &baseline).is_conformant());
+    let changed = header()
+        .extra(
+            10001,
+            Value::Map(vec![
+                (key, Value::Float(1.0)),
+                (reordered_key, Value::Float(0.0)),
+            ]),
+        )
+        .build();
+    let report = compare_headers(&changed, &baseline);
+    assert!(report.is_conformant());
+    assert_eq!(report.value_differences.len(), 1);
+}
+
+#[test]
 fn identical_headers_conform() {
     let b = header().cwt_claims(CwtClaims::new("iss-1")).build();
     let i = header().cwt_claims(CwtClaims::new("iss-1")).build();
