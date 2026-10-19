@@ -99,6 +99,10 @@ versions.
   Non-finite numeric report values preserve their IEEE bits in JSON. The CLI
   uses the fallible APIs. Supported TCG CoMIDs remain accepted; clock, profile
   and trust checks remain separate from comparison.
+  Exact reservation follows the comparison rules for nested unordered fields
+  and float bits, avoiding false differences for reordered duplicate identities,
+  NaN payloads and signed zero. Extension maps and matcher sets use indexed
+  key/value matching to avoid quadratic candidate scans.
 - **Strict signed-document validation alongside tolerant inspection.**
   `decode_and_validate_signed_corim_at` and its limits-aware variant check
   COSE slot types, the exact payload media type, CWT and metadata time windows,
