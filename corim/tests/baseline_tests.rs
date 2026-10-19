@@ -115,6 +115,30 @@ fn check_large_typed_list(scope: &str) {
 }
 
 #[test]
+fn nested_map_keys_in_measurement_extensions_compare_without_reencoding_explosion() {
+    use corim::cbor::constants;
+    let mut document = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = document.tags[0].as_comid().unwrap();
+    comid.triples.reference_triples.as_mut().unwrap()[0].1[0].mval = MeasurementValuesMap {
+        extra_entries: [(10001, Value::Null)].into(),
+        ..Default::default()
+    };
+    let mut bytes = cbor::encode(&comid).unwrap();
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.extend(vec![(constants::MAJOR_MAP << 5) | 1; 40]);
+    bytes.extend(vec![constants::BYTE_NULL; 41]);
+    document.tags[0] = ConciseTagChoice::Comid(bytes.clone());
+    let report = compare(&document, &document);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.push(constants::BYTE_TRUE);
+    let mut changed = document.clone();
+    changed.tags[0] = ConciseTagChoice::Comid(bytes);
+    assert!(!compare(&changed, &document).is_conformant());
+}
+
+#[test]
 fn large_changed_keyed_measurements_complete() {
     check_large_typed_list("changed-keyed");
 }

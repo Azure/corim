@@ -37,6 +37,24 @@ fn has_field(paths: &[Vec<PathSegment>], field: &'static str) -> bool {
 }
 
 #[test]
+fn nested_map_keys_in_header_extensions_compare_without_reencoding_explosion() {
+    use corim::cbor::{self, constants};
+    let mut bytes = vec![(constants::MAJOR_MAP << 5) | 1; 40];
+    bytes.extend(vec![constants::BYTE_NULL; 41]);
+    let extension: Value = cbor::decode_exact(&bytes).unwrap();
+    let baseline = header().extra(10001, extension).build();
+    let report = compare_headers(&baseline, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.push(constants::BYTE_TRUE);
+    let changed = header()
+        .extra(10001, cbor::decode_exact(&bytes).unwrap())
+        .build();
+    assert!(!compare_headers(&changed, &baseline).is_conformant());
+}
+
+#[test]
 fn header_extensions_compare_shape_and_reject_invalid_cbor() {
     let baseline = header()
         .extra(10001, Value::Array(vec![Value::Integer(1)]))
