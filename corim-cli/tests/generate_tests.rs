@@ -30,6 +30,137 @@ fn unique_temp(stem: &str, ext: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("corim_cli_{stem}_{}_{n}.{ext}", std::process::id()))
 }
 
+/// The VR72 sample includes only RIM and personalization references and
+/// encodes an exact SVN endorsement only inside a RIM-conditioned triple.
+#[cfg(feature = "cca")]
+#[test]
+fn generate_vr72_realm_template_preserves_references_and_conditional_svn() {
+    use corim::profile::cca::{CcaRealmProfile, CCA_REALM_PROFILE_URI};
+    use corim::profile::ProfileRegistry;
+    use corim::types::measurement::{RawValueChoice, SvnChoice};
+    use corim::types::triples::{
+        ConditionalEndorsementTriple, EndorsedTriple, StatefulEnvironmentRecord,
+    };
+
+    let template = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("templates")
+        .join("cca_realm_vr72.json");
+    let out = unique_temp("vr72_realm", "cbor");
+    let converted = unique_temp("vr72_realm_roundtrip", "json");
+    let regenerated = unique_temp("vr72_realm_roundtrip", "cbor");
+    let output = Command::new(bin())
+        .arg("generate")
+        .arg(&template)
+        .arg("-o")
+        .arg(&out)
+        .output()
+        .expect("run generate for VR72 Realm");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let bytes = std::fs::read(&out).unwrap();
+    let mut registry = ProfileRegistry::new();
+    registry.register(Box::new(CcaRealmProfile::new()));
+    let (manifest, comids) =
+        corim::validate::decode_and_validate_at_with_registry(&bytes, 0, &registry)
+            .expect("sample must pass core and registered Realm profile validation");
+    assert_eq!(
+        manifest.profile,
+        Some(ProfileChoice::Uri(CCA_REALM_PROFILE_URI.into()))
+    );
+    assert_eq!(comids.len(), 1);
+    let rim =
+        hex::decode("723218af5344b4f87311ef2809703cfaf5d0dd7736bd4ec8e191abd43441f069").unwrap();
+    let env = EnvironmentMap {
+        class: Some(ClassMap {
+            class_id: Some(ClassIdChoice::Bytes(rim.clone())),
+            vendor: Some("NVIDIA".into()),
+            model: Some("VR72".into()),
+            ..ClassMap::default()
+        }),
+        instance: None,
+        group: None,
+    };
+    let rim_measurement = MeasurementMap {
+        mkey: Some(MeasuredElement::Text("cca.rim".into())),
+        mval: MeasurementValuesMap {
+            digests: Some(vec![Digest::new_text("sha-256", rim)]),
+            ..MeasurementValuesMap::default()
+        },
+        authorized_by: None,
+    };
+    let expected = vec![
+        rim_measurement.clone(),
+        MeasurementMap {
+            mkey: Some(MeasuredElement::Text("cca.rpv".into())),
+            mval: MeasurementValuesMap {
+                raw_value: Some(RawValueChoice::Bytes(vec![0; 64])),
+                ..MeasurementValuesMap::default()
+            },
+            authorized_by: None,
+        },
+    ];
+    let triples = &comids[0].triples;
+    assert_eq!(
+        triples.reference_triples,
+        Some(vec![ReferenceTriple::new(env.clone(), expected)])
+    );
+    assert_eq!(
+        triples.conditional_endorsement,
+        Some(vec![ConditionalEndorsementTriple(
+            vec![StatefulEnvironmentRecord(
+                env.clone(),
+                vec![rim_measurement]
+            )],
+            vec![EndorsedTriple::new(
+                env,
+                vec![MeasurementMap {
+                    mkey: None,
+                    mval: MeasurementValuesMap {
+                        svn: Some(SvnChoice::ExactValue(0)),
+                        ..MeasurementValuesMap::default()
+                    },
+                    authorized_by: None,
+                }]
+            )],
+        )])
+    );
+    assert!(triples.endorsed_triples.is_none());
+    assert!(triples.conditional_endorsement_series.is_none());
+
+    for args in [
+        vec!["validate".as_ref(), out.as_os_str()],
+        vec!["validate".as_ref(), "--diagnose".as_ref(), out.as_os_str()],
+        vec![
+            "convert".as_ref(),
+            out.as_os_str(),
+            "-o".as_ref(),
+            converted.as_os_str(),
+        ],
+        vec![
+            "generate".as_ref(),
+            converted.as_os_str(),
+            "-o".as_ref(),
+            regenerated.as_os_str(),
+        ],
+    ] {
+        let output = Command::new(bin()).args(&args).output().unwrap();
+        assert!(
+            output.status.success(),
+            "{args:?}: {}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert_eq!(bytes, std::fs::read(&regenerated).unwrap());
+    for path in [&out, &converted, &regenerated] {
+        std::fs::remove_file(path).unwrap();
+    }
+}
+
 /// The sample Azure NDPA template (authored with **prose** keys) generates
 /// a valid CoRIM, and the `tcbstatus` alias resolves to the profile's
 /// integer key -700 (CBOR negative int `0x39 0x02 0xbb`).

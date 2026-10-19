@@ -1,0 +1,105 @@
+{
+  "$comment": [
+    "Sample VR72 Realm references.",
+    "MEC policy is deliberately deferred: the token reports claim 44243 = 0 (shared), but the endorsement profile defines no mapping for it.",
+    "Conditional endorsement: when RIM = X (the sample RIM), endorse exact SVN = 0 for that Realm."
+  ],
+  "corim-id": "example.com/cca/vr72/realm",
+  "profile": "tag:arm.com,2025:endorsements/cca_realm#1.0.0",
+  "comids": [
+    {
+      "tag-identity": {
+        "id": "example.com/cca/vr72/realm/reference-values",
+        "version": 1
+      },
+      "triples": {
+        "reference-triples": [
+          {
+            "ref-env": {
+              "$comment": "The Realm Initial Measurement (RIM) from token claim 44238 is used as the class id, per draft-ydb-rats-cca-endorsements-04 section 3.2.2.",
+              "class": {
+                "id": {
+                  "type": "bytes",
+                  "value": "cjIYr1NEtPhzEe8oCXA8+vXQ3Xc2vU7I4ZGr1DRB8Gk="
+                },
+                "vendor": "NVIDIA",
+                "model": "VR72"
+              }
+            },
+            "ref-claims": [
+              {
+                "key": "cca.rim",
+                "value": {
+                  "digests": [
+                    ["sha-256", "cjIYr1NEtPhzEe8oCXA8+vXQ3Xc2vU7I4ZGr1DRB8Gk="]
+                  ]
+                }
+              },
+              {
+                "key": "cca.rpv",
+                "value": {
+                  "raw-value": {
+                    "type": "bytes",
+                    "value": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+                  }
+                }
+              }
+            ]
+          }
+        ],
+        "conditional-endorsement-triples": [
+          {
+            "conditions": [
+              {
+                "environment": {
+                  "class": {
+                    "id": {
+                      "type": "bytes",
+                      "value": "cjIYr1NEtPhzEe8oCXA8+vXQ3Xc2vU7I4ZGr1DRB8Gk="
+                    },
+                    "vendor": "NVIDIA",
+                    "model": "VR72"
+                  }
+                },
+                "claims-list": [
+                  {
+                    "key": "cca.rim",
+                    "value": {
+                      "digests": [
+                        ["sha-256", "cjIYr1NEtPhzEe8oCXA8+vXQ3Xc2vU7I4ZGr1DRB8Gk="]
+                      ]
+                    }
+                  }
+                ]
+              }
+            ],
+            "endorsements": [
+              {
+                "condition": {
+                  "class": {
+                    "id": {
+                      "type": "bytes",
+                      "value": "cjIYr1NEtPhzEe8oCXA8+vXQ3Xc2vU7I4ZGr1DRB8Gk="
+                    },
+                    "vendor": "NVIDIA",
+                    "model": "VR72"
+                  }
+                },
+                "endorsement": [
+                  {
+                    "value": {
+                      "svn": {
+                        "type": "svn",
+                        "value": 0
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}
