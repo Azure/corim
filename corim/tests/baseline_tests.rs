@@ -77,6 +77,47 @@ fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
 }
 
 #[test]
+fn large_typed_lists_complete_without_pairwise_comparison() {
+    for scope in ["changed-keyed", "unkeyed", "digests"] {
+        let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
+        let mut comid = baseline.tags[0].as_comid().unwrap();
+        let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+        if scope == "digests" {
+            measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]); 100_000]);
+        } else {
+            let measurement = MeasurementMap {
+                mkey: if scope == "unkeyed" {
+                    None
+                } else {
+                    Some(MeasuredElement::Text("same".into()))
+                },
+                mval: MeasurementValuesMap {
+                    r#bool: Some(false),
+                    ..Default::default()
+                },
+                authorized_by: None,
+            };
+            *measurements = vec![measurement; if scope == "unkeyed" { 100_000 } else { 10_000 }];
+        }
+        baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        if scope == "changed-keyed" {
+            for measurement in &mut comid.triples.reference_triples.as_mut().unwrap()[0].1 {
+                measurement.mval.r#bool = Some(true);
+            }
+        }
+        let mut input = baseline.clone();
+        input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        let report = try_compare(&input, &baseline).unwrap();
+        assert!(report.is_conformant(), "{scope}");
+        assert_eq!(
+            report.value_differences.len(),
+            if scope == "changed-keyed" { 10_000 } else { 0 },
+            "{scope}"
+        );
+    }
+}
+
+#[test]
 fn uuid_tag_identity_is_not_a_position_or_display_string() {
     let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
     let mut first = baseline.tags[0].as_comid().unwrap();
