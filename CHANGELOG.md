@@ -101,8 +101,10 @@ versions.
   and trust checks remain separate from comparison.
   Exact reservation follows the comparison rules for nested unordered fields
   and float bits, avoiding false differences for reordered duplicate identities,
-  NaN payloads and signed zero. Extension maps and matcher sets use indexed
-  key/value matching to avoid quadratic candidate scans.
+  NaN payloads and signed zero. All keyed typed collections, extension maps and
+  matcher sets use indexed key/value matching; unkeyed measurements pair directly
+  by position. Exact keys are prepared before matching, avoiding repeated full
+  comparisons and temporary reports during reservation.
 - **Strict signed-document validation alongside tolerant inspection.**
   `decode_and_validate_signed_corim_at` and its limits-aware variant check
   COSE slot types, the exact payload media type, CWT and metadata time windows,

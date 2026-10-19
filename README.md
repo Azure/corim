@@ -375,8 +375,11 @@ are structural. Their leaf contents are values. Matcher sets are unordered.
 Unknown measurement, header and CWT extensions use recursive CBOR shape:
 map keys, value types, semantic tags and container structure are structural;
 leaf contents are values. Map order is ignored; array order is significant.
-Extension maps and matcher sets use indexed reservation rather than repeated
-candidate scans; recursive key identity and duplicate multiplicity are retained.
+Keyed typed collections, extension maps and matcher sets use indexed queues
+rather than repeated candidate scans. Comparison-consistent exact keys are
+prepared before matching; reservation does not run full comparisons or build
+temporary reports. Unkeyed measurements pair directly at their original indices.
+Recursive key identity, duplicate multiplicity and ordered series are retained.
 No profile-specific meaning is inferred for unknown extension values.
 Non-finite numeric differences use the existing `float-bits` JSON representation.
 
