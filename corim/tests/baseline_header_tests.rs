@@ -52,6 +52,20 @@ fn header_extensions_compare_shape_and_reject_invalid_cbor() {
 }
 
 #[test]
+fn large_extension_map_comparison_preserves_all_entries() {
+    let entries: Vec<_> = (0..100_000)
+        .map(|index| (Value::Integer(index), Value::Integer(index)))
+        .collect();
+    let mut reversed = entries.clone();
+    reversed.reverse();
+    let baseline = header().extra(10001, Value::Map(entries)).build();
+    let input = header().extra(10001, Value::Map(reversed)).build();
+    let report = compare_headers(&input, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+}
+
+#[test]
 fn identical_headers_conform() {
     let b = header().cwt_claims(CwtClaims::new("iss-1")).build();
     let i = header().cwt_claims(CwtClaims::new("iss-1")).build();

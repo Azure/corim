@@ -494,6 +494,31 @@ fn baseline_reports_matcher_presence_and_value_differences() {
 }
 
 #[test]
+fn baseline_numeric_set_reservation_uses_float_bits() {
+    for values in [
+        vec![
+            Number::Float(f64::from_bits(0x7ff8_0000_0000_0001)),
+            Number::Float(f64::from_bits(0x7ff8_0000_0000_0002)),
+        ],
+        vec![Number::Float(0.0), Number::Float(-0.0)],
+    ] {
+        let mut reversed = values.clone();
+        reversed.reverse();
+        let baseline = corim_with_matchers(MeasurementValuesMap {
+            number: Some(NumberMatcher::Set(values)),
+            ..Default::default()
+        });
+        let input = corim_with_matchers(MeasurementValuesMap {
+            number: Some(NumberMatcher::Set(reversed)),
+            ..Default::default()
+        });
+        let report = corim::baseline::compare(&input, &baseline).unwrap();
+        assert!(report.is_conformant());
+        assert!(report.value_differences.is_empty(), "{report:?}");
+    }
+}
+
+#[test]
 fn baseline_matcher_sets_are_unordered_and_shape_sensitive() {
     let baseline = corim_with_matchers(MeasurementValuesMap {
         text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
