@@ -76,45 +76,223 @@ fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
     validated.corim
 }
 
-#[test]
-fn large_typed_lists_complete_without_pairwise_comparison() {
-    for scope in ["changed-keyed", "unkeyed", "digests"] {
-        let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
-        let mut comid = baseline.tags[0].as_comid().unwrap();
-        let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
-        if scope == "digests" {
-            measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]); 100_000]);
-        } else {
-            let measurement = MeasurementMap {
-                mkey: if scope == "unkeyed" {
-                    None
-                } else {
-                    Some(MeasuredElement::Text("same".into()))
-                },
-                mval: MeasurementValuesMap {
-                    r#bool: Some(false),
-                    ..Default::default()
-                },
-                authorized_by: None,
-            };
-            *measurements = vec![measurement; if scope == "unkeyed" { 100_000 } else { 10_000 }];
-        }
-        baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
-        if scope == "changed-keyed" {
-            for measurement in &mut comid.triples.reference_triples.as_mut().unwrap()[0].1 {
-                measurement.mval.r#bool = Some(true);
-            }
-        }
-        let mut input = baseline.clone();
-        input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
-        let report = try_compare(&input, &baseline).unwrap();
-        assert!(report.is_conformant(), "{scope}");
-        assert_eq!(
-            report.value_differences.len(),
-            if scope == "changed-keyed" { 10_000 } else { 0 },
-            "{scope}"
-        );
+fn check_large_typed_list(scope: &str) {
+    let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    if scope == "digests" {
+        measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]); 100_000]);
+    } else {
+        let measurement = MeasurementMap {
+            mkey: if scope == "unkeyed" {
+                None
+            } else {
+                Some(MeasuredElement::Text("same".into()))
+            },
+            mval: MeasurementValuesMap {
+                r#bool: Some(false),
+                ..Default::default()
+            },
+            authorized_by: None,
+        };
+        *measurements = vec![measurement; if scope == "unkeyed" { 100_000 } else { 10_000 }];
     }
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    if scope == "changed-keyed" {
+        for measurement in &mut comid.triples.reference_triples.as_mut().unwrap()[0].1 {
+            measurement.mval.r#bool = Some(true);
+        }
+    }
+    let mut input = baseline.clone();
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let report = try_compare(&input, &baseline).unwrap();
+    assert!(report.is_conformant(), "{scope}");
+    assert_eq!(
+        report.value_differences.len(),
+        if scope == "changed-keyed" { 10_000 } else { 0 },
+        "{scope}"
+    );
+}
+
+#[test]
+fn large_changed_keyed_measurements_complete() {
+    check_large_typed_list("changed-keyed");
+}
+
+#[test]
+fn large_unkeyed_measurements_complete() {
+    check_large_typed_list("unkeyed");
+}
+
+#[test]
+fn large_repeated_digests_complete() {
+    check_large_typed_list("digests");
+}
+
+#[test]
+fn indexed_parent_keys_preserve_nested_unordered_semantics() {
+    use corim::types::common::CryptoKey;
+    use corim::types::matcher::TextMatcher;
+    use corim::types::measurement::{IntegrityRegisterId, IntegrityRegisters};
+    use corim::types::triples::{
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
+        ConditionalSeriesRecord, EndorsedTriple, StatefulEnvironmentRecord,
+    };
+    let template = corim_with(vec![1], SvnChoice::MinValue(1), "same");
+    let original = template.tags[0].as_comid().unwrap();
+    let group = |marker, reverse| {
+        let mut triple = original.triples.reference_triples.as_ref().unwrap()[0].clone();
+        let mut digests = vec![Digest::new(7, vec![marker]), Digest::new(8, vec![marker])];
+        let mut keys = vec![
+            CryptoKey::Bytes(vec![marker]),
+            CryptoKey::KeyThumbprint(Digest::new(7, vec![marker])),
+        ];
+        let mut set = vec![format!("a{marker}"), format!("b{marker}")];
+        if reverse {
+            digests.reverse();
+            keys.reverse();
+            set.reverse();
+        }
+        let values = &mut triple.1[0].mval;
+        values.digests = Some(digests.clone());
+        values.cryptokeys = Some(keys);
+        values.integrity_registers = Some(IntegrityRegisters(
+            [(IntegrityRegisterId::Uint(0), digests)].into(),
+        ));
+        values.text = Some(TextMatcher::Set(set));
+        triple
+    };
+    for scope in [
+        "comids",
+        "reference",
+        "endorsed",
+        "series",
+        "series-order",
+        "conditional",
+    ] {
+        let make = |reverse| {
+            let mut groups = vec![group(1, reverse), group(2, reverse)];
+            if reverse {
+                groups.reverse();
+            }
+            let mut document = template.clone();
+            let mut comid = original.clone();
+            comid.triples.reference_triples = None;
+            match scope {
+                "comids" => {
+                    document.tags = groups
+                        .into_iter()
+                        .map(|group| {
+                            let mut comid = comid.clone();
+                            comid.triples.reference_triples = Some(vec![group]);
+                            ConciseTagChoice::Comid(cbor::encode(&comid).unwrap())
+                        })
+                        .collect();
+                    return document;
+                }
+                "reference" => comid.triples.reference_triples = Some(groups),
+                "endorsed" => {
+                    comid.triples.endorsed_triples = Some(
+                        groups
+                            .into_iter()
+                            .map(|group| EndorsedTriple(group.0, group.1))
+                            .collect(),
+                    )
+                }
+                "series" => {
+                    comid.triples.conditional_endorsement_series = Some(
+                        groups
+                            .into_iter()
+                            .map(|group| {
+                                ConditionalEndorsementSeriesTriple::new(
+                                    CesCommonCondition {
+                                        environment: group.0,
+                                        claims_list: group.1.clone(),
+                                        authorized_by: None,
+                                    },
+                                    vec![ConditionalSeriesRecord::new(group.1.clone(), group.1)],
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+                "series-order" => {
+                    comid.triples.conditional_endorsement_series = Some(
+                        groups
+                            .iter()
+                            .enumerate()
+                            .map(|(index, group)| {
+                                ConditionalEndorsementSeriesTriple::new(
+                                    CesCommonCondition {
+                                        environment: group.0.clone(),
+                                        claims_list: vec![],
+                                        authorized_by: None,
+                                    },
+                                    groups
+                                        .iter()
+                                        .cycle()
+                                        .skip(index)
+                                        .take(groups.len())
+                                        .map(|record| {
+                                            ConditionalSeriesRecord::new(
+                                                record.1.clone(),
+                                                record.1.clone(),
+                                            )
+                                        })
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+                "conditional" => {
+                    comid.triples.conditional_endorsement =
+                        Some(vec![ConditionalEndorsementTriple(
+                            groups
+                                .iter()
+                                .map(|group| {
+                                    StatefulEnvironmentRecord(group.0.clone(), group.1.clone())
+                                })
+                                .collect(),
+                            groups
+                                .into_iter()
+                                .map(|group| EndorsedTriple(group.0, group.1))
+                                .collect(),
+                        )])
+                }
+                _ => panic!("scope"),
+            }
+            document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+            document
+        };
+        let report = compare(&make(true), &make(false));
+        assert!(report.is_conformant(), "{scope}: {report:?}");
+        assert!(report.value_differences.is_empty(), "{scope}: {report:?}");
+    }
+}
+
+#[test]
+fn indexed_keyed_measurements_do_not_move_unkeyed_positions() {
+    let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "first");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    let mut unkeyed = measurements[0].clone();
+    unkeyed.mkey = None;
+    let mut last = measurements[0].clone();
+    last.mkey = Some(MeasuredElement::Text("last".into()));
+    measurements.extend([unkeyed, last]);
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    comid.triples.reference_triples.as_mut().unwrap()[0]
+        .1
+        .swap(0, 2);
+    let mut input = baseline.clone();
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    assert_eq!(compare(&input, &baseline), compare(&baseline, &baseline));
+    comid.triples.reference_triples.as_mut().unwrap()[0]
+        .1
+        .swap(0, 1);
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    assert!(!compare(&input, &baseline).is_conformant());
 }
 
 #[test]

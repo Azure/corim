@@ -601,55 +601,177 @@ fn tag_id_string(comid: &ComidTag, _index: usize) -> String {
     }
 }
 
-fn pair_indices<T: PartialEq>(
-    baseline: &[T],
-    input: &[T],
-    same_key: impl Fn(usize, usize) -> bool,
-) -> Vec<Option<usize>> {
-    let result: Result<_, core::convert::Infallible> =
-        pair_indices_by(baseline, input, same_key, |base, candidate| {
-            Ok(base == candidate)
-        });
-    match result {
-        Ok(pairs) => pairs,
-        Err(never) => match never {},
+type ExactKey = ValueIdentity<'static>;
+
+fn typed_key<T: serde::Serialize + ?Sized>(value: &T) -> Result<ExactKey, crate::ValidationError> {
+    Ok(checked_value(&value)?.into())
+}
+
+fn key_field(value: &mut ExactKey, label: i64) -> Option<&mut ExactKey> {
+    let ValueIdentity::Map(fields) = value else {
+        return None;
+    };
+    fields
+        .iter_mut()
+        .find_map(|(key, value)| (*key == ValueIdentity::Integer(label.into())).then_some(value))
+}
+
+fn sort_key_array(value: &mut ExactKey) {
+    if let ValueIdentity::Array(values) = value {
+        values.sort_unstable();
     }
 }
 
-fn pair_indices_by<T, Error>(
-    baseline: &[T],
-    input: &[T],
-    same_key: impl Fn(usize, usize) -> bool,
-    exact_equal: impl Fn(&T, &T) -> Result<bool, Error>,
-) -> Result<Vec<Option<usize>>, Error> {
-    let mut pairs = alloc::vec![None; baseline.len()];
-    let mut used = alloc::vec![false; input.len()];
-    for exact in [true, false] {
-        for (base_index, baseline_entry) in baseline.iter().enumerate() {
-            if pairs[base_index].is_some() {
-                continue;
+fn measurement_exact_key(measurement: &MeasurementMap) -> Result<ExactKey, crate::ValidationError> {
+    use crate::types::tags::*;
+    let mut key = typed_key(measurement)?;
+    if let Some(mval) = key_field(&mut key, MEAS_KEY_MVAL) {
+        for label in [MVAL_KEY_DIGESTS, MVAL_KEY_CRYPTOKEYS] {
+            if let Some(value) = key_field(mval, label) {
+                sort_key_array(value);
             }
-            for (index, entry) in input.iter().enumerate() {
-                if !used[index]
-                    && same_key(base_index, index)
-                    && (!exact || exact_equal(baseline_entry, entry)?)
-                {
-                    pairs[base_index] = Some(index);
-                    used[index] = true;
-                    break;
-                }
+        }
+        if let Some(ValueIdentity::Map(registers)) = key_field(mval, MVAL_KEY_INTEGRITY_REGISTERS) {
+            for (_, digests) in registers {
+                sort_key_array(digests);
+            }
+        }
+        for label in [MVAL_KEY_NUMBER, MVAL_KEY_TEXT, MVAL_KEY_BYTES] {
+            if let Some(ValueIdentity::Tag(TAG_MATCHER_SET, values)) = key_field(mval, label) {
+                sort_key_array(values);
             }
         }
     }
-    Ok(pairs)
+    Ok(key)
 }
 
-fn exact_comparison(
-    compare: impl FnOnce(&mut ConformanceReport) -> Result<(), crate::ValidationError>,
-) -> Result<bool, crate::ValidationError> {
-    let mut report = ConformanceReport::default();
-    compare(&mut report)?;
-    Ok(report.structural_mismatches.is_empty() && report.value_differences.is_empty())
+fn measurement_list_key(
+    measurements: &[MeasurementMap],
+) -> Result<ExactKey, crate::ValidationError> {
+    let mut keyed = Vec::new();
+    let mut positional = Vec::new();
+    for (index, measurement) in measurements.iter().enumerate() {
+        let key = measurement_exact_key(measurement)?;
+        if measurement.mkey.is_some() {
+            keyed.push(key);
+        } else {
+            positional.push(ValueIdentity::Array(alloc::vec![typed_key(&index)?, key]));
+        }
+    }
+    keyed.sort_unstable();
+    Ok(ValueIdentity::Array(alloc::vec![
+        ValueIdentity::Array(keyed),
+        ValueIdentity::Array(positional)
+    ]))
+}
+
+fn prepared_pairs<T>(
+    baseline: &[T],
+    input: &[T],
+    prepare: impl Fn(&T) -> Result<(ExactKey, ExactKey), crate::ValidationError>,
+) -> Result<(Vec<Option<usize>>, Vec<bool>), crate::ValidationError> {
+    let base_keys = baseline
+        .iter()
+        .map(&prepare)
+        .collect::<Result<Vec<_>, _>>()?;
+    let input_keys = input.iter().map(prepare).collect::<Result<Vec<_>, _>>()?;
+    Ok(pair_indexed(&base_keys, &input_keys))
+}
+
+fn environment_pair_key(
+    group: &(
+        &crate::types::environment::EnvironmentMap,
+        &[MeasurementMap],
+    ),
+) -> Result<(ExactKey, ExactKey), crate::ValidationError> {
+    let identity = typed_key(group.0)?;
+    let exact = ValueIdentity::Array(alloc::vec![
+        identity.clone(),
+        measurement_list_key(group.1)?
+    ]);
+    Ok((identity, exact))
+}
+
+fn environment_list_key(groups: EnvMeas<'_>) -> Result<ExactKey, crate::ValidationError> {
+    let mut keys = groups
+        .iter()
+        .map(|group| environment_pair_key(group).map(|(_, exact)| exact))
+        .collect::<Result<Vec<_>, _>>()?;
+    keys.sort_unstable();
+    Ok(ValueIdentity::Array(keys))
+}
+
+fn ces_exact_key(
+    ces: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+) -> Result<ExactKey, crate::ValidationError> {
+    let common = ces.common_condition();
+    let series = ces
+        .series()
+        .iter()
+        .map(|record| {
+            Ok(ValueIdentity::Array(alloc::vec![
+                measurement_list_key(record.condition())?,
+                measurement_list_key(record.addition())?,
+            ]))
+        })
+        .collect::<Result<Vec<_>, crate::ValidationError>>()?;
+    Ok(ValueIdentity::Array(alloc::vec![
+        typed_key(&common.environment)?,
+        measurement_list_key(&common.claims_list)?,
+        typed_key(&common.authorized_by)?,
+        ValueIdentity::Array(series),
+    ]))
+}
+
+fn comid_exact_key(comid: &ComidTag) -> Result<ExactKey, crate::ValidationError> {
+    let triples = &comid.triples;
+    let mut series = triples
+        .conditional_endorsement_series
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(ces_exact_key)
+        .collect::<Result<Vec<_>, _>>()?;
+    series.sort_unstable();
+    let conditional = triples
+        .conditional_endorsement
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|record| {
+            Ok(ValueIdentity::Array(alloc::vec![
+                environment_list_key(
+                    record
+                        .0
+                        .iter()
+                        .map(|group| (&group.0, group.1.as_slice()))
+                        .collect()
+                )?,
+                environment_list_key(endorsed_as_pairs(&record.1))?,
+            ]))
+        })
+        .collect::<Result<Vec<_>, crate::ValidationError>>()?;
+    Ok(ValueIdentity::Array(alloc::vec![
+        typed_key(&(
+            comid.tag_identity.tag_version,
+            &comid.language,
+            &comid.entities,
+            &comid.linked_tags
+        ))?,
+        environment_list_key(refs_as_pairs(
+            triples.reference_triples.as_deref().unwrap_or_default()
+        ))?,
+        environment_list_key(endorsed_as_pairs(
+            triples.endorsed_triples.as_deref().unwrap_or_default()
+        ))?,
+        typed_key(triples.identity_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.attest_key_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.dependency_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.membership_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.coswid_triples.as_deref().unwrap_or_default())?,
+        ValueIdentity::Array(series),
+        ValueIdentity::Array(conditional),
+    ]))
 }
 
 fn compare_comids(
@@ -657,19 +779,12 @@ fn compare_comids(
     input: &[(String, ComidTag)],
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices_by(
-        baseline,
-        input,
-        |base_index, input_index| {
-            baseline[base_index].1.tag_identity.tag_id == input[input_index].1.tag_identity.tag_id
-        },
-        |base, candidate| {
-            exact_comparison(|report| {
-                compare_comid_metadata(&[], &base.1, &candidate.1, report)?;
-                compare_triples(&[], &base.1.triples, &candidate.1.triples, report)
-            })
-        },
-    )?;
+    let (pairs, used) = prepared_pairs(baseline, input, |(_, comid)| {
+        Ok((
+            typed_key(&comid.tag_identity.tag_id)?,
+            comid_exact_key(comid)?,
+        ))
+    })?;
     for (base_index, (id, b_comid)) in baseline.iter().enumerate() {
         match pairs[base_index].map(|index| &input[index]) {
             Some((_, i_comid)) => {
@@ -685,7 +800,7 @@ fn compare_comids(
         }
     }
     for (index, (id, _)) in input.iter().enumerate() {
-        if !pairs.contains(&Some(index)) {
+        if !used[index] {
             r.structural_mismatches.push(StructuralMismatch {
                 path: alloc::vec![PathSegment::Comid(id.clone())],
                 kind: MismatchKind::UnexpectedInInput,
@@ -833,17 +948,12 @@ fn compare_ces(
     let b = baseline.unwrap_or(&[]);
     let i = input.unwrap_or(&[]);
     let kind = "conditional-endorsement-series";
-    let pairs = pair_indices_by(
-        b,
-        i,
-        |base_index, input_index| {
-            b[base_index].common_condition().environment
-                == i[input_index].common_condition().environment
-        },
-        |base, candidate| {
-            exact_comparison(|report| compare_ces_entry(&[], base, candidate, report))
-        },
-    )?;
+    let (pairs, used) = prepared_pairs(b, i, |ces| {
+        Ok((
+            typed_key(&ces.common_condition().environment)?,
+            ces_exact_key(ces)?,
+        ))
+    })?;
     for (index, bt) in b.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
@@ -860,8 +970,8 @@ fn compare_ces(
             }),
         }
     }
-    for in_index in 0..i.len() {
-        if !pairs.contains(&Some(in_index)) {
+    for (in_index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
@@ -992,14 +1102,7 @@ fn compare_env_meas(
     input: &EnvMeas<'_>,
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices_by(
-        baseline,
-        input,
-        |base_index, input_index| baseline[base_index].0 == input[input_index].0,
-        |base, candidate| {
-            exact_comparison(|report| compare_measurements(&[], base.1, candidate.1, report))
-        },
-    )?;
+    let (pairs, used) = prepared_pairs(baseline, input, environment_pair_key)?;
     for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Field(field));
@@ -1013,8 +1116,8 @@ fn compare_env_meas(
             }),
         }
     }
-    for index in 0..input.len() {
-        if !pairs.contains(&Some(index)) {
+    for (index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Field(field));
             path.push(PathSegment::Index(index));
@@ -1118,14 +1221,7 @@ fn compare_measurement_triples(
 ) -> Result<(), crate::ValidationError> {
     let baseline = baseline.unwrap_or_default();
     let input = input.unwrap_or_default();
-    let pairs = pair_indices_by(
-        &baseline,
-        &input,
-        |base_index, input_index| baseline[base_index].0 == input[input_index].0,
-        |base, candidate| {
-            exact_comparison(|report| compare_measurements(&[], base.1, candidate.1, report))
-        },
-    )?;
+    let (pairs, used) = prepared_pairs(&baseline, &input, environment_pair_key)?;
     for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
@@ -1138,8 +1234,8 @@ fn compare_measurement_triples(
             }),
         }
     }
-    for in_index in 0..input.len() {
-        if !pairs.contains(&Some(in_index)) {
+    for (in_index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
@@ -1162,17 +1258,38 @@ fn compare_measurements(
     input: &[MeasurementMap],
     r: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    let pairs = pair_indices_by(
-        baseline,
-        input,
-        |base_index, input_index| {
-            baseline[base_index].mkey == input[input_index].mkey
-                && (baseline[base_index].mkey.is_some() || base_index == input_index)
-        },
-        |base, candidate| {
-            exact_comparison(|report| compare_measurement(&[], base, candidate, report))
-        },
-    )?;
+    let mut pairs = alloc::vec![None; baseline.len()];
+    let mut used = alloc::vec![false; input.len()];
+    let mut base_positions = Vec::new();
+    let mut base_keys = Vec::new();
+    let mut input_positions = Vec::new();
+    let mut input_keys = Vec::new();
+    for (index, measurement) in baseline.iter().enumerate() {
+        if let Some(key) = &measurement.mkey {
+            base_positions.push(index);
+            base_keys.push((typed_key(key)?, measurement_exact_key(measurement)?));
+        } else if input
+            .get(index)
+            .is_some_and(|candidate| candidate.mkey.is_none())
+        {
+            pairs[index] = Some(index);
+            used[index] = true;
+        }
+    }
+    for (index, measurement) in input.iter().enumerate() {
+        if let Some(key) = &measurement.mkey {
+            input_positions.push(index);
+            input_keys.push((typed_key(key)?, measurement_exact_key(measurement)?));
+        }
+    }
+    let (keyed_pairs, _) = pair_indexed(&base_keys, &input_keys);
+    for (base_index, candidate) in keyed_pairs.into_iter().enumerate() {
+        if let Some(candidate) = candidate {
+            let input_index = input_positions[candidate];
+            pairs[base_positions[base_index]] = Some(input_index);
+            used[input_index] = true;
+        }
+    }
     for (idx, b) in baseline.iter().enumerate() {
         let key = mkey_string(b, idx);
         let mut path = base_path.to_vec();
@@ -1191,8 +1308,7 @@ fn compare_measurements(
         }
     }
     for (idx, i) in input.iter().enumerate() {
-        let present = pairs.contains(&Some(idx));
-        if !present {
+        if !used[idx] {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Measurement(mkey_string(i, idx)));
             r.structural_mismatches.push(StructuralMismatch {
@@ -1322,7 +1438,6 @@ fn compare_keys(
     input: Option<&[crate::types::common::CryptoKey]>,
     report: &mut ConformanceReport,
 ) -> Result<(), crate::ValidationError> {
-    use crate::types::common::CryptoKey;
     compare_presence(
         path,
         "cryptokeys",
@@ -1331,18 +1446,7 @@ fn compare_keys(
         report,
     );
     if let (Some(base), Some(candidate)) = (baseline, input) {
-        let pairs = pair_indices(base, candidate, |base_index, input_index| {
-            match (&base[base_index], &candidate[input_index]) {
-                (CryptoKey::KeyThumbprint(base), CryptoKey::KeyThumbprint(candidate))
-                | (CryptoKey::CertThumbprint(base), CryptoKey::CertThumbprint(candidate))
-                | (CryptoKey::CertPathThumbprint(base), CryptoKey::CertPathThumbprint(candidate)) => {
-                    base.0 == candidate.0
-                }
-                (base, candidate) => {
-                    core::mem::discriminant(base) == core::mem::discriminant(candidate)
-                }
-            }
-        });
+        let (pairs, used) = prepared_pairs(base, candidate, crypto_pair_key)?;
         for (index, key) in base.iter().enumerate() {
             let mut nested = path.to_vec();
             nested.push(PathSegment::Field("cryptokeys"));
@@ -1358,8 +1462,8 @@ fn compare_keys(
                 None => push_missing_field_at(&nested, "key representation or algorithm", report),
             }
         }
-        for index in 0..candidate.len() {
-            if !pairs.contains(&Some(index)) {
+        for (index, matched) in used.iter().enumerate() {
+            if !matched {
                 let mut nested = path.to_vec();
                 nested.push(PathSegment::Field("cryptokeys"));
                 nested.push(PathSegment::Index(index));
@@ -1368,6 +1472,32 @@ fn compare_keys(
         }
     }
     Ok(())
+}
+
+fn crypto_pair_key(
+    key: &crate::types::common::CryptoKey,
+) -> Result<(ExactKey, ExactKey), crate::ValidationError> {
+    use crate::types::common::CryptoKey;
+    let exact = typed_key(key)?;
+    let ValueIdentity::Tag(tag, _) = &exact else {
+        return Err(crate::ValidationError::Invalid(
+            "crypto-key must have a representation tag".into(),
+        ));
+    };
+    let algorithm = match key {
+        CryptoKey::KeyThumbprint(digest)
+        | CryptoKey::CertThumbprint(digest)
+        | CryptoKey::CertPathThumbprint(digest) => match &digest.0 {
+            DigestAlg::Int(number) => ValueIdentity::Integer(i128::from(*number)),
+            DigestAlg::Text(text) => ValueIdentity::Text(alloc::borrow::Cow::Owned(text.clone())),
+        },
+        _ => ValueIdentity::Null,
+    };
+    let identity = ValueIdentity::Array(alloc::vec![
+        ValueIdentity::Integer((*tag).into()),
+        algorithm
+    ]);
+    Ok((identity, exact))
 }
 
 fn compare_registers(
@@ -1481,9 +1611,9 @@ fn compare_digests(
         (None, Some(_)) => push_unexpected_field(path, "digests", r),
         (Some(b), Some(i)) => {
             // Pair by algorithm (§8.2.4.4.5.4).
-            let pairs = pair_indices(b, i, |base_index, input_index| {
-                b[base_index].0 == i[input_index].0
-            });
+            let base_keys: Vec<_> = b.iter().map(digest_pair_key).collect();
+            let input_keys: Vec<_> = i.iter().map(digest_pair_key).collect();
+            let (pairs, used) = pair_indexed(&base_keys, &input_keys);
             for (slot, bd) in b.iter().enumerate() {
                 let mut p = path.to_vec();
                 p.push(PathSegment::Field("digests"));
@@ -1507,7 +1637,7 @@ fn compare_digests(
                 }
             }
             for (index, id) in i.iter().enumerate() {
-                if !pairs.contains(&Some(index)) {
+                if !used[index] {
                     let mut p = path.to_vec();
                     p.push(PathSegment::Field("digests"));
                     r.structural_mismatches.push(StructuralMismatch {
@@ -1522,6 +1652,14 @@ fn compare_digests(
             }
         }
     }
+}
+
+fn digest_pair_key(digest: &Digest) -> (ValueIdentity<'_>, &[u8]) {
+    let algorithm = match &digest.0 {
+        DigestAlg::Int(number) => ValueIdentity::Integer(i128::from(*number)),
+        DigestAlg::Text(text) => ValueIdentity::Text(alloc::borrow::Cow::Borrowed(text)),
+    };
+    (algorithm, &digest.1)
 }
 
 fn compare_svn(
@@ -1755,8 +1893,8 @@ fn value_key(key: &Value) -> PathSegment {
 enum ValueIdentity<'a> {
     Integer(i128),
     Float(u64),
-    Bytes(&'a [u8]),
-    Text(&'a str),
+    Bytes(alloc::borrow::Cow<'a, [u8]>),
+    Text(alloc::borrow::Cow<'a, str>),
     Bool(bool),
     Null,
     Array(Vec<Self>),
@@ -1769,8 +1907,8 @@ impl<'a> From<&'a Value> for ValueIdentity<'a> {
         match value {
             Value::Integer(number) => Self::Integer(*number),
             Value::Float(number) => Self::Float(number.to_bits()),
-            Value::Bytes(bytes) => Self::Bytes(bytes),
-            Value::Text(text) => Self::Text(text),
+            Value::Bytes(bytes) => Self::Bytes(alloc::borrow::Cow::Borrowed(bytes)),
+            Value::Text(text) => Self::Text(alloc::borrow::Cow::Borrowed(text)),
             Value::Bool(value) => Self::Bool(*value),
             Value::Null => Self::Null,
             Value::Array(values) => Self::Array(values.iter().map(Self::from).collect()),
@@ -1783,6 +1921,29 @@ impl<'a> From<&'a Value> for ValueIdentity<'a> {
                 Self::Map(entries)
             }
             Value::Tag(tag, inner) => Self::Tag(*tag, Box::new(Self::from(inner.as_ref()))),
+        }
+    }
+}
+
+impl From<Value> for ValueIdentity<'static> {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Integer(number) => Self::Integer(number),
+            Value::Float(number) => Self::Float(number.to_bits()),
+            Value::Bytes(bytes) => Self::Bytes(alloc::borrow::Cow::Owned(bytes)),
+            Value::Text(text) => Self::Text(alloc::borrow::Cow::Owned(text)),
+            Value::Bool(value) => Self::Bool(value),
+            Value::Null => Self::Null,
+            Value::Array(values) => Self::Array(values.into_iter().map(Self::from).collect()),
+            Value::Map(entries) => {
+                let mut entries: Vec<_> = entries
+                    .into_iter()
+                    .map(|(key, value)| (Self::from(key), Self::from(value)))
+                    .collect();
+                entries.sort_unstable();
+                Self::Map(entries)
+            }
+            Value::Tag(tag, inner) => Self::Tag(tag, Box::new(Self::from(*inner))),
         }
     }
 }
