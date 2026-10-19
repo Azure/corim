@@ -10,6 +10,10 @@ versions.
 
 ### Fixed
 
+- **Nested CBOR map keys caused exponential re-encoding work.** The encoder
+  now writes the key bytes already cached for sorting instead of recursively
+  encoding each key twice. This also protects baseline header and payload
+  conversions. Encoded bytes and the existing map-key ordering are unchanged.
 - **CLI validation could report success for invalid or incomplete documents.**
   `validate` now reuses library validation for signed/unsigned inputs and
   baselines, including CoTL and registered-profile checks. Invalid attached
