@@ -233,6 +233,51 @@ corim-cli sign prepare unsigned.cbor --alg ES256 --signer-name "ACME Ltd." \
 corim-cli sign finalize staging.cose --signature sig.bin -o signed.cose
 ```
 
+### VR72 Realm endorsement sample
+
+[`corim-cli/templates/cca_realm_vr72.json`](corim-cli/templates/cca_realm_vr72.json)
+contains illustrative references observed in a Vera/VR72 `VERA_CCA.bin`
+sample: SHA-256 RIM
+`723218af5344b4f87311ef2809703cfaf5d0dd7736bd4ec8e191abd43441f069`,
+and a zero-filled 64-byte personalization value (`cca.rpv`). Optional
+REM[0-3] references are omitted. These observed values are **not
+independently trusted production references**.
+
+The evidence token profile is `tag:arm.com,2024:realm#2.0.0`; the CoRIM
+uses the distinct endorsement profile
+`tag:arm.com,2025:endorsements/cca_realm#1.0.0`, per
+[draft-ydb-rats-cca-endorsements-04 §3.2](https://www.ietf.org/archive/id/draft-ydb-rats-cca-endorsements-04.html#section-3.2).
+The environment class ID contains the RIM from Realm claim 44238 as
+tagged bytes (base64 in the JSON template), not a hardware product ID or
+device serial number. The class also carries user-supplied sample labels
+`vendor: "NVIDIA"` and `model: "VR72"`; these are not extracted from the
+Realm token. Environment matching treats these fields as constraints, so
+a downstream verifier must populate matching vendor/model fields using
+trusted context; the standard RIM-only Realm transformation alone will
+not match this annotated environment. A
+`conditional-endorsement-triples` entry expresses: **if `cca.rim` equals
+the sample RIM (X), add an environment-level endorsement of exact SVN
+0 (Y)**. The SVN is an illustrative assertion, not extracted from the
+token, and is not included as an unconditional endorsement.
+
+From the repository root (PowerShell), using the CLI's default features
+to enable the registered CCA profile:
+
+```powershell
+cargo run -p corim-cli -- generate .\corim-cli\templates\cca_realm_vr72.json -o .\target\vr72-realm-sample.cbor
+cargo run -p corim-cli -- validate .\target\vr72-realm-sample.cbor
+cargo run -p corim-cli -- validate --diagnose .\target\vr72-realm-sample.cbor
+```
+
+These commands generate an unsigned CoRIM and check its structure and
+registered-profile constraints; they do **not** appraise the Realm token
+or execute the conditional endorsement. Signature verification, freshness,
+Platform binding, and production trust are outside this sample's scope.
+MEC-policy references are deliberately deferred: the token reports claim
+44243 as 0 (shared), but the cited endorsement profile does not define a
+CoMID mapping for that claim. Template `$comment` annotations are stripped
+during generation.
+
 ### `validate -f json` — machine-readable report
 
 `-f json` emits the validation summary as JSON. For a **signed** CoRIM it
