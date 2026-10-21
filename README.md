@@ -352,6 +352,37 @@ Ordinary validation without `--baseline` continues to support CoTL and CoSWID.
 Malformed present JSON timestamps are rejected before template conversion;
 omitted optional timestamps remain supported.
 
+`corim::baseline::compare(&input, &baseline)` and `compare_headers()` return
+`Result<ConformanceReport, ValidationError>`. Propagate errors with `?`, then
+inspect `report.is_conformant()` for structural mismatches. Payload comparison
+checks CoMID-only documents with default per-document decode limits; malformed
+tags, unsupported tags and conversion failures return errors, not partial
+reports. Clock, registered-profile, signature and certificate checks remain
+separate responsibilities. The CLI performs those document checks before
+comparison, excluding cryptographic verification.
+
+CoMIDs, environments, keyed measurements, digests and key representations pair
+one-to-one by typed identity. Matches with no differences under the same
+comparison rules are reserved first, including nested unordered collections
+and float-bit identity; remaining
+same-identity entries pair in encounter order. Reordering keyed entries does
+not reuse or discard duplicates. Unkeyed measurements and ordered series remain
+positional. UUID IDs are identities, not array positions.
+
+Register IDs and digest algorithms, key representations and thumbprint
+algorithms, range forms and bound presence, and matcher forms and cardinality
+are structural. Their leaf contents are values. Matcher sets are unordered.
+Unknown measurement, header and CWT extensions use recursive CBOR shape:
+map keys, value types, semantic tags and container structure are structural;
+leaf contents are values. Map order is ignored; array order is significant.
+Keyed typed collections, extension maps and matcher sets use indexed queues
+rather than repeated candidate scans. Comparison-consistent exact keys are
+prepared before matching; reservation does not run full comparisons or build
+temporary reports. Unkeyed measurements pair directly at their original indices.
+Recursive key identity, duplicate multiplicity and ordered series are retained.
+No profile-specific meaning is inferred for unknown extension values.
+Non-finite numeric differences use the existing `float-bits` JSON representation.
+
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
 §8.2.4.4. **Structure** — which must match — is the environment, the

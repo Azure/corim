@@ -449,7 +449,7 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         ..Default::default()
     };
     let baseline = corim_with_matchers(base.clone());
-    let identical = corim::baseline::compare(&baseline, &baseline);
+    let identical = corim::baseline::compare(&baseline, &baseline).unwrap();
     assert!(identical.structural_mismatches.is_empty());
     assert!(identical.value_differences.is_empty());
     let changed = corim_with_matchers(MeasurementValuesMap {
@@ -459,9 +459,12 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         bytes: Some(BytesMatcher::Exact(vec![2])),
         ..Default::default()
     });
-    let report = corim::baseline::compare(&changed, &baseline);
-    assert!(report.structural_mismatches.is_empty());
-    for field in ["bool", "number", "text", "bytes"] {
+    let report = corim::baseline::compare(&changed, &baseline).unwrap();
+    assert_eq!(report.structural_mismatches.len(), 1);
+    assert!(report.structural_mismatches[0]
+        .path
+        .contains(&corim::baseline::PathSegment::Field("number")));
+    for field in ["bool", "text", "bytes"] {
         assert!(report
             .value_differences
             .iter()
@@ -482,10 +485,63 @@ fn baseline_reports_matcher_presence_and_value_differences() {
         }
         assert_eq!(
             corim::baseline::compare(&corim_with_matchers(missing), &baseline)
+                .unwrap()
                 .structural_mismatches
                 .len(),
             1
         );
+    }
+}
+
+#[test]
+fn baseline_numeric_set_reservation_uses_float_bits() {
+    for values in [
+        vec![
+            Number::Float(f64::from_bits(0x7ff8_0000_0000_0001)),
+            Number::Float(f64::from_bits(0x7ff8_0000_0000_0002)),
+        ],
+        vec![Number::Float(0.0), Number::Float(-0.0)],
+    ] {
+        let mut reversed = values.clone();
+        reversed.reverse();
+        let baseline = corim_with_matchers(MeasurementValuesMap {
+            number: Some(NumberMatcher::Set(values)),
+            ..Default::default()
+        });
+        let input = corim_with_matchers(MeasurementValuesMap {
+            number: Some(NumberMatcher::Set(reversed)),
+            ..Default::default()
+        });
+        let report = corim::baseline::compare(&input, &baseline).unwrap();
+        assert!(report.is_conformant());
+        assert!(report.value_differences.is_empty(), "{report:?}");
+    }
+}
+
+#[test]
+fn baseline_matcher_sets_are_unordered_and_shape_sensitive() {
+    let baseline = corim_with_matchers(MeasurementValuesMap {
+        text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
+        ..Default::default()
+    });
+    let reordered = corim_with_matchers(MeasurementValuesMap {
+        text: Some(TextMatcher::Set(vec!["b".into(), "a".into()])),
+        ..Default::default()
+    });
+    let report = corim::baseline::compare(&reordered, &baseline).unwrap();
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    for matcher in [
+        TextMatcher::Exact("a".into()),
+        TextMatcher::Set(vec!["a".into(), "b".into(), "c".into()]),
+    ] {
+        let changed = corim_with_matchers(MeasurementValuesMap {
+            text: Some(matcher),
+            ..Default::default()
+        });
+        assert!(!corim::baseline::compare(&changed, &baseline)
+            .unwrap()
+            .is_conformant());
     }
 }
 

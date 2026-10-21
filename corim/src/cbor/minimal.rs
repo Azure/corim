@@ -88,20 +88,22 @@ pub fn encode_value(w: &mut Vec<u8>, val: &super::value::Value) -> Result<(), En
             }
         }
         Value::Map(entries) => {
-            let mut items: Vec<(Vec<u8>, &super::value::Value, &super::value::Value)> = entries
+            let mut items: Vec<(Vec<u8>, &super::value::Value)> = entries
                 .iter()
-                .map(|(k, v)| {
-                    let mut kb = Vec::new();
-                    encode_value(&mut kb, k)?;
-                    Ok((kb, k, v))
+                .map(|(key, value)| {
+                    let mut key_bytes = Vec::new();
+                    encode_value(&mut key_bytes, key)?;
+                    Ok((key_bytes, value))
                 })
                 .collect::<Result<_, EncodeError>>()?;
-            items.sort_by(|(a, _, _), (b, _, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
+            items.sort_by(|(left, _), (right, _)| {
+                left.len().cmp(&right.len()).then_with(|| left.cmp(right))
+            });
 
             encode_head(w, c::MAJOR_MAP, items.len() as u64);
-            for (_, k, v) in &items {
-                encode_value(w, k)?;
-                encode_value(w, v)?;
+            for (key_bytes, value) in items {
+                w.extend_from_slice(&key_bytes);
+                encode_value(w, value)?;
             }
         }
         Value::Tag(tag, inner) => {

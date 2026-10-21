@@ -3,7 +3,7 @@
 
 //! Tests for `corim::baseline` structural conformance comparison.
 
-use corim::baseline::{compare, MismatchKind};
+use corim::baseline::{compare as try_compare, MismatchKind};
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::cbor::{self, value::Tagged, value::Value};
 use corim::types::common::{MeasuredElement, TagIdChoice};
@@ -12,6 +12,10 @@ use corim::types::environment::{ClassMap, EnvironmentMap};
 use corim::types::measurement::{Digest, MeasurementMap, MeasurementValuesMap, SvnChoice};
 use corim::types::tags::{TAG_COMID, TAG_CORIM};
 use corim::types::triples::ReferenceTriple;
+
+fn compare(input: &CorimMap, baseline: &CorimMap) -> corim::baseline::ConformanceReport {
+    try_compare(input, baseline).unwrap()
+}
 
 /// Build a one-CoMID, one-reference-triple CoRIM with a single MRTD
 /// measurement carrying the given digest bytes and svn.
@@ -70,6 +74,600 @@ fn tcg_corim(corim: &CorimMap, tagged_inner: bool) -> CorimMap {
     let validated = corim::validate::decode_and_validate_full_at(&bytes, 0).unwrap();
     assert_eq!(validated.comids.len(), 1);
     validated.corim
+}
+
+fn check_large_typed_list(scope: &str) {
+    let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    if scope == "digests" {
+        measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]); 100_000]);
+    } else {
+        let measurement = MeasurementMap {
+            mkey: if scope == "unkeyed" {
+                None
+            } else {
+                Some(MeasuredElement::Text("same".into()))
+            },
+            mval: MeasurementValuesMap {
+                r#bool: Some(false),
+                ..Default::default()
+            },
+            authorized_by: None,
+        };
+        *measurements = vec![measurement; if scope == "unkeyed" { 100_000 } else { 10_000 }];
+    }
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    if scope == "changed-keyed" {
+        for measurement in &mut comid.triples.reference_triples.as_mut().unwrap()[0].1 {
+            measurement.mval.r#bool = Some(true);
+        }
+    }
+    let mut input = baseline.clone();
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let report = try_compare(&input, &baseline).unwrap();
+    assert!(report.is_conformant(), "{scope}");
+    assert_eq!(
+        report.value_differences.len(),
+        if scope == "changed-keyed" { 10_000 } else { 0 },
+        "{scope}"
+    );
+}
+
+#[test]
+fn nested_map_keys_in_measurement_extensions_compare_without_reencoding_explosion() {
+    use corim::cbor::constants;
+    let mut document = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = document.tags[0].as_comid().unwrap();
+    comid.triples.reference_triples.as_mut().unwrap()[0].1[0].mval = MeasurementValuesMap {
+        extra_entries: [(10001, Value::Null)].into(),
+        ..Default::default()
+    };
+    let mut bytes = cbor::encode(&comid).unwrap();
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.extend(vec![(constants::MAJOR_MAP << 5) | 1; 40]);
+    bytes.extend(vec![constants::BYTE_NULL; 41]);
+    document.tags[0] = ConciseTagChoice::Comid(bytes.clone());
+    let report = compare(&document, &document);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.push(constants::BYTE_TRUE);
+    let mut changed = document.clone();
+    changed.tags[0] = ConciseTagChoice::Comid(bytes);
+    assert!(!compare(&changed, &document).is_conformant());
+}
+
+#[test]
+fn large_changed_keyed_measurements_complete() {
+    check_large_typed_list("changed-keyed");
+}
+
+#[test]
+fn large_unkeyed_measurements_complete() {
+    check_large_typed_list("unkeyed");
+}
+
+#[test]
+fn large_repeated_digests_complete() {
+    check_large_typed_list("digests");
+}
+
+#[test]
+fn indexed_parent_keys_preserve_nested_unordered_semantics() {
+    use corim::types::common::CryptoKey;
+    use corim::types::matcher::TextMatcher;
+    use corim::types::measurement::{IntegrityRegisterId, IntegrityRegisters};
+    use corim::types::triples::{
+        CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
+        ConditionalSeriesRecord, EndorsedTriple, StatefulEnvironmentRecord,
+    };
+    let template = corim_with(vec![1], SvnChoice::MinValue(1), "same");
+    let original = template.tags[0].as_comid().unwrap();
+    let group = |marker, reverse| {
+        let mut triple = original.triples.reference_triples.as_ref().unwrap()[0].clone();
+        let mut digests = vec![Digest::new(7, vec![marker]), Digest::new(8, vec![marker])];
+        let mut keys = vec![
+            CryptoKey::Bytes(vec![marker]),
+            CryptoKey::KeyThumbprint(Digest::new(7, vec![marker])),
+        ];
+        let mut set = vec![format!("a{marker}"), format!("b{marker}")];
+        if reverse {
+            digests.reverse();
+            keys.reverse();
+            set.reverse();
+        }
+        let values = &mut triple.1[0].mval;
+        values.digests = Some(digests.clone());
+        values.cryptokeys = Some(keys);
+        values.integrity_registers = Some(IntegrityRegisters(
+            [(IntegrityRegisterId::Uint(0), digests)].into(),
+        ));
+        values.text = Some(TextMatcher::Set(set));
+        triple
+    };
+    for scope in [
+        "comids",
+        "reference",
+        "endorsed",
+        "series",
+        "series-order",
+        "conditional",
+    ] {
+        let make = |reverse| {
+            let mut groups = vec![group(1, reverse), group(2, reverse)];
+            if reverse {
+                groups.reverse();
+            }
+            let mut document = template.clone();
+            let mut comid = original.clone();
+            comid.triples.reference_triples = None;
+            match scope {
+                "comids" => {
+                    document.tags = groups
+                        .into_iter()
+                        .map(|group| {
+                            let mut comid = comid.clone();
+                            comid.triples.reference_triples = Some(vec![group]);
+                            ConciseTagChoice::Comid(cbor::encode(&comid).unwrap())
+                        })
+                        .collect();
+                    return document;
+                }
+                "reference" => comid.triples.reference_triples = Some(groups),
+                "endorsed" => {
+                    comid.triples.endorsed_triples = Some(
+                        groups
+                            .into_iter()
+                            .map(|group| EndorsedTriple(group.0, group.1))
+                            .collect(),
+                    )
+                }
+                "series" => {
+                    comid.triples.conditional_endorsement_series = Some(
+                        groups
+                            .into_iter()
+                            .map(|group| {
+                                ConditionalEndorsementSeriesTriple::new(
+                                    CesCommonCondition {
+                                        environment: group.0,
+                                        claims_list: group.1.clone(),
+                                        authorized_by: None,
+                                    },
+                                    vec![ConditionalSeriesRecord::new(group.1.clone(), group.1)],
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+                "series-order" => {
+                    comid.triples.conditional_endorsement_series = Some(
+                        groups
+                            .iter()
+                            .enumerate()
+                            .map(|(index, group)| {
+                                ConditionalEndorsementSeriesTriple::new(
+                                    CesCommonCondition {
+                                        environment: group.0.clone(),
+                                        claims_list: vec![],
+                                        authorized_by: None,
+                                    },
+                                    groups
+                                        .iter()
+                                        .cycle()
+                                        .skip(index)
+                                        .take(groups.len())
+                                        .map(|record| {
+                                            ConditionalSeriesRecord::new(
+                                                record.1.clone(),
+                                                record.1.clone(),
+                                            )
+                                        })
+                                        .collect(),
+                                )
+                            })
+                            .collect(),
+                    )
+                }
+                "conditional" => {
+                    comid.triples.conditional_endorsement =
+                        Some(vec![ConditionalEndorsementTriple(
+                            groups
+                                .iter()
+                                .map(|group| {
+                                    StatefulEnvironmentRecord(group.0.clone(), group.1.clone())
+                                })
+                                .collect(),
+                            groups
+                                .into_iter()
+                                .map(|group| EndorsedTriple(group.0, group.1))
+                                .collect(),
+                        )])
+                }
+                _ => panic!("scope"),
+            }
+            document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+            document
+        };
+        let report = compare(&make(true), &make(false));
+        assert!(report.is_conformant(), "{scope}: {report:?}");
+        assert!(report.value_differences.is_empty(), "{scope}: {report:?}");
+    }
+}
+
+#[test]
+fn indexed_keyed_measurements_do_not_move_unkeyed_positions() {
+    let mut baseline = corim_with(vec![1], SvnChoice::MinValue(1), "first");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    let mut unkeyed = measurements[0].clone();
+    unkeyed.mkey = None;
+    let mut last = measurements[0].clone();
+    last.mkey = Some(MeasuredElement::Text("last".into()));
+    measurements.extend([unkeyed, last]);
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    comid.triples.reference_triples.as_mut().unwrap()[0]
+        .1
+        .swap(0, 2);
+    let mut input = baseline.clone();
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    assert_eq!(compare(&input, &baseline), compare(&baseline, &baseline));
+    comid.triples.reference_triples.as_mut().unwrap()[0]
+        .1
+        .swap(0, 1);
+    input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    assert!(!compare(&input, &baseline).is_conformant());
+}
+
+#[test]
+fn uuid_tag_identity_is_not_a_position_or_display_string() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut first = baseline.tags[0].as_comid().unwrap();
+    first.tag_identity.tag_id = TagIdChoice::Uuid([1; 16]);
+    let mut second = first.clone();
+    second.tag_identity.tag_id = TagIdChoice::Uuid([2; 16]);
+    second.tag_identity.tag_version = Some(2);
+    baseline.tags = vec![
+        ConciseTagChoice::Comid(cbor::encode(&first).unwrap()),
+        ConciseTagChoice::Comid(cbor::encode(&second).unwrap()),
+    ];
+    let mut reordered = baseline.clone();
+    reordered.tags.reverse();
+    assert_eq!(
+        try_compare(&reordered, &baseline).unwrap(),
+        try_compare(&baseline, &baseline).unwrap()
+    );
+    for id in [TagIdChoice::Uuid([3; 16]), TagIdChoice::Text("#0".into())] {
+        let mut changed = baseline.clone();
+        first.tag_identity.tag_id = id;
+        changed.tags[0] = ConciseTagChoice::Comid(cbor::encode(&first).unwrap());
+        assert!(!try_compare(&changed, &baseline).unwrap().is_conformant());
+    }
+}
+
+#[test]
+fn duplicate_tag_ids_pair_exact_values_before_residual_changes() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut second = baseline.tags[0].as_comid().unwrap();
+    second.tag_identity.tag_version = Some(2);
+    baseline
+        .tags
+        .push(ConciseTagChoice::Comid(cbor::encode(&second).unwrap()));
+    let mut reordered = baseline.clone();
+    reordered.tags.reverse();
+    assert_eq!(
+        compare(&reordered, &baseline),
+        compare(&baseline, &baseline)
+    );
+    second.tag_identity.tag_version = Some(3);
+    reordered.tags[0] = ConciseTagChoice::Comid(cbor::encode(&second).unwrap());
+    let report = compare(&reordered, &baseline);
+    assert!(report.is_conformant());
+    assert_eq!(report.value_differences.len(), 1);
+}
+
+#[test]
+fn nested_unordered_content_reserves_the_correct_duplicate_identity() {
+    let mut baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut comid = baseline.tags[0].as_comid().unwrap();
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    let mut second = measurements[0].clone();
+    measurements[0].mval.digests = Some(vec![Digest::new(7, vec![1]), Digest::new(8, vec![2])]);
+    second.mval.digests = Some(vec![Digest::new(9, vec![3]), Digest::new(10, vec![4])]);
+    measurements.push(second);
+    baseline.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let measurements = &mut comid.triples.reference_triples.as_mut().unwrap()[0].1;
+    measurements.reverse();
+    for measurement in measurements {
+        measurement.mval.digests.as_mut().unwrap().reverse();
+    }
+    let mut reordered = baseline.clone();
+    reordered.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    let report = compare(&reordered, &baseline);
+    assert!(report.is_conformant(), "{report:?}");
+    assert!(report.value_differences.is_empty(), "{report:?}");
+}
+
+#[test]
+fn repeated_identities_preserve_cardinality() {
+    let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for scope in ["tags", "triples", "measurements", "digests"] {
+        let mut input = baseline.clone();
+        if scope == "tags" {
+            input.tags.push(input.tags[0].clone());
+        } else {
+            let mut comid = input.tags[0].as_comid().unwrap();
+            let triples = comid.triples.reference_triples.as_mut().unwrap();
+            match scope {
+                "triples" => triples.push(triples[0].clone()),
+                "measurements" => {
+                    let duplicate = triples[0].1[0].clone();
+                    triples[0].1.push(duplicate);
+                }
+                "digests" => {
+                    let digests = triples[0].1[0].mval.digests.as_mut().unwrap();
+                    digests.push(digests[0].clone());
+                }
+                _ => panic!("scope"),
+            }
+            input.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        }
+        assert!(
+            !try_compare(&input, &baseline).unwrap().is_conformant(),
+            "{scope}"
+        );
+        assert!(
+            !try_compare(&baseline, &input).unwrap().is_conformant(),
+            "{scope}"
+        );
+    }
+}
+
+#[test]
+fn extension_comparison_is_recursive_shape_not_whole_value() {
+    let make = |value: Value| {
+        let mut document = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+        let mut comid = document.tags[0].as_comid().unwrap();
+        comid.triples.reference_triples.as_mut().unwrap()[0].1[0]
+            .mval
+            .extra_entries
+            .insert(-9999, value);
+        document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        document
+    };
+    let nested = |value| {
+        Value::Map(vec![(
+            Value::Text("nested".into()),
+            Value::Array(vec![value]),
+        )])
+    };
+    for (baseline, input, conforms) in [
+        (nested(Value::Integer(1)), nested(Value::Integer(2)), true),
+        (
+            nested(Value::Integer(1)),
+            nested(Value::Text("1".into())),
+            false,
+        ),
+        (Value::Array(vec![Value::Null]), Value::Array(vec![]), false),
+        (
+            Value::Map(vec![]),
+            Value::Map(vec![(Value::Text("new".into()), Value::Null)]),
+            false,
+        ),
+        (
+            Value::Tag(TAG_CORIM, Box::new(Value::Integer(1))),
+            Value::Tag(TAG_COMID, Box::new(Value::Integer(1))),
+            false,
+        ),
+    ] {
+        assert_eq!(
+            try_compare(&make(input), &make(baseline))
+                .unwrap()
+                .is_conformant(),
+            conforms
+        );
+    }
+    let entries = vec![
+        (Value::Text("a".into()), Value::Integer(1)),
+        (Value::Text("b".into()), Value::Integer(2)),
+    ];
+    let mut reversed = entries.clone();
+    reversed.reverse();
+    let report = try_compare(&make(Value::Map(entries)), &make(Value::Map(reversed))).unwrap();
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+}
+
+#[test]
+fn typed_field_shapes_are_structural_but_contents_are_values() {
+    use corim::types::common::CryptoKey;
+    use corim::types::measurement::{IntRangeChoice, IntegrityRegisterId, IntegrityRegisters};
+    let make = |mval| {
+        let mut document = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+        let mut comid = document.tags[0].as_comid().unwrap();
+        comid.triples.reference_triples.as_mut().unwrap()[0].1[0].mval = mval;
+        document.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+        document
+    };
+    let registers = |id, algorithm, byte| MeasurementValuesMap {
+        integrity_registers: Some(IntegrityRegisters(
+            [(
+                IntegrityRegisterId::Uint(id),
+                vec![Digest::new(algorithm, vec![byte; 48])],
+            )]
+            .into(),
+        )),
+        ..Default::default()
+    };
+    let keys = |key| MeasurementValuesMap {
+        cryptokeys: Some(vec![key]),
+        ..Default::default()
+    };
+    let range = |value| MeasurementValuesMap {
+        int_range: Some(value),
+        ..Default::default()
+    };
+    for (baseline, input, conforms) in [
+        (registers(0, 7, 1), registers(1, 7, 1), false),
+        (registers(0, 7, 1), registers(0, 8, 1), false),
+        (registers(0, 7, 1), registers(0, 7, 2), true),
+        (
+            keys(CryptoKey::Bytes(vec![1])),
+            keys(CryptoKey::CoseKey(vec![1])),
+            false,
+        ),
+        (
+            keys(CryptoKey::KeyThumbprint(Digest::new(7, vec![1]))),
+            keys(CryptoKey::KeyThumbprint(Digest::new(8, vec![1]))),
+            false,
+        ),
+        (
+            keys(CryptoKey::Bytes(vec![1])),
+            keys(CryptoKey::Bytes(vec![2])),
+            true,
+        ),
+        (
+            range(IntRangeChoice::Int(1)),
+            range(IntRangeChoice::Int(2)),
+            true,
+        ),
+        (
+            range(IntRangeChoice::Int(1)),
+            range(IntRangeChoice::Range {
+                min: Some(0),
+                max: Some(2),
+            }),
+            false,
+        ),
+        (
+            range(IntRangeChoice::Range {
+                min: None,
+                max: Some(2),
+            }),
+            range(IntRangeChoice::Range {
+                min: Some(0),
+                max: Some(2),
+            }),
+            false,
+        ),
+    ] {
+        let report = try_compare(&make(input), &make(baseline)).unwrap();
+        assert_eq!(report.is_conformant(), conforms, "{report:?}");
+        if conforms {
+            assert!(!report.value_differences.is_empty());
+        }
+    }
+}
+
+#[test]
+fn checked_comparison_rejects_skipped_tags_on_either_side() {
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for tag in [
+        ConciseTagChoice::Comid(vec![0xff]),
+        ConciseTagChoice::BareBstr(vec![0xff]),
+        ConciseTagChoice::Coswid(vec![]),
+        ConciseTagChoice::Cotl(vec![]),
+        ConciseTagChoice::Unknown(TAG_CORIM, vec![]),
+    ] {
+        for mixed in [false, true] {
+            let mut invalid = valid.clone();
+            if !mixed {
+                invalid.tags.clear();
+            }
+            invalid.tags.push(tag.clone());
+            assert!(try_compare(&invalid, &valid).is_err(), "input: {tag:?}");
+            assert!(try_compare(&valid, &invalid).is_err(), "baseline: {tag:?}");
+            assert!(try_compare(&invalid, &invalid).is_err(), "both: {tag:?}");
+        }
+    }
+}
+
+#[test]
+fn checked_comparison_validates_structure_without_reading_clock() {
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let mut empty = valid.clone();
+    empty.tags.clear();
+    assert!(try_compare(&empty, &valid).is_err());
+    assert!(try_compare(&valid, &empty).is_err());
+    let mut invalid = valid.clone();
+    invalid.entities = Some(vec![]);
+    assert!(try_compare(&invalid, &valid).is_err());
+    assert!(try_compare(&valid, &invalid).is_err());
+    let mut expired = valid.clone();
+    expired.rim_validity = Some(corim::types::ValidityMap {
+        not_before: None,
+        not_after: 1.into(),
+    });
+    assert!(try_compare(&expired, &expired).unwrap().is_conformant());
+    expired.rim_validity.as_mut().unwrap().not_before = Some(2.into());
+    assert!(try_compare(&expired, &valid).is_err());
+    assert!(try_compare(&valid, &expired).is_err());
+}
+
+#[test]
+fn checked_comparison_preserves_decode_errors_and_limits() {
+    use corim::{DecodeError, ValidationError};
+    let valid = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    let ConciseTagChoice::Comid(bytes) = &valid.tags[0] else {
+        panic!("CoMID fixture");
+    };
+    let mut trailing_bytes = bytes.clone();
+    trailing_bytes.push(0xff);
+    let Value::Map(mut entries) = cbor::decode_exact(bytes).unwrap() else {
+        panic!("CoMID map");
+    };
+    entries.push(entries[0].clone());
+    let duplicate_bytes = cbor::encode(&Value::Map(entries)).unwrap();
+    for (bytes, duplicate) in [(trailing_bytes, false), (duplicate_bytes, true)] {
+        let mut invalid = valid.clone();
+        invalid.tags[0] = ConciseTagChoice::Comid(bytes);
+        for (input, baseline) in [(&invalid, &valid), (&valid, &invalid)] {
+            let error = try_compare(input, baseline).unwrap_err();
+            if duplicate {
+                assert!(matches!(
+                    error,
+                    ValidationError::Decode(DecodeError::DuplicateKey { .. })
+                ));
+            } else {
+                assert!(matches!(
+                    error,
+                    ValidationError::Decode(DecodeError::TrailingData { .. })
+                ));
+            }
+        }
+    }
+    let mut oversized = valid.clone();
+    oversized.tags[0] =
+        ConciseTagChoice::Comid(vec![0; cbor::DecodeLimits::default().max_input_bytes]);
+    for (input, baseline) in [(&oversized, &valid), (&valid, &oversized)] {
+        assert!(matches!(
+            try_compare(input, baseline),
+            Err(ValidationError::Decode(DecodeError::LimitExceeded { .. }))
+        ));
+    }
+}
+
+#[test]
+fn tcg_comparison_matches_canonical_difference_reports() {
+    let baseline = corim_with(vec![0xAA; 48], SvnChoice::MinValue(1), "MRTD");
+    for input in [
+        baseline.clone(),
+        corim_with(vec![0xBB; 48], SvnChoice::MinValue(2), "MRTD"),
+        corim_with(vec![0xAA; 48], SvnChoice::ExactValue(1), "MRTD"),
+    ] {
+        let expected = compare(&input, &baseline);
+        assert_eq!(try_compare(&input, &baseline).unwrap(), expected);
+        for tagged_inner in [false, true] {
+            assert_eq!(
+                try_compare(&tcg_corim(&input, tagged_inner), &baseline).unwrap(),
+                expected
+            );
+            assert_eq!(
+                try_compare(&input, &tcg_corim(&baseline, tagged_inner)).unwrap(),
+                expected
+            );
+        }
+    }
 }
 
 #[test]

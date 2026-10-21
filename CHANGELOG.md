@@ -10,6 +10,10 @@ versions.
 
 ### Fixed
 
+- **Nested CBOR map keys caused exponential re-encoding work.** The encoder
+  now writes the key bytes already cached for sorting instead of recursively
+  encoding each key twice. This also protects baseline header and payload
+  conversions. Encoded bytes and the existing map-key ordering are unchanged.
 - **CLI validation could report success for invalid or incomplete documents.**
   `validate` now reuses library validation for signed/unsigned inputs and
   baselines, including CoTL and registered-profile checks. Invalid attached
@@ -86,6 +90,25 @@ versions.
 
 ### Added
 
+- **Fallible, identity-aware baseline comparison.** `baseline::compare` and
+  `compare_headers` now return `Result<ConformanceReport, ValidationError>`;
+  callers must handle errors before inspecting conformance. Payloads undergo
+  bounded structural validation; unsupported tags and conversion failures no
+  longer disappear from successful reports. UUIDs and repeated keyed entries
+  use typed, one-to-one pairing with exact matches reserved first. Register
+  and digest identities, key representations and algorithms, range forms,
+  bound presence and matcher cardinality are structural. Matcher sets ignore
+  order. Unknown measurement/header/CWT extensions compare recursively by
+  CBOR shape, ignoring map order but retaining array order and multiplicity.
+  Non-finite numeric report values preserve their IEEE bits in JSON. The CLI
+  uses the fallible APIs. Supported TCG CoMIDs remain accepted; clock, profile
+  and trust checks remain separate from comparison.
+  Exact reservation follows the comparison rules for nested unordered fields
+  and float bits, avoiding false differences for reordered duplicate identities,
+  NaN payloads and signed zero. All keyed typed collections, extension maps and
+  matcher sets use indexed key/value matching; unkeyed measurements pair directly
+  by position. Exact keys are prepared before matching, avoiding repeated full
+  comparisons and temporary reports during reservation.
 - **Strict signed-document validation alongside tolerant inspection.**
   `decode_and_validate_signed_corim_at` and its limits-aware variant check
   COSE slot types, the exact payload media type, CWT and metadata time windows,

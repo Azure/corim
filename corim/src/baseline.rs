@@ -23,6 +23,11 @@
 //! digest's *algorithm* (§8.2.4.4.5.4) are identity/structure; the
 //! concrete per-attribute payloads are values.
 //!
+//! Typed identities pair one-to-one, reserving exact matches before pairing
+//! remaining entries in encounter order. Unknown extensions compare recursive
+//! CBOR shape: keys, types, tags and container structure are structural;
+//! leaf contents are values. Maps are unordered and arrays positional.
+//!
 //! This module performs the comparison and returns a structured
 //! [`ConformanceReport`](crate::baseline::ConformanceReport). It does not
 //! impose any serialization format — callers (e.g. `corim-cli`) render the
@@ -31,7 +36,7 @@
 use crate::cbor::value::{to_value, Value};
 use crate::nostd_prelude::*;
 use crate::types::comid::ComidTag;
-use crate::types::corim::{CorimMap, CorimMetaMap};
+use crate::types::corim::{ConciseTagChoice, CorimMap, CorimMetaMap};
 use crate::types::measurement::{
     Digest, DigestAlg, FlagsMap, MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
@@ -65,6 +70,10 @@ pub enum PathSegment {
     MapKey(i64),
     /// A text map key (e.g. a text-keyed CWT claim such as `"svn"`).
     TextKey(String),
+    /// A CBOR map key outside the integer/text label namespaces.
+    ValueKey(String),
+    /// A semantic CBOR tag surrounding a nested value (RFC 8949 Section 3.4).
+    Tag(u64),
 }
 
 /// The nature of a structural mismatch.
@@ -152,6 +161,10 @@ pub fn render_path(path: &[PathSegment]) -> String {
             PathSegment::TextKey(k) => {
                 s.push_str(&format!("[\"{}\"]", crate::cbor::value::escape_text(k)))
             }
+            PathSegment::ValueKey(key) => {
+                s.push_str(&format!("[cbor:{}]", crate::cbor::value::escape_text(key)))
+            }
+            PathSegment::Tag(tag) => s.push_str(&format!(".#6.{tag}")),
         }
     }
     s
@@ -161,61 +174,104 @@ pub fn render_path(path: &[PathSegment]) -> String {
 // Comparison entry point
 // ---------------------------------------------------------------------------
 
-/// Compare `input` against `baseline` for structural conformance.
+/// Compare two CoRIM maps, rejecting invalid or unsupported input.
 ///
-/// Returns a [`ConformanceReport`]; the input conforms when
-/// [`ConformanceReport::is_conformant`] is `true`.
-pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
+/// Both inputs must be structurally valid CoMID-only documents, including
+/// supported TCG bare-bstr forms (draft-ietf-rats-corim-11 Section 4.1).
+/// Embedded tags use exact decoding and shared default per-document resource
+/// limits (RFC 8949 Sections 3 and 10). Serialization, decoding and structural
+/// failures return an error rather than an incomplete conformance report.
+///
+/// Entries are paired one-to-one using typed identities. Unknown extensions
+/// use recursive CBOR shape comparison. This does not check the clock,
+/// registered profiles, signatures or certificate trust.
+/// Callers must apply those checks separately when required.
+pub fn compare(
+    input: &CorimMap,
+    baseline: &CorimMap,
+) -> Result<ConformanceReport, crate::ValidationError> {
+    let input_comids = checked_comids(input)?;
+    let base_comids = checked_comids(baseline)?;
+    compare_decoded(input, baseline, &input_comids, &base_comids)
+}
+
+fn checked_comids(corim: &CorimMap) -> Result<Vec<(String, ComidTag)>, crate::ValidationError> {
+    if corim.tags.iter().any(|tag| {
+        !matches!(
+            tag,
+            ConciseTagChoice::Comid(_) | ConciseTagChoice::BareBstr(_)
+        )
+    }) {
+        return Err(crate::ValidationError::Invalid(
+            "unsupported payload for baseline comparison: only CoMID tags are supported".into(),
+        ));
+    }
+    let bytes = crate::cbor::encode(corim)
+        .map_err(|error| crate::ValidationError::Invalid(error.to_string()))?;
+    let validated = crate::validate::decode_and_validate_structure_with_limits(
+        &bytes,
+        &crate::cbor::DecodeLimits::default(),
+    )?;
+    let mut comids = Vec::with_capacity(validated.comids.len());
+    for (index, comid) in validated.comids.into_iter().enumerate() {
+        comids.push((tag_id_string(&comid, index), comid));
+    }
+    Ok(comids)
+}
+
+fn compare_decoded(
+    input: &CorimMap,
+    baseline: &CorimMap,
+    input_comids: &[(String, ComidTag)],
+    base_comids: &[(String, ComidTag)],
+) -> Result<ConformanceReport, crate::ValidationError> {
     let mut r = ConformanceReport::default();
 
     // --- corim-level: profile is structural; the rest are values.
     compare_leaf(
         &[],
         "profile",
-        opt_val(&baseline.profile),
-        opt_val(&input.profile),
+        opt_val(&baseline.profile)?,
+        opt_val(&input.profile)?,
         &mut r,
         /*structural=*/ true,
     );
     compare_leaf(
         &[],
         "corim-id",
-        Some(to_value_lossy(&baseline.id)),
-        Some(to_value_lossy(&input.id)),
+        Some(checked_value(&baseline.id)?),
+        Some(checked_value(&input.id)?),
         &mut r,
         false,
     );
     compare_leaf(
         &[],
         "rim-validity",
-        opt_val(&baseline.rim_validity),
-        opt_val(&input.rim_validity),
+        opt_val(&baseline.rim_validity)?,
+        opt_val(&input.rim_validity)?,
         &mut r,
         false,
     );
     compare_leaf(
         &[],
         "entities",
-        opt_val(&baseline.entities),
-        opt_val(&input.entities),
+        opt_val(&baseline.entities)?,
+        opt_val(&input.entities)?,
         &mut r,
         false,
     );
     compare_leaf(
         &[],
         "dependent-rims",
-        opt_val(&baseline.dependent_rims),
-        opt_val(&input.dependent_rims),
+        opt_val(&baseline.dependent_rims)?,
+        opt_val(&input.dependent_rims)?,
         &mut r,
         false,
     );
 
-    // --- CoMIDs: decode and pair by tag-identity id.
-    let base_comids = decode_comids(baseline);
-    let input_comids = decode_comids(input);
-    compare_comids(&base_comids, &input_comids, &mut r);
+    compare_comids(base_comids, input_comids, &mut r)?;
 
-    r
+    Ok(r)
 }
 
 // ---------------------------------------------------------------------------
@@ -228,15 +284,18 @@ pub fn compare(input: &CorimMap, baseline: &CorimMap) -> ConformanceReport {
 /// (`payload_hash_alg` / `payload_preimage_content_type`), the *presence*
 /// of `corim-meta` / `CWT-Claims` / `kid` / `x5bag` / `x5chain` / `x5t` /
 /// `x5u`, and the CWT `iss` (the signer identity). Everything else — signer
-/// name/uri, signature-validity, CWT `sub`/`exp`/`nbf` and extra claims,
-/// certificate/key bytes, `payload-location`, extra header labels — is
-/// reported as a value difference only.
+/// name/uri, signature-validity, CWT `sub`/`exp`/`nbf`, certificate/key bytes,
+/// and `payload-location` is reported as a value difference. Unknown header
+/// and CWT extensions compare recursively by CBOR shape.
+/// Encoding or conversion failures return an error; signatures are not verified.
 ///
 /// Findings are located under `$.protected-header`.
 pub fn compare_headers(
     input: &ProtectedCorimHeaderMap,
     baseline: &ProtectedCorimHeaderMap,
-) -> ConformanceReport {
+) -> Result<ConformanceReport, crate::ValidationError> {
+    checked_value(input)?;
+    checked_value(baseline)?;
     let mut r = ConformanceReport::default();
     let base = [PathSegment::Field("protected-header")];
 
@@ -257,8 +316,8 @@ pub fn compare_headers(
     compare_leaf(
         &base,
         "content-type",
-        opt_val(&baseline.content_type),
-        opt_val(&input.content_type),
+        opt_val(&baseline.content_type)?,
+        opt_val(&input.content_type)?,
         &mut r,
         true,
     );
@@ -273,8 +332,8 @@ pub fn compare_headers(
     compare_leaf(
         &base,
         "payload-preimage-content-type",
-        opt_val(&baseline.payload_preimage_content_type),
-        opt_val(&input.payload_preimage_content_type),
+        opt_val(&baseline.payload_preimage_content_type)?,
+        opt_val(&input.payload_preimage_content_type)?,
         &mut r,
         true,
     );
@@ -282,8 +341,8 @@ pub fn compare_headers(
     compare_leaf(
         &base,
         "payload-location",
-        opt_val(&baseline.payload_location),
-        opt_val(&input.payload_location),
+        opt_val(&baseline.payload_location)?,
+        opt_val(&input.payload_location)?,
         &mut r,
         false,
     );
@@ -297,7 +356,7 @@ pub fn compare_headers(
         &mut r,
     );
     if let (Some(b), Some(i)) = (&baseline.corim_meta, &input.corim_meta) {
-        compare_corim_meta(&base, b, i, &mut r);
+        compare_corim_meta(&base, b, i, &mut r)?;
     }
 
     // CWT-Claims — presence structural; `iss` structural; rest values.
@@ -309,7 +368,7 @@ pub fn compare_headers(
         &mut r,
     );
     if let (Some(b), Some(i)) = (&baseline.cwt_claims, &input.cwt_claims) {
-        compare_cwt_claims(&base, b, i, &mut r);
+        compare_cwt_claims(&base, b, i, &mut r)?;
     }
 
     // X.509 / kid — presence structural; the bytes/contents are values.
@@ -344,7 +403,6 @@ pub fn compare_headers(
         Value::Text(s.clone())
     });
 
-    // Extra header labels — reported as value differences.
     compare_extra_values(
         &base,
         "header-extension",
@@ -354,7 +412,7 @@ pub fn compare_headers(
         |k| PathSegment::MapKey(*k),
     );
 
-    r
+    Ok(r)
 }
 
 /// A presence difference on a structural field.
@@ -419,7 +477,7 @@ fn compare_corim_meta(
     baseline: &CorimMetaMap,
     input: &CorimMetaMap,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let mut p = base.to_vec();
     p.push(PathSegment::Field("corim-meta"));
     compare_leaf(
@@ -433,19 +491,20 @@ fn compare_corim_meta(
     compare_leaf(
         &p,
         "signer-uri",
-        opt_val(&baseline.signer.signer_uri),
-        opt_val(&input.signer.signer_uri),
+        opt_val(&baseline.signer.signer_uri)?,
+        opt_val(&input.signer.signer_uri)?,
         r,
         false,
     );
     compare_leaf(
         &p,
         "signature-validity",
-        opt_val(&baseline.signature_validity),
-        opt_val(&input.signature_validity),
+        opt_val(&baseline.signature_validity)?,
+        opt_val(&input.signature_validity)?,
         r,
         false,
     );
+    Ok(())
 }
 
 fn compare_cwt_claims(
@@ -453,7 +512,7 @@ fn compare_cwt_claims(
     baseline: &CwtClaims,
     input: &CwtClaims,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let mut p = base.to_vec();
     p.push(PathSegment::Field("cwt-claims"));
     // `iss` (the signer identity) is structural.
@@ -468,8 +527,8 @@ fn compare_cwt_claims(
     compare_leaf(
         &p,
         "sub",
-        opt_val(&baseline.sub),
-        opt_val(&input.sub),
+        opt_val(&baseline.sub)?,
+        opt_val(&input.sub)?,
         r,
         false,
     );
@@ -500,10 +559,10 @@ fn compare_cwt_claims(
             ClaimKey::Text(t) => PathSegment::TextKey(t.clone()),
         },
     );
+    Ok(())
 }
 
-/// Report presence and content differences of an extension map as value
-/// differences (never structural). `seg` renders a key as a path segment.
+/// Compare extension presence and recursive CBOR shape; `seg` renders a key.
 fn compare_extra_values<K: Ord>(
     base: &[PathSegment],
     field: &'static str,
@@ -513,32 +572,20 @@ fn compare_extra_values<K: Ord>(
     seg: impl Fn(&K) -> PathSegment,
 ) {
     for (k, bv) in baseline {
-        // Compare on presence: a key absent from the input is a difference
-        // even when the baseline value is `Value::Null`.
-        if input.get(k) != Some(bv) {
-            let iv = input.get(k).cloned().unwrap_or(Value::Null);
-            let mut p = base.to_vec();
-            p.push(PathSegment::Field(field));
-            p.push(seg(k));
-            r.value_differences.push(ValueDifference {
-                path: p,
-                field,
-                baseline: bv.clone(),
-                input: iv,
-            });
+        let mut p = base.to_vec();
+        p.push(PathSegment::Field(field));
+        p.push(seg(k));
+        match input.get(k) {
+            Some(value) => compare_value_shape(&p, field, bv, value, r),
+            None => push_missing_field_at(&p, field, r),
         }
     }
-    for (k, iv) in input {
+    for k in input.keys() {
         if !baseline.contains_key(k) {
             let mut p = base.to_vec();
             p.push(PathSegment::Field(field));
             p.push(seg(k));
-            r.value_differences.push(ValueDifference {
-                path: p,
-                field,
-                baseline: Value::Null,
-                input: iv.clone(),
-            });
+            push_unexpected_field_at(&p, field, r);
         }
     }
 }
@@ -547,41 +594,203 @@ fn opt_int(v: Option<i64>) -> Option<Value> {
     v.map(|n| Value::Integer(i128::from(n)))
 }
 
-/// Decode the CoMID tags of a CoRIM into `(tag-id, ComidTag)` pairs,
-/// preserving order and accepting the supported TCG bare-bstr forms.
-/// Non-CoMID tags and undecodable entries are skipped
-/// (the CLI validates both inputs before calling `compare`).
-fn decode_comids(corim: &CorimMap) -> Vec<(String, ComidTag)> {
-    let mut out = Vec::new();
-    for (i, tag) in corim.tags.iter().enumerate() {
-        if let Ok(comid) = tag.as_comid() {
-            let id = tag_id_string(&comid, i);
-            out.push((id, comid));
-        }
+fn tag_id_string(comid: &ComidTag, _index: usize) -> String {
+    match &comid.tag_identity.tag_id {
+        crate::types::common::TagIdChoice::Text(text) => text.clone(),
+        crate::types::common::TagIdChoice::Uuid(bytes) => format!("uuid:{}", hex(bytes)),
     }
-    out
 }
 
-fn tag_id_string(comid: &ComidTag, index: usize) -> String {
-    // `tag-identity.id` is a `$tag-id-type-choice` (text or UUID bytes).
-    match to_value(&comid.tag_identity.tag_id) {
-        Ok(Value::Text(t)) => t,
-        Ok(Value::Bytes(b)) => hex(&b),
-        _ => format!("#{index}"),
+type ExactKey = ValueIdentity<'static>;
+
+fn typed_key<T: serde::Serialize + ?Sized>(value: &T) -> Result<ExactKey, crate::ValidationError> {
+    Ok(checked_value(&value)?.into())
+}
+
+fn key_field(value: &mut ExactKey, label: i64) -> Option<&mut ExactKey> {
+    let ValueIdentity::Map(fields) = value else {
+        return None;
+    };
+    fields
+        .iter_mut()
+        .find_map(|(key, value)| (*key == ValueIdentity::Integer(label.into())).then_some(value))
+}
+
+fn sort_key_array(value: &mut ExactKey) {
+    if let ValueIdentity::Array(values) = value {
+        values.sort_unstable();
     }
+}
+
+fn measurement_exact_key(measurement: &MeasurementMap) -> Result<ExactKey, crate::ValidationError> {
+    use crate::types::tags::*;
+    let mut key = typed_key(measurement)?;
+    if let Some(mval) = key_field(&mut key, MEAS_KEY_MVAL) {
+        for label in [MVAL_KEY_DIGESTS, MVAL_KEY_CRYPTOKEYS] {
+            if let Some(value) = key_field(mval, label) {
+                sort_key_array(value);
+            }
+        }
+        if let Some(ValueIdentity::Map(registers)) = key_field(mval, MVAL_KEY_INTEGRITY_REGISTERS) {
+            for (_, digests) in registers {
+                sort_key_array(digests);
+            }
+        }
+        for label in [MVAL_KEY_NUMBER, MVAL_KEY_TEXT, MVAL_KEY_BYTES] {
+            if let Some(ValueIdentity::Tag(TAG_MATCHER_SET, values)) = key_field(mval, label) {
+                sort_key_array(values);
+            }
+        }
+    }
+    Ok(key)
+}
+
+fn measurement_list_key(
+    measurements: &[MeasurementMap],
+) -> Result<ExactKey, crate::ValidationError> {
+    let mut keyed = Vec::new();
+    let mut positional = Vec::new();
+    for (index, measurement) in measurements.iter().enumerate() {
+        let key = measurement_exact_key(measurement)?;
+        if measurement.mkey.is_some() {
+            keyed.push(key);
+        } else {
+            positional.push(ValueIdentity::Array(alloc::vec![typed_key(&index)?, key]));
+        }
+    }
+    keyed.sort_unstable();
+    Ok(ValueIdentity::Array(alloc::vec![
+        ValueIdentity::Array(keyed),
+        ValueIdentity::Array(positional)
+    ]))
+}
+
+fn prepared_pairs<T>(
+    baseline: &[T],
+    input: &[T],
+    prepare: impl Fn(&T) -> Result<(ExactKey, ExactKey), crate::ValidationError>,
+) -> Result<(Vec<Option<usize>>, Vec<bool>), crate::ValidationError> {
+    let base_keys = baseline
+        .iter()
+        .map(&prepare)
+        .collect::<Result<Vec<_>, _>>()?;
+    let input_keys = input.iter().map(prepare).collect::<Result<Vec<_>, _>>()?;
+    Ok(pair_indexed(&base_keys, &input_keys))
+}
+
+fn environment_pair_key(
+    group: &(
+        &crate::types::environment::EnvironmentMap,
+        &[MeasurementMap],
+    ),
+) -> Result<(ExactKey, ExactKey), crate::ValidationError> {
+    let identity = typed_key(group.0)?;
+    let exact = ValueIdentity::Array(alloc::vec![
+        identity.clone(),
+        measurement_list_key(group.1)?
+    ]);
+    Ok((identity, exact))
+}
+
+fn environment_list_key(groups: EnvMeas<'_>) -> Result<ExactKey, crate::ValidationError> {
+    let mut keys = groups
+        .iter()
+        .map(|group| environment_pair_key(group).map(|(_, exact)| exact))
+        .collect::<Result<Vec<_>, _>>()?;
+    keys.sort_unstable();
+    Ok(ValueIdentity::Array(keys))
+}
+
+fn ces_exact_key(
+    ces: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+) -> Result<ExactKey, crate::ValidationError> {
+    let common = ces.common_condition();
+    let series = ces
+        .series()
+        .iter()
+        .map(|record| {
+            Ok(ValueIdentity::Array(alloc::vec![
+                measurement_list_key(record.condition())?,
+                measurement_list_key(record.addition())?,
+            ]))
+        })
+        .collect::<Result<Vec<_>, crate::ValidationError>>()?;
+    Ok(ValueIdentity::Array(alloc::vec![
+        typed_key(&common.environment)?,
+        measurement_list_key(&common.claims_list)?,
+        typed_key(&common.authorized_by)?,
+        ValueIdentity::Array(series),
+    ]))
+}
+
+fn comid_exact_key(comid: &ComidTag) -> Result<ExactKey, crate::ValidationError> {
+    let triples = &comid.triples;
+    let mut series = triples
+        .conditional_endorsement_series
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(ces_exact_key)
+        .collect::<Result<Vec<_>, _>>()?;
+    series.sort_unstable();
+    let conditional = triples
+        .conditional_endorsement
+        .as_deref()
+        .unwrap_or_default()
+        .iter()
+        .map(|record| {
+            Ok(ValueIdentity::Array(alloc::vec![
+                environment_list_key(
+                    record
+                        .0
+                        .iter()
+                        .map(|group| (&group.0, group.1.as_slice()))
+                        .collect()
+                )?,
+                environment_list_key(endorsed_as_pairs(&record.1))?,
+            ]))
+        })
+        .collect::<Result<Vec<_>, crate::ValidationError>>()?;
+    Ok(ValueIdentity::Array(alloc::vec![
+        typed_key(&(
+            comid.tag_identity.tag_version,
+            &comid.language,
+            &comid.entities,
+            &comid.linked_tags
+        ))?,
+        environment_list_key(refs_as_pairs(
+            triples.reference_triples.as_deref().unwrap_or_default()
+        ))?,
+        environment_list_key(endorsed_as_pairs(
+            triples.endorsed_triples.as_deref().unwrap_or_default()
+        ))?,
+        typed_key(triples.identity_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.attest_key_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.dependency_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.membership_triples.as_deref().unwrap_or_default())?,
+        typed_key(triples.coswid_triples.as_deref().unwrap_or_default())?,
+        ValueIdentity::Array(series),
+        ValueIdentity::Array(conditional),
+    ]))
 }
 
 fn compare_comids(
     baseline: &[(String, ComidTag)],
     input: &[(String, ComidTag)],
     r: &mut ConformanceReport,
-) {
-    for (id, b_comid) in baseline {
-        match input.iter().find(|(iid, _)| iid == id) {
+) -> Result<(), crate::ValidationError> {
+    let (pairs, used) = prepared_pairs(baseline, input, |(_, comid)| {
+        Ok((
+            typed_key(&comid.tag_identity.tag_id)?,
+            comid_exact_key(comid)?,
+        ))
+    })?;
+    for (base_index, (id, b_comid)) in baseline.iter().enumerate() {
+        match pairs[base_index].map(|index| &input[index]) {
             Some((_, i_comid)) => {
                 let path = [PathSegment::Comid(id.clone())];
-                compare_comid_metadata(&path, b_comid, i_comid, r);
-                compare_triples(&path, &b_comid.triples, &i_comid.triples, r);
+                compare_comid_metadata(&path, b_comid, i_comid, r)?;
+                compare_triples(&path, &b_comid.triples, &i_comid.triples, r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path: alloc::vec![PathSegment::Comid(id.clone())],
@@ -590,8 +799,8 @@ fn compare_comids(
             }),
         }
     }
-    for (id, _) in input {
-        if !baseline.iter().any(|(bid, _)| bid == id) {
+    for (index, (id, _)) in input.iter().enumerate() {
+        if !used[index] {
             r.structural_mismatches.push(StructuralMismatch {
                 path: alloc::vec![PathSegment::Comid(id.clone())],
                 kind: MismatchKind::UnexpectedInInput,
@@ -599,6 +808,7 @@ fn compare_comids(
             });
         }
     }
+    Ok(())
 }
 
 /// Compare a CoMID's non-triple metadata. These fields legitimately change
@@ -609,7 +819,7 @@ fn compare_comid_metadata(
     baseline: &ComidTag,
     input: &ComidTag,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     compare_leaf(
         path,
         "tag-version",
@@ -621,27 +831,28 @@ fn compare_comid_metadata(
     compare_leaf(
         path,
         "language",
-        opt_val(&baseline.language),
-        opt_val(&input.language),
+        opt_val(&baseline.language)?,
+        opt_val(&input.language)?,
         r,
         false,
     );
     compare_leaf(
         path,
         "entities",
-        opt_val(&baseline.entities),
-        opt_val(&input.entities),
+        opt_val(&baseline.entities)?,
+        opt_val(&input.entities)?,
         r,
         false,
     );
     compare_leaf(
         path,
         "linked-tags",
-        opt_val(&baseline.linked_tags),
-        opt_val(&input.linked_tags),
+        opt_val(&baseline.linked_tags)?,
+        opt_val(&input.linked_tags)?,
         r,
         false,
     );
+    Ok(())
 }
 
 fn u64_value(v: u64) -> Value {
@@ -657,33 +868,33 @@ fn compare_triples(
     baseline: &crate::types::triples::TriplesMap,
     input: &crate::types::triples::TriplesMap,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     compare_measurement_triples(
         base_path,
         "reference",
         baseline.reference_triples.as_deref().map(refs_as_pairs),
         input.reference_triples.as_deref().map(refs_as_pairs),
         r,
-    );
+    )?;
     compare_measurement_triples(
         base_path,
         "endorsed",
         baseline.endorsed_triples.as_deref().map(endorsed_as_pairs),
         input.endorsed_triples.as_deref().map(endorsed_as_pairs),
         r,
-    );
+    )?;
     compare_ces(
         base_path,
         baseline.conditional_endorsement_series.as_deref(),
         input.conditional_endorsement_series.as_deref(),
         r,
-    );
+    )?;
     compare_ce(
         base_path,
         baseline.conditional_endorsement.as_deref(),
         input.conditional_endorsement.as_deref(),
         r,
-    );
+    )?;
     // Key/domain triples carry identity content (keys, domains, tag-ids)
     // that the spec compares binary (§8.2.4.4.2); any difference is
     // therefore structural. Paired by position.
@@ -722,6 +933,7 @@ fn compare_triples(
         input.coswid_triples.as_deref(),
         r,
     );
+    Ok(())
 }
 
 /// Compare conditional-endorsement-series triples, paired by their
@@ -732,29 +944,22 @@ fn compare_ces(
     baseline: Option<&[crate::types::triples::ConditionalEndorsementSeriesTriple]>,
     input: Option<&[crate::types::triples::ConditionalEndorsementSeriesTriple]>,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let b = baseline.unwrap_or(&[]);
     let i = input.unwrap_or(&[]);
     let kind = "conditional-endorsement-series";
+    let (pairs, used) = prepared_pairs(b, i, |ces| {
+        Ok((
+            typed_key(&ces.common_condition().environment)?,
+            ces_exact_key(ces)?,
+        ))
+    })?;
     for (index, bt) in b.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
-        match i
-            .iter()
-            .find(|it| it.common_condition().environment == bt.common_condition().environment)
-        {
+        match pairs[index].map(|input_index| &i[input_index]) {
             Some(it) => {
-                meas_list(
-                    &path,
-                    "claims-list",
-                    &bt.common_condition().claims_list,
-                    &it.common_condition().claims_list,
-                    r,
-                );
-                if bt.common_condition().authorized_by != it.common_condition().authorized_by {
-                    push_authority_mismatch(&path, r);
-                }
-                compare_series(&path, bt.series(), it.series(), r);
+                compare_ces_entry(&path, bt, it, r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -765,11 +970,8 @@ fn compare_ces(
             }),
         }
     }
-    for (in_index, it) in i.iter().enumerate() {
-        if !b
-            .iter()
-            .any(|bt| bt.common_condition().environment == it.common_condition().environment)
-        {
+    for (in_index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
@@ -782,6 +984,26 @@ fn compare_ces(
             });
         }
     }
+    Ok(())
+}
+
+fn compare_ces_entry(
+    path: &[PathSegment],
+    baseline: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+    input: &crate::types::triples::ConditionalEndorsementSeriesTriple,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    meas_list(
+        path,
+        "claims-list",
+        &baseline.common_condition().claims_list,
+        &input.common_condition().claims_list,
+        report,
+    )?;
+    if baseline.common_condition().authorized_by != input.common_condition().authorized_by {
+        push_authority_mismatch(path, report);
+    }
+    compare_series(path, baseline.series(), input.series(), report)
 }
 
 /// Compare CES series records by position (order is significant — first
@@ -791,7 +1013,7 @@ fn compare_series(
     baseline: &[crate::types::triples::ConditionalSeriesRecord],
     input: &[crate::types::triples::ConditionalSeriesRecord],
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     if baseline.len() != input.len() {
         let mut p = base_path.to_vec();
         p.push(PathSegment::Field("series"));
@@ -810,8 +1032,8 @@ fn compare_series(
         p.push(PathSegment::Index(idx));
         match input.get(idx) {
             Some(ir) => {
-                meas_list(&p, "condition", br.condition(), ir.condition(), r);
-                meas_list(&p, "addition", br.addition(), ir.addition(), r);
+                meas_list(&p, "condition", br.condition(), ir.condition(), r)?;
+                meas_list(&p, "addition", br.addition(), ir.addition(), r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path: p,
@@ -820,6 +1042,7 @@ fn compare_series(
             }),
         }
     }
+    Ok(())
 }
 
 /// Compare conditional-endorsement triples by position: `conditions`
@@ -830,7 +1053,7 @@ fn compare_ce(
     baseline: Option<&[crate::types::triples::ConditionalEndorsementTriple]>,
     input: Option<&[crate::types::triples::ConditionalEndorsementTriple]>,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let b = baseline.unwrap_or(&[]);
     let i = input.unwrap_or(&[]);
     let kind = "conditional-endorsement";
@@ -843,11 +1066,11 @@ fn compare_ce(
                 // conditions: stateful-environment-records, env-keyed.
                 let bc: EnvMeas = bt.0.iter().map(|s| (&s.0, s.1.as_slice())).collect();
                 let ic: EnvMeas = it.0.iter().map(|s| (&s.0, s.1.as_slice())).collect();
-                compare_env_meas(&path, "conditions", &bc, &ic, r);
+                compare_env_meas(&path, "conditions", &bc, &ic, r)?;
                 // endorsements: endorsed-triple-records, env-keyed.
                 let be: EnvMeas = it_pairs(&bt.1);
                 let ie: EnvMeas = it_pairs(&it.1);
-                compare_env_meas(&path, "endorsements", &be, &ie, r);
+                compare_env_meas(&path, "endorsements", &be, &ie, r)?;
             }
             (Some(_), None) => r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -864,6 +1087,7 @@ fn compare_ce(
             (None, None) => {}
         }
     }
+    Ok(())
 }
 
 fn it_pairs(v: &[crate::types::triples::EndorsedTriple]) -> EnvMeas<'_> {
@@ -877,12 +1101,14 @@ fn compare_env_meas(
     baseline: &EnvMeas<'_>,
     input: &EnvMeas<'_>,
     r: &mut ConformanceReport,
-) {
-    for (b_env, b_meas) in baseline {
+) -> Result<(), crate::ValidationError> {
+    let (pairs, used) = prepared_pairs(baseline, input, environment_pair_key)?;
+    for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Field(field));
-        match input.iter().find(|(ie, _)| *ie == *b_env) {
-            Some((_, i_meas)) => compare_measurements(&path, b_meas, i_meas, r),
+        path.push(PathSegment::Index(index));
+        match pairs[index].map(|input_index| &input[input_index]) {
+            Some((_, i_meas)) => compare_measurements(&path, b_meas, i_meas, r)?,
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
                 kind: MismatchKind::MissingInInput,
@@ -890,10 +1116,11 @@ fn compare_env_meas(
             }),
         }
     }
-    for (i_env, _) in input {
-        if !baseline.iter().any(|(be, _)| *be == *i_env) {
+    for (index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Field(field));
+            path.push(PathSegment::Index(index));
             r.structural_mismatches.push(StructuralMismatch {
                 path,
                 kind: MismatchKind::UnexpectedInInput,
@@ -901,6 +1128,7 @@ fn compare_env_meas(
             });
         }
     }
+    Ok(())
 }
 
 /// Push a measurement-list comparison under a named field segment.
@@ -910,10 +1138,11 @@ fn meas_list(
     baseline: &[MeasurementMap],
     input: &[MeasurementMap],
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let mut p = base_path.to_vec();
     p.push(PathSegment::Field(field));
-    compare_measurements(&p, baseline, input, r);
+    compare_measurements(&p, baseline, input, r)?;
+    Ok(())
 }
 
 /// Structural comparison of identity/key/domain-bearing triples whose
@@ -989,15 +1218,15 @@ fn compare_measurement_triples(
     baseline: Option<EnvMeas<'_>>,
     input: Option<EnvMeas<'_>>,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     let baseline = baseline.unwrap_or_default();
     let input = input.unwrap_or_default();
-
-    for (index, (b_env, b_meas)) in baseline.iter().enumerate() {
+    let (pairs, used) = prepared_pairs(&baseline, &input, environment_pair_key)?;
+    for (index, (_, b_meas)) in baseline.iter().enumerate() {
         let mut path = base_path.to_vec();
         path.push(PathSegment::Triple { kind, index });
-        match input.iter().find(|(ie, _)| *ie == *b_env) {
-            Some((_, i_meas)) => compare_measurements(&path, b_meas, i_meas, r),
+        match pairs[index].map(|input_index| &input[input_index]) {
+            Some((_, i_meas)) => compare_measurements(&path, b_meas, i_meas, r)?,
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
                 kind: MismatchKind::MissingInInput,
@@ -1005,8 +1234,8 @@ fn compare_measurement_triples(
             }),
         }
     }
-    for (in_index, (i_env, _)) in input.iter().enumerate() {
-        if !baseline.iter().any(|(be, _)| *be == *i_env) {
+    for (in_index, matched) in used.iter().enumerate() {
+        if !matched {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Triple {
                 kind,
@@ -1019,6 +1248,7 @@ fn compare_measurement_triples(
             });
         }
     }
+    Ok(())
 }
 
 /// Pair measurements by `mkey` (unkeyed → by index); compare mval.
@@ -1027,25 +1257,48 @@ fn compare_measurements(
     baseline: &[MeasurementMap],
     input: &[MeasurementMap],
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
+    let mut pairs = alloc::vec![None; baseline.len()];
+    let mut used = alloc::vec![false; input.len()];
+    let mut base_positions = Vec::new();
+    let mut base_keys = Vec::new();
+    let mut input_positions = Vec::new();
+    let mut input_keys = Vec::new();
+    for (index, measurement) in baseline.iter().enumerate() {
+        if let Some(key) = &measurement.mkey {
+            base_positions.push(index);
+            base_keys.push((typed_key(key)?, measurement_exact_key(measurement)?));
+        } else if input
+            .get(index)
+            .is_some_and(|candidate| candidate.mkey.is_none())
+        {
+            pairs[index] = Some(index);
+            used[index] = true;
+        }
+    }
+    for (index, measurement) in input.iter().enumerate() {
+        if let Some(key) = &measurement.mkey {
+            input_positions.push(index);
+            input_keys.push((typed_key(key)?, measurement_exact_key(measurement)?));
+        }
+    }
+    let (keyed_pairs, _) = pair_indexed(&base_keys, &input_keys);
+    for (base_index, candidate) in keyed_pairs.into_iter().enumerate() {
+        if let Some(candidate) = candidate {
+            let input_index = input_positions[candidate];
+            pairs[base_positions[base_index]] = Some(input_index);
+            used[input_index] = true;
+        }
+    }
     for (idx, b) in baseline.iter().enumerate() {
         let key = mkey_string(b, idx);
         let mut path = base_path.to_vec();
         path.push(PathSegment::Measurement(key));
         // Match by mkey when keyed, else by position.
-        let matched = if b.mkey.is_some() {
-            input.iter().find(|i| i.mkey == b.mkey)
-        } else {
-            input.get(idx).filter(|i| i.mkey.is_none())
-        };
+        let matched = pairs[idx].map(|input_index| &input[input_index]);
         match matched {
             Some(i) => {
-                // `authorized-by` (the measurement's authority keys) is part
-                // of the structural identity (§8.2.4.4.2), not a value.
-                if b.authorized_by != i.authorized_by {
-                    push_authority_mismatch(&path, r);
-                }
-                compare_mval(&path, &b.mval, &i.mval, r);
+                compare_measurement(&path, b, i, r)?;
             }
             None => r.structural_mismatches.push(StructuralMismatch {
                 path,
@@ -1055,12 +1308,7 @@ fn compare_measurements(
         }
     }
     for (idx, i) in input.iter().enumerate() {
-        let present = if i.mkey.is_some() {
-            baseline.iter().any(|b| b.mkey == i.mkey)
-        } else {
-            baseline.get(idx).is_some_and(|b| b.mkey.is_none())
-        };
-        if !present {
+        if !used[idx] {
             let mut path = base_path.to_vec();
             path.push(PathSegment::Measurement(mkey_string(i, idx)));
             r.structural_mismatches.push(StructuralMismatch {
@@ -1070,16 +1318,28 @@ fn compare_measurements(
             });
         }
     }
+    Ok(())
+}
+
+fn compare_measurement(
+    path: &[PathSegment],
+    baseline: &MeasurementMap,
+    input: &MeasurementMap,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    if baseline.authorized_by != input.authorized_by {
+        push_authority_mismatch(path, report);
+    }
+    compare_mval(path, &baseline.mval, &input.mval, report)
 }
 
 fn mkey_string(m: &MeasurementMap, index: usize) -> String {
+    use crate::types::common::MeasuredElement;
     match &m.mkey {
-        Some(k) => match to_value(k) {
-            Ok(Value::Text(t)) => t,
-            Ok(Value::Integer(n)) => n.to_string(),
-            Ok(Value::Bytes(b)) => hex(&b),
-            _ => format!("#{index}"),
-        },
+        Some(MeasuredElement::Text(text)) => text.clone(),
+        Some(MeasuredElement::Uint(number)) => format!("uint:{number}"),
+        Some(MeasuredElement::Uuid(bytes)) => format!("uuid:{}", hex(bytes)),
+        Some(MeasuredElement::Oid(bytes)) => format!("oid:{}", hex(bytes)),
         None => format!("#{index}"),
     }
 }
@@ -1093,7 +1353,7 @@ fn compare_mval(
     b: &MeasurementValuesMap,
     i: &MeasurementValuesMap,
     r: &mut ConformanceReport,
-) {
+) -> Result<(), crate::ValidationError> {
     // digests (structure = algorithms/count; value = bytes).
     compare_digests(path, b.digests.as_deref(), i.digests.as_deref(), r);
     // svn (structure = exact vs min; value = the number).
@@ -1104,15 +1364,21 @@ fn compare_mval(
     compare_flags(path, b.flags.as_ref(), i.flags.as_ref(), r);
 
     // Simple scalar attributes: presence = structure, payload = value.
-    scalar(path, "version", opt_val(&b.version), opt_val(&i.version), r);
+    scalar(
+        path,
+        "version",
+        opt_val(&b.version)?,
+        opt_val(&i.version)?,
+        r,
+    );
     scalar(
         path,
         "serial-number",
-        opt_val(&b.serial_number),
-        opt_val(&i.serial_number),
+        opt_val(&b.serial_number)?,
+        opt_val(&i.serial_number)?,
         r,
     );
-    scalar(path, "name", opt_val(&b.name), opt_val(&i.name), r);
+    scalar(path, "name", opt_val(&b.name)?, opt_val(&i.name)?, r);
     scalar(
         path,
         "ueid",
@@ -1130,54 +1396,207 @@ fn compare_mval(
     scalar(
         path,
         "mac-addr",
-        opt_val(&b.mac_addr),
-        opt_val(&i.mac_addr),
+        opt_val(&b.mac_addr)?,
+        opt_val(&i.mac_addr)?,
         r,
     );
-    scalar(path, "ip-addr", opt_val(&b.ip_addr), opt_val(&i.ip_addr), r);
+    scalar(
+        path,
+        "ip-addr",
+        opt_val(&b.ip_addr)?,
+        opt_val(&i.ip_addr)?,
+        r,
+    );
 
-    // Coarse (refined in a later commit): presence = structure, whole-field
-    // inequality = value difference. Never a false structural failure.
-    scalar(
+    compare_keys(path, b.cryptokeys.as_deref(), i.cryptokeys.as_deref(), r)?;
+    compare_registers(
         path,
-        "cryptokeys",
-        opt_val(&b.cryptokeys),
-        opt_val(&i.cryptokeys),
+        b.integrity_registers.as_ref(),
+        i.integrity_registers.as_ref(),
         r,
-    );
-    scalar(
-        path,
-        "integrity-registers",
-        opt_val(&b.integrity_registers),
-        opt_val(&i.integrity_registers),
-        r,
-    );
-    scalar(
+    )?;
+    shape_field(
         path,
         "int-range",
-        opt_val(&b.int_range),
-        opt_val(&i.int_range),
+        opt_val(&b.int_range)?,
+        opt_val(&i.int_range)?,
         r,
     );
 
-    scalar(path, "bool", opt_val(&b.r#bool), opt_val(&i.r#bool), r);
-    scalar(
-        path,
-        "number",
-        b.number
-            .as_ref()
-            .map(|value| crate::cbor::value::to_human_readable_value(value).unwrap_or(Value::Null)),
-        i.number
-            .as_ref()
-            .map(|value| crate::cbor::value::to_human_readable_value(value).unwrap_or(Value::Null)),
-        r,
-    );
-    scalar(path, "text", opt_val(&b.text), opt_val(&i.text), r);
-    scalar(path, "bytes", opt_val(&b.bytes), opt_val(&i.bytes), r);
+    scalar(path, "bool", opt_val(&b.r#bool)?, opt_val(&i.r#bool)?, r);
+    shape_field(path, "number", opt_val(&b.number)?, opt_val(&i.number)?, r);
+    shape_field(path, "text", opt_val(&b.text)?, opt_val(&i.text)?, r);
+    shape_field(path, "bytes", opt_val(&b.bytes)?, opt_val(&i.bytes)?, r);
 
-    // Profile-defined extension attributes: key presence = structure,
-    // value = value difference.
     compare_extra_entries(path, &b.extra_entries, &i.extra_entries, r);
+    Ok(())
+}
+
+fn compare_keys(
+    path: &[PathSegment],
+    baseline: Option<&[crate::types::common::CryptoKey]>,
+    input: Option<&[crate::types::common::CryptoKey]>,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    compare_presence(
+        path,
+        "cryptokeys",
+        baseline.is_some(),
+        input.is_some(),
+        report,
+    );
+    if let (Some(base), Some(candidate)) = (baseline, input) {
+        let (pairs, used) = prepared_pairs(base, candidate, crypto_pair_key)?;
+        for (index, key) in base.iter().enumerate() {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field("cryptokeys"));
+            nested.push(PathSegment::Index(index));
+            match pairs[index] {
+                Some(input_index) => compare_value_shape(
+                    &nested,
+                    "cryptokeys",
+                    &checked_value(key)?,
+                    &checked_value(&candidate[input_index])?,
+                    report,
+                ),
+                None => push_missing_field_at(&nested, "key representation or algorithm", report),
+            }
+        }
+        for (index, matched) in used.iter().enumerate() {
+            if !matched {
+                let mut nested = path.to_vec();
+                nested.push(PathSegment::Field("cryptokeys"));
+                nested.push(PathSegment::Index(index));
+                push_unexpected_field_at(&nested, "key representation or algorithm", report);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn crypto_pair_key(
+    key: &crate::types::common::CryptoKey,
+) -> Result<(ExactKey, ExactKey), crate::ValidationError> {
+    use crate::types::common::CryptoKey;
+    let exact = typed_key(key)?;
+    let ValueIdentity::Tag(tag, _) = &exact else {
+        return Err(crate::ValidationError::Invalid(
+            "crypto-key must have a representation tag".into(),
+        ));
+    };
+    let algorithm = match key {
+        CryptoKey::KeyThumbprint(digest)
+        | CryptoKey::CertThumbprint(digest)
+        | CryptoKey::CertPathThumbprint(digest) => match &digest.0 {
+            DigestAlg::Int(number) => ValueIdentity::Integer(i128::from(*number)),
+            DigestAlg::Text(text) => ValueIdentity::Text(alloc::borrow::Cow::Owned(text.clone())),
+        },
+        _ => ValueIdentity::Null,
+    };
+    let identity = ValueIdentity::Array(alloc::vec![
+        ValueIdentity::Integer((*tag).into()),
+        algorithm
+    ]);
+    Ok((identity, exact))
+}
+
+fn compare_registers(
+    path: &[PathSegment],
+    baseline: Option<&crate::types::measurement::IntegrityRegisters>,
+    input: Option<&crate::types::measurement::IntegrityRegisters>,
+    report: &mut ConformanceReport,
+) -> Result<(), crate::ValidationError> {
+    compare_presence(
+        path,
+        "integrity-registers",
+        baseline.is_some(),
+        input.is_some(),
+        report,
+    );
+    if let (Some(base), Some(candidate)) = (baseline, input) {
+        for (key, digests) in &base.0 {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field("integrity-registers"));
+            nested.push(value_key(&checked_value(key)?));
+            match candidate.0.get(key) {
+                Some(input_digests) => {
+                    compare_digests(&nested, Some(digests), Some(input_digests), report)
+                }
+                None => push_missing_field_at(&nested, "register", report),
+            }
+        }
+        for key in candidate.0.keys() {
+            if !base.0.contains_key(key) {
+                let mut nested = path.to_vec();
+                nested.push(PathSegment::Field("integrity-registers"));
+                nested.push(value_key(&checked_value(key)?));
+                push_unexpected_field_at(&nested, "register", report);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn shape_field(
+    path: &[PathSegment],
+    field: &'static str,
+    baseline: Option<Value>,
+    input: Option<Value>,
+    report: &mut ConformanceReport,
+) {
+    match (baseline, input) {
+        (Some(base), Some(candidate)) => {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Field(field));
+            if matches!(field, "number" | "text" | "bytes") {
+                if let (Value::Tag(base_tag, base_values), Value::Tag(input_tag, input_values)) =
+                    (&base, &candidate)
+                {
+                    if *base_tag == crate::types::tags::TAG_MATCHER_SET && base_tag == input_tag {
+                        if let (Value::Array(base), Value::Array(candidate)) =
+                            (base_values.as_ref(), input_values.as_ref())
+                        {
+                            let base_identities: Vec<_> = base
+                                .iter()
+                                .map(|value| (value_kind(value), ValueIdentity::from(value)))
+                                .collect();
+                            let input_identities: Vec<_> = candidate
+                                .iter()
+                                .map(|value| (value_kind(value), ValueIdentity::from(value)))
+                                .collect();
+                            let (pairs, used) = pair_indexed(&base_identities, &input_identities);
+                            for (index, value) in base.iter().enumerate() {
+                                let mut element = nested.clone();
+                                element.push(PathSegment::Index(index));
+                                match pairs[index] {
+                                    Some(input_index) => compare_value_shape(
+                                        &element,
+                                        field,
+                                        value,
+                                        &candidate[input_index],
+                                        report,
+                                    ),
+                                    None => push_missing_field_at(&element, field, report),
+                                }
+                            }
+                            for (index, matched) in used.iter().enumerate() {
+                                if !matched {
+                                    let mut element = nested.clone();
+                                    element.push(PathSegment::Index(index));
+                                    push_unexpected_field_at(&element, field, report);
+                                }
+                            }
+                            return;
+                        }
+                    }
+                }
+            }
+            compare_value_shape(&nested, field, &base, &candidate, report);
+        }
+        (Some(_), None) => push_missing_field(path, field, report),
+        (None, Some(_)) => push_unexpected_field(path, field, report),
+        (None, None) => {}
+    }
 }
 
 fn compare_digests(
@@ -1192,11 +1611,14 @@ fn compare_digests(
         (None, Some(_)) => push_unexpected_field(path, "digests", r),
         (Some(b), Some(i)) => {
             // Pair by algorithm (§8.2.4.4.5.4).
+            let base_keys: Vec<_> = b.iter().map(digest_pair_key).collect();
+            let input_keys: Vec<_> = i.iter().map(digest_pair_key).collect();
+            let (pairs, used) = pair_indexed(&base_keys, &input_keys);
             for (slot, bd) in b.iter().enumerate() {
                 let mut p = path.to_vec();
                 p.push(PathSegment::Field("digests"));
                 p.push(PathSegment::Index(slot));
-                match i.iter().find(|id| id.0 == bd.0) {
+                match pairs[slot].map(|index| &i[index]) {
                     Some(id) if id.1 != bd.1 => r.value_differences.push(ValueDifference {
                         path: p,
                         field: "digest-value",
@@ -1214,8 +1636,8 @@ fn compare_digests(
                     }),
                 }
             }
-            for id in i {
-                if !b.iter().any(|bd| bd.0 == id.0) {
+            for (index, id) in i.iter().enumerate() {
+                if !used[index] {
                     let mut p = path.to_vec();
                     p.push(PathSegment::Field("digests"));
                     r.structural_mismatches.push(StructuralMismatch {
@@ -1230,6 +1652,14 @@ fn compare_digests(
             }
         }
     }
+}
+
+fn digest_pair_key(digest: &Digest) -> (ValueIdentity<'_>, &[u8]) {
+    let algorithm = match &digest.0 {
+        DigestAlg::Int(number) => ValueIdentity::Integer(i128::from(*number)),
+        DigestAlg::Text(text) => ValueIdentity::Text(alloc::borrow::Cow::Borrowed(text)),
+    };
+    (algorithm, &digest.1)
 }
 
 fn compare_svn(
@@ -1423,13 +1853,7 @@ fn compare_extra_entries(
         p.push(PathSegment::Field("mval-extension"));
         p.push(PathSegment::MapKey(*k));
         match input.get(k) {
-            Some(iv) if iv != bv => r.value_differences.push(ValueDifference {
-                path: p,
-                field: "mval-extension",
-                baseline: bv.clone(),
-                input: iv.clone(),
-            }),
-            Some(_) => {}
+            Some(iv) => compare_value_shape(&p, "mval-extension", bv, iv, r),
             None => r.structural_mismatches.push(StructuralMismatch {
                 path: p,
                 kind: MismatchKind::MissingInInput,
@@ -1454,6 +1878,209 @@ fn compare_extra_entries(
 // ---------------------------------------------------------------------------
 // small helpers
 // ---------------------------------------------------------------------------
+
+fn value_key(key: &Value) -> PathSegment {
+    match key {
+        Value::Integer(number) => i64::try_from(*number)
+            .map(PathSegment::MapKey)
+            .unwrap_or_else(|_| PathSegment::ValueKey(format!("integer:{number}"))),
+        Value::Text(text) => PathSegment::TextKey(text.clone()),
+        other => PathSegment::ValueKey(format!("{other:?}")),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum ValueIdentity<'a> {
+    Integer(i128),
+    Float(u64),
+    Bytes(alloc::borrow::Cow<'a, [u8]>),
+    Text(alloc::borrow::Cow<'a, str>),
+    Bool(bool),
+    Null,
+    Array(Vec<Self>),
+    Map(Vec<(Self, Self)>),
+    Tag(u64, Box<Self>),
+}
+
+impl<'a> From<&'a Value> for ValueIdentity<'a> {
+    fn from(value: &'a Value) -> Self {
+        match value {
+            Value::Integer(number) => Self::Integer(*number),
+            Value::Float(number) => Self::Float(number.to_bits()),
+            Value::Bytes(bytes) => Self::Bytes(alloc::borrow::Cow::Borrowed(bytes)),
+            Value::Text(text) => Self::Text(alloc::borrow::Cow::Borrowed(text)),
+            Value::Bool(value) => Self::Bool(*value),
+            Value::Null => Self::Null,
+            Value::Array(values) => Self::Array(values.iter().map(Self::from).collect()),
+            Value::Map(entries) => {
+                let mut entries: Vec<_> = entries
+                    .iter()
+                    .map(|(key, value)| (Self::from(key), Self::from(value)))
+                    .collect();
+                entries.sort_unstable();
+                Self::Map(entries)
+            }
+            Value::Tag(tag, inner) => Self::Tag(*tag, Box::new(Self::from(inner.as_ref()))),
+        }
+    }
+}
+
+impl From<Value> for ValueIdentity<'static> {
+    fn from(value: Value) -> Self {
+        match value {
+            Value::Integer(number) => Self::Integer(number),
+            Value::Float(number) => Self::Float(number.to_bits()),
+            Value::Bytes(bytes) => Self::Bytes(alloc::borrow::Cow::Owned(bytes)),
+            Value::Text(text) => Self::Text(alloc::borrow::Cow::Owned(text)),
+            Value::Bool(value) => Self::Bool(value),
+            Value::Null => Self::Null,
+            Value::Array(values) => Self::Array(values.into_iter().map(Self::from).collect()),
+            Value::Map(entries) => {
+                let mut entries: Vec<_> = entries
+                    .into_iter()
+                    .map(|(key, value)| (Self::from(key), Self::from(value)))
+                    .collect();
+                entries.sort_unstable();
+                Self::Map(entries)
+            }
+            Value::Tag(tag, inner) => Self::Tag(tag, Box::new(Self::from(*inner))),
+        }
+    }
+}
+
+fn values_equal(baseline: &Value, input: &Value) -> bool {
+    ValueIdentity::from(baseline) == ValueIdentity::from(input)
+}
+
+fn pair_indexed<Key: Ord, Exact: Ord>(
+    baseline: &[(Key, Exact)],
+    input: &[(Key, Exact)],
+) -> (Vec<Option<usize>>, Vec<bool>) {
+    let mut by_key: BTreeMap<_, alloc::collections::VecDeque<usize>> = BTreeMap::new();
+    let mut by_entry: BTreeMap<_, alloc::collections::VecDeque<usize>> = BTreeMap::new();
+    for (index, (key, value)) in input.iter().enumerate() {
+        by_key.entry(key).or_default().push_back(index);
+        by_entry.entry((key, value)).or_default().push_back(index);
+    }
+    let mut pairs = alloc::vec![None; baseline.len()];
+    let mut used = alloc::vec![false; input.len()];
+    for (index, (key, value)) in baseline.iter().enumerate() {
+        if let Some(candidates) = by_entry.get_mut(&(key, value)) {
+            if let Some(candidate) = candidates.pop_front() {
+                pairs[index] = Some(candidate);
+                used[candidate] = true;
+            }
+        }
+    }
+    for (index, (key, _)) in baseline.iter().enumerate() {
+        if pairs[index].is_some() {
+            continue;
+        }
+        if let Some(candidates) = by_key.get_mut(key) {
+            while let Some(candidate) = candidates.pop_front() {
+                if !used[candidate] {
+                    pairs[index] = Some(candidate);
+                    used[candidate] = true;
+                    break;
+                }
+            }
+        }
+    }
+    (pairs, used)
+}
+
+fn value_kind(value: &Value) -> String {
+    match value {
+        Value::Integer(_) => "integer".into(),
+        Value::Float(_) => "float".into(),
+        Value::Bytes(_) => "bytes".into(),
+        Value::Text(_) => "text".into(),
+        Value::Bool(_) => "bool".into(),
+        Value::Null => "null".into(),
+        Value::Array(_) => "array".into(),
+        Value::Map(_) => "map".into(),
+        Value::Tag(tag, _) => format!("tag:{tag}"),
+    }
+}
+
+fn compare_value_shape(
+    path: &[PathSegment],
+    field: &'static str,
+    baseline: &Value,
+    input: &Value,
+    report: &mut ConformanceReport,
+) {
+    match (baseline, input) {
+        (Value::Map(base), Value::Map(candidate)) => {
+            let base_identities: Vec<_> = base
+                .iter()
+                .map(|(key, value)| (ValueIdentity::from(key), ValueIdentity::from(value)))
+                .collect();
+            let input_identities: Vec<_> = candidate
+                .iter()
+                .map(|(key, value)| (ValueIdentity::from(key), ValueIdentity::from(value)))
+                .collect();
+            let (pairs, used) = pair_indexed(&base_identities, &input_identities);
+            for (index, (key, value)) in base.iter().enumerate() {
+                let mut nested = path.to_vec();
+                nested.push(value_key(key));
+                match pairs[index] {
+                    Some(input_index) => compare_value_shape(
+                        &nested,
+                        field,
+                        value,
+                        &candidate[input_index].1,
+                        report,
+                    ),
+                    None => push_missing_field_at(&nested, field, report),
+                }
+            }
+            for (index, (key, _)) in candidate.iter().enumerate() {
+                if !used[index] {
+                    let mut nested = path.to_vec();
+                    nested.push(value_key(key));
+                    push_unexpected_field_at(&nested, field, report);
+                }
+            }
+        }
+        (Value::Array(base), Value::Array(candidate)) => {
+            for index in 0..base.len().max(candidate.len()) {
+                let mut nested = path.to_vec();
+                nested.push(PathSegment::Index(index));
+                match (base.get(index), candidate.get(index)) {
+                    (Some(base), Some(candidate)) => {
+                        compare_value_shape(&nested, field, base, candidate, report)
+                    }
+                    (Some(_), None) => push_missing_field_at(&nested, field, report),
+                    (None, Some(_)) => push_unexpected_field_at(&nested, field, report),
+                    (None, None) => {}
+                }
+            }
+        }
+        (Value::Tag(base_tag, base), Value::Tag(input_tag, candidate)) if base_tag == input_tag => {
+            let mut nested = path.to_vec();
+            nested.push(PathSegment::Tag(*base_tag));
+            compare_value_shape(&nested, field, base, candidate, report);
+        }
+        _ if value_kind(baseline) != value_kind(input) => {
+            report.structural_mismatches.push(StructuralMismatch {
+                path: path.to_vec(),
+                kind: MismatchKind::TypeMismatch {
+                    baseline: value_kind(baseline),
+                    input: value_kind(input),
+                },
+                detail: format!("{field} CBOR type or tag differs"),
+            })
+        }
+        _ if !values_equal(baseline, input) => report.value_differences.push(ValueDifference {
+            path: path.to_vec(),
+            field,
+            baseline: baseline.clone(),
+            input: input.clone(),
+        }),
+        _ => {}
+    }
+}
 
 /// Compare an optional scalar attribute: presence is structural, payload
 /// is a value difference.
@@ -1566,11 +2193,11 @@ fn push_unexpected_field_at(path: &[PathSegment], field: &str, r: &mut Conforman
     });
 }
 
-fn opt_val<T: serde::Serialize>(v: &Option<T>) -> Option<Value> {
-    v.as_ref().map(to_value_lossy)
+fn opt_val<T: serde::Serialize>(v: &Option<T>) -> Result<Option<Value>, crate::ValidationError> {
+    v.as_ref().map(checked_value).transpose()
 }
-fn to_value_lossy<T: serde::Serialize>(v: &T) -> Value {
-    to_value(v).unwrap_or(Value::Null)
+fn checked_value<T: serde::Serialize>(v: &T) -> Result<Value, crate::ValidationError> {
+    to_value(v).map_err(crate::ValidationError::Invalid)
 }
 
 fn hex(bytes: &[u8]) -> String {
