@@ -98,10 +98,9 @@ fn signed(protected: &[u8]) -> Vec<u8> {
 fn sample_corim() -> CorimMap {
     let env = EnvironmentMap::for_class("V", "M");
     let mval = {
-        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.svn = __corim_field_0;
-        __corim_value
+        let mut values = MeasurementValuesMap::default();
+        values.svn = Some(SvnChoice::ExactValue(1));
+        values
     };
     let meas = MeasurementMap {
         mkey: None,
@@ -222,10 +221,9 @@ fn skipped_environment_extension_duplicates_reject() {
 #[test]
 fn serializers_reject_extras_colliding_with_populated_modeled_fields() {
     let mut mval = {
-        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.svn = __corim_field_0;
-        __corim_value
+        let mut values = MeasurementValuesMap::default();
+        values.svn = Some(SvnChoice::ExactValue(1));
+        values
     };
     mval.extra_entries
         .insert(MVAL_KEY_SVN, value(&SvnChoice::ExactValue(1)));

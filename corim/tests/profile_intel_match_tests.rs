@@ -37,10 +37,9 @@ fn ref_triple_with_extras(extras: BTreeMap<i64, Value>) -> ReferenceTriple {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = extras;
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.extra_entries = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
@@ -53,10 +52,9 @@ fn evidence_with_extras(extras: BTreeMap<i64, Value>) -> Vec<EvidenceClaim> {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = extras;
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.extra_entries = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
@@ -80,10 +78,9 @@ fn match_measurement_returns_none_when_reference_has_no_intel_keys() {
     let r = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = Some("x".into());
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.name = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("x".into());
+            values
         },
         authorized_by: None,
     };
@@ -122,10 +119,9 @@ fn match_measurement_some_true_when_bare_intel_equal_and_core_matches() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras;
+            values
         },
         authorized_by: None,
     };
@@ -148,10 +144,9 @@ fn match_measurement_some_false_when_bare_intel_unequal() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -179,10 +174,9 @@ fn match_measurement_some_true_when_numeric_ge_satisfied() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -208,10 +202,9 @@ fn match_measurement_some_false_when_numeric_ge_violated() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -238,10 +231,9 @@ fn match_measurement_some_true_when_attributes_bare_equal() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -264,10 +256,9 @@ fn match_measurement_some_false_when_attributes_bare_unequal() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -301,10 +292,9 @@ fn match_measurement_some_true_when_set_member_matches() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -336,10 +326,9 @@ fn match_measurement_some_false_when_set_not_member_violated() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -360,20 +349,18 @@ fn match_measurement_returns_some_false_when_core_fields_disagree() {
     let r = MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
         mval: {
-            let __corim_field_0 = extras.clone();
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras.clone();
+            values
         },
         authorized_by: None,
     };
     let e = MeasurementMap {
         mkey: Some(MeasuredElement::Uint(2)),
         mval: {
-            let __corim_field_0 = extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras;
+            values
         },
         authorized_by: None,
     };
@@ -510,13 +497,10 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(vec![digest.clone()]);
-
-                let __corim_field_1 = r_extras.clone();
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.digests = __corim_field_0;
-                __corim_value.extra_entries = __corim_field_1;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![digest.clone()]);
+                values.extra_entries = r_extras.clone();
+                values
             },
             authorized_by: None,
         }],
@@ -526,13 +510,10 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(vec![digest]);
-
-                let __corim_field_1 = r_extras;
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.digests = __corim_field_0;
-                __corim_value.extra_entries = __corim_field_1;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![digest]);
+                values.extra_entries = r_extras;
+                values
             },
             authorized_by: None,
         }],
@@ -555,13 +536,10 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(vec![Digest::new(1, vec![0xAAu8; 32])]);
-
-                let __corim_field_1 = extras.clone();
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.digests = __corim_field_0;
-                __corim_value.extra_entries = __corim_field_1;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(1, vec![0xAAu8; 32])]);
+                values.extra_entries = extras.clone();
+                values
             },
             authorized_by: None,
         }],
@@ -571,13 +549,11 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(vec![Digest::new(1, vec![0xBBu8; 32])]);
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(1, vec![0xBBu8; 32])]);
                 // differs
-                let __corim_field_1 = extras;
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.digests = __corim_field_0;
-                __corim_value.extra_entries = __corim_field_1;
-                __corim_value
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
@@ -611,10 +587,9 @@ fn match_measurement_int_range_accepts_value_in_window() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -629,10 +604,9 @@ fn match_measurement_int_range_accepts_value_in_window() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -661,10 +635,9 @@ fn match_measurement_min_svn_pass_and_fail() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -678,10 +651,9 @@ fn match_measurement_min_svn_pass_and_fail() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -718,10 +690,9 @@ fn match_measurement_set_of_digests_member() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -758,10 +729,9 @@ fn match_measurement_masked_raw_value_passes_under_mask() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -776,10 +746,9 @@ fn match_measurement_masked_raw_value_passes_under_mask() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -810,10 +779,9 @@ fn match_measurement_tcbdate_normalizes_across_encodings() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -850,10 +818,9 @@ fn match_measurement_tcbdate_period_contains_instant() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -868,10 +835,9 @@ fn match_measurement_tcbdate_period_contains_instant() {
     let e = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = e_extras;
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.extra_entries = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };

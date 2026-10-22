@@ -33,13 +33,12 @@ fn main() {
     let ref_meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
         mval: {
-            let __corim_field_0 = Some(vec![
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![
                 Digest::new(7, vec![0xAA; 48]), // SHA-384
                 Digest::new(2, vec![0xBB; 32]), // SHA-256
             ]);
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value
+            values
         },
         authorized_by: None,
     };
@@ -47,10 +46,9 @@ fn main() {
     let endorsed_meas = MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = Some(SvnChoice::MinValue(3));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(3));
+            values
         },
         authorized_by: None,
     };
@@ -66,22 +64,18 @@ fn main() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
                     mval: {
-                        let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.digests = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::ExactValue(5));
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(5));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -90,22 +84,18 @@ fn main() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
                     mval: {
-                        let __corim_field_0 = Some(vec![Digest::new(7, vec![0xCC; 48])]);
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.digests = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.digests = Some(vec![Digest::new(7, vec![0xCC; 48])]);
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::ExactValue(4));
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(4));
+                        values
                     },
                     authorized_by: None,
                 }],

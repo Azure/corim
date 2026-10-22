@@ -31,10 +31,9 @@ fn build_sample_corim_bytes() -> Vec<u8> {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xBB; 48])]);
-            let mut __corim_value = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xBB; 48])]);
+            values
         },
         authorized_by: None,
     };
@@ -708,16 +707,10 @@ fn cwt_claims_missing_iss_fails() {
 fn protected_header_with_corim_meta_round_trip() {
     let meta = make_corim_meta();
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(meta.clone());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(meta.clone());
+        header
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -741,16 +734,10 @@ fn protected_header_with_corim_meta_round_trip() {
 fn protected_header_with_cwt_claims_round_trip() {
     let claims = make_cwt_claims();
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es384;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_6 = Some(claims);
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.cwt_claims = __corim_field_6;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es384).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.cwt_claims = Some(claims);
+        header
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -767,19 +754,11 @@ fn protected_header_with_cwt_claims_round_trip() {
 #[test]
 fn protected_header_with_both_meta_and_cwt() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let __corim_field_6 = Some(make_cwt_claims());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value.cwt_claims = __corim_field_6;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(make_corim_meta());
+        header.cwt_claims = Some(make_cwt_claims());
+        header
     };
 
     assert!(header.valid().is_ok());
@@ -823,16 +802,10 @@ fn protected_header_missing_alg_fails_decode() {
 #[test]
 fn protected_header_validate_inline_mode() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(make_corim_meta());
+        header
     };
     assert!(header.valid().is_ok());
 }
@@ -840,13 +813,9 @@ fn protected_header_validate_inline_mode() {
 #[test]
 fn protected_header_validate_inline_missing_content_type() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.corim_meta = Some(make_corim_meta());
+        header
     };
     assert!(header.valid().is_err());
 }
@@ -854,22 +823,13 @@ fn protected_header_validate_inline_missing_content_type() {
 #[test]
 fn protected_header_validate_hash_envelope_mode() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_2 = Some(1);
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.payload_hash_alg = Some(1);
         // SHA-256
-        let __corim_field_3 = Some("application/rim+cbor".into());
-
-        let __corim_field_4 = Some("https://example.com/corim.cbor".into());
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.payload_hash_alg = __corim_field_2;
-        __corim_value.payload_preimage_content_type = __corim_field_3;
-        __corim_value.payload_location = __corim_field_4;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        header.payload_preimage_content_type = Some("application/rim+cbor".into());
+        header.payload_location = Some("https://example.com/corim.cbor".into());
+        header.corim_meta = Some(make_corim_meta());
+        header
     };
     assert!(header.valid().is_ok());
     assert!(header.is_hash_envelope());
@@ -880,19 +840,11 @@ fn protected_header_validate_meta_cwt_mismatch() {
     let mut meta = make_corim_meta();
     meta.signer.signer_name = "Different Corp".into();
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(meta);
-
-        let __corim_field_6 = Some(make_cwt_claims());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value.cwt_claims = __corim_field_6;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(meta);
+        header.cwt_claims = Some(make_cwt_claims());
+        header
     };
     let result = header.valid();
     assert!(result.is_err());
@@ -1200,16 +1152,10 @@ fn encode_decode_round_trip() {
     let corim_bytes = build_sample_corim_bytes();
 
     let protected = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(make_corim_meta());
+        header
     };
     let protected_header_bytes = cbor::encode(&protected).unwrap();
 
@@ -1373,23 +1319,15 @@ fn full_workflow_with_corim_meta() {
 #[test]
 fn protected_header_extra_fields_preserved() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(make_corim_meta());
-
-        let __corim_field_7 = {
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(make_corim_meta());
+        header.extra = {
             let mut m = std::collections::BTreeMap::new();
             m.insert(99.into(), Value::Text("custom-value".into()));
             m
         };
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value.extra = __corim_field_7;
-        __corim_value
+        header
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -1773,16 +1711,10 @@ fn coverage_meta() -> CorimMetaMap {
 
 fn coverage_header_with_meta() -> ProtectedCorimHeaderMap {
     {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_1 = Some("application/rim+cbor".into());
-
-        let __corim_field_5 = Some(coverage_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.content_type = __corim_field_1;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.content_type = Some("application/rim+cbor".into());
+        header.corim_meta = Some(coverage_meta());
+        header
     }
 }
 
@@ -1811,22 +1743,12 @@ fn protected_header_with_x509_fields_round_trip() {
 #[test]
 fn protected_header_hash_envelope_round_trip() {
     let header = {
-        let __corim_field_0: corim::types::signed::CoseAlgorithm = CoseAlgorithm::Es256;
-
-        let __corim_field_2 = Some(1);
-
-        let __corim_field_3 = Some("application/rim+cbor".into());
-
-        let __corim_field_4 = Some("https://example.com/payload".into());
-
-        let __corim_field_5 = Some(coverage_meta());
-
-        let mut __corim_value = ProtectedCorimHeaderMapBuilder::new(__corim_field_0).build();
-        __corim_value.payload_hash_alg = __corim_field_2;
-        __corim_value.payload_preimage_content_type = __corim_field_3;
-        __corim_value.payload_location = __corim_field_4;
-        __corim_value.corim_meta = __corim_field_5;
-        __corim_value
+        let mut header = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build();
+        header.payload_hash_alg = Some(1);
+        header.payload_preimage_content_type = Some("application/rim+cbor".into());
+        header.payload_location = Some("https://example.com/payload".into());
+        header.corim_meta = Some(coverage_meta());
+        header
     };
 
     let bytes = cbor::encode(&header).unwrap();
@@ -1970,10 +1892,9 @@ fn coverage_corim_payload() -> Vec<u8> {
             vec![MeasurementMap {
                 mkey: None,
                 mval: {
-                    let __corim_field_0 = Some(corim::types::measurement::SvnChoice::ExactValue(1));
-                    let mut __corim_value: MeasurementValuesMap = Default::default();
-                    __corim_value.svn = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(corim::types::measurement::SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],

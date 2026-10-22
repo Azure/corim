@@ -19,10 +19,9 @@ fn one_reference_triple() -> ReferenceTriple {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.svn = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -115,10 +114,9 @@ fn comid_builder_conditional_endorsement_accepts_empty_endorsements() {
                 vec![MeasurementMap {
                     mkey: None,
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                        let mut __corim_value: MeasurementValuesMap = Default::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -135,10 +133,9 @@ fn comid_builder_conditional_endorsement_series() {
     let meas = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
         mval: {
-            let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -196,10 +193,9 @@ fn one_measurement(svn: u64) -> MeasurementMap {
     MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = Some(SvnChoice::ExactValue(svn));
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(svn));
+            values
         },
         authorized_by: None,
     }
@@ -352,10 +348,9 @@ fn meas_with_mkey(mkey: &str, svn: u64) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
         mval: {
-            let __corim_field_0 = Some(SvnChoice::ExactValue(svn));
-            let mut __corim_value: MeasurementValuesMap = Default::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(svn));
+            values
         },
         authorized_by: None,
     }

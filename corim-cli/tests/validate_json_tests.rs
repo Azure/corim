@@ -42,10 +42,9 @@ fn sample_unsigned_corim() -> Vec<u8> {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
         mval: {
-            let __corim_field_0 = Some(SvnChoice::MinValue(1));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(1));
+            values
         },
         authorized_by: None,
     };
@@ -1012,13 +1011,10 @@ fn cca_software_component() -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("cca.software-component".into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]);
-
-            let __corim_field_1 = Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]);
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value.cryptokeys = __corim_field_1;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]);
+            values.cryptokeys = Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]);
+            values
         },
         authorized_by: None,
     }
@@ -1028,13 +1024,12 @@ fn cca_platform_config() -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("cca.platform-config".into())),
         mval: {
-            let __corim_field_0 = Some(RawValueChoice::Masked {
+            let mut values = MeasurementValuesMap::default();
+            values.raw_value = Some(RawValueChoice::Masked {
                 value: vec![0xA0, 0x05],
                 mask: vec![0xF0, 0x00],
             });
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.raw_value = __corim_field_0;
-            __corim_value
+            values
         },
         authorized_by: None,
     }
