@@ -87,7 +87,7 @@ jobs:
       - name: Publish corim-macros
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p corim-macros
+        run: bash scripts/publish-crate.sh corim-macros "${GITHUB_REF_NAME#v}" "target/package/corim-macros-${GITHUB_REF_NAME#v}.crate"
 
       # The crates.io sparse index can take 30–60s to surface the newly
       # published version. corim depends on corim-macros, so we wait
@@ -98,4 +98,4 @@ jobs:
       - name: Publish corim
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p corim
+        run: bash scripts/publish-crate.sh corim "${GITHUB_REF_NAME#v}" "target/package/corim-${GITHUB_REF_NAME#v}.crate"
