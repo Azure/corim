@@ -7,6 +7,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod authoring;
 mod baseline;
 mod convert;
 mod display;
@@ -37,16 +38,17 @@ enum Commands {
     /// decoded structure.
     Validate(ValidateArgs),
 
-    /// Generate a validated CoRIM CBOR document from lossless document JSON.
+    /// Generate a validated CoRIM from readable or lossless document JSON.
     ///
-    /// Decodes the typed CBOR-tree representation, validates the complete
-    /// document, and writes output only when validation coverage is complete.
+    /// Readable templates support named fields, profile aliases and comment
+    /// annotations. Lossless documents are recognized separately. Output is
+    /// written only when document validation coverage is complete.
     Generate(generate::GenerateArgs),
 
-    /// Convert an entire signed or unsigned document to lossless JSON.
+    /// Convert a document to a readable JSON authoring template.
     ///
-    /// Preserves the full envelope and protected byte strings. This is
-    /// inspection/transcoding, not cryptographic or semantic validation.
+    /// Use --lossless for full-envelope interchange, preserving protected and
+    /// payload byte strings. Conversion does not authenticate signatures.
     Convert(convert::ConvertArgs),
 
     /// Extract the unsigned CoRIM payload from a signed CoRIM.

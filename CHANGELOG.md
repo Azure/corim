@@ -22,13 +22,17 @@ versions.
   `protected_header_bytes()` instead of independently mutable public fields.
   `CoseSign1Corim::from_parts` derives the decoded header from original bytes;
   signing builders remain the path for new protected headers.
-- **New-only lossless JSON.** Document JSON and CBOR-valued report fields now
-  share a strict typed-tree codec. It preserves integer ranges, every float bit,
-  byte-string identity, semantic tags and ordered map-entry pairs. Prose-keyed
-  and semantic JSON templates are no longer accepted; shipped templates have
-  been migrated. Ordinary report status/error/count metadata stays native JSON.
-  Signed conversion retains the full envelope, including original protected
-  bytes. Inspection still enforces embedded framing and resource limits.
+- **Distinct authoring and interchange JSON.** Readable named-field templates,
+  decoded CoMID content, profile aliases and `$comment` / `"//"` annotations
+  remain the default authoring interface. Shipped templates retain their
+  original commented form. `convert --lossless`, library JSON helpers and
+  CBOR-valued report fields use a strict typed-tree codec preserving integer
+  ranges, every float bit, byte-string identity, tags and map-entry pairs.
+  Generation and JSON baselines recognize either format without parser
+  fallback; mixed forms are errors. Lossless conversion retains full signed
+  envelopes; readable signed conversion projects the unsigned payload with
+  informational header metadata. Both paths retain bounded parsing/output and
+  document validation safeguards. Ordinary report metadata stays native JSON.
 - **Wire-model evolution.** `MeasurementValuesMap`,
   `ProtectedCorimHeaderMap` and `CwtClaims` are non-exhaustive. Construct them
   through defaults/constructors/builders rather than external struct literals.

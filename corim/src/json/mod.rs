@@ -7,7 +7,8 @@
 //! strict `type`/`value` wrappers: `integer` (decimal string), `float-bits`
 //! (16 lowercase hex digits), `byte-string` (lowercase hex), `map` (ordered
 //! arrays of key/value pairs), and `tag` (with an additional decimal-string
-//! `tag` member). No semantic/prose-key JSON format is accepted.
+//! `tag` member). These library helpers do not parse the CLI's separate
+//! readable, commented authoring format.
 //!
 //! Generic serialization uses CBOR-mode serde; opaque byte strings, including
 //! COSE protected headers and embedded CBOR payloads, remain opaque.

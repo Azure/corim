@@ -193,7 +193,7 @@ fn load_corim(path: &str, now: Option<i64>) -> Result<LoadedBaseline, BaselineEr
         payload: Some(document.payload.corim),
         header: document.signed.map(|signed| signed.protected().clone()),
         source_unsigned_desc: if json_input {
-            "unsigned CoRIM (from lossless JSON)"
+            "unsigned CoRIM (from JSON)"
         } else {
             "unsigned CoRIM"
         },
