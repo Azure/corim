@@ -71,6 +71,24 @@ verify_checksum() {
     fi
 }
 
+verify_repackaged_checksum() {
+    # Compare Cargo's output with the saved checksum, never with a preserved
+    # archive path that might itself have been overwritten.
+    local repackaged="$target_dir/package/$package-$version.crate"
+    local repackaged_checksum
+    if [[ ! -f "$repackaged" ]]; then
+        echo "missing repackaged archive: $repackaged" >&2
+        return 1
+    fi
+    repackaged_checksum=$(sha256sum "$repackaged")
+    repackaged_checksum=${repackaged_checksum%% *}
+    if [[ "$repackaged_checksum" != "$local_checksum" ]]; then
+        echo "repackaged archive checksum mismatch for $package $version" >&2
+        echo "verified=$local_checksum repackaged=$repackaged_checksum" >&2
+        return 1
+    fi
+}
+
 checksum=$(registry_checksum)
 if [[ -n "$checksum" ]]; then
     verify_checksum "$checksum"
@@ -78,21 +96,10 @@ if [[ -n "$checksum" ]]; then
     exit 0
 fi
 
+cargo publish --locked --all-features --dry-run -p "$package"
+verify_repackaged_checksum
 cargo publish --locked --all-features -p "$package"
-# Cargo repackages on publish. Compare its output with the independently saved
-# verified archive, not with a file that Cargo may have just overwritten.
-repackaged="$target_dir/package/$package-$version.crate"
-if [[ ! -f "$repackaged" ]]; then
-    echo "missing repackaged archive: $repackaged" >&2
-    exit 1
-fi
-repackaged_checksum=$(sha256sum "$repackaged")
-repackaged_checksum=${repackaged_checksum%% *}
-if [[ "$repackaged_checksum" != "$local_checksum" ]]; then
-    echo "repackaged archive checksum mismatch for $package $version" >&2
-    echo "verified=$local_checksum repackaged=$repackaged_checksum" >&2
-    exit 1
-fi
+verify_repackaged_checksum
 for ((attempt = 1; attempt <= 30; attempt++)); do
     checksum=$(registry_checksum)
     if [[ -n "$checksum" ]]; then
