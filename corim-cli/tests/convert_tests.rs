@@ -141,6 +141,40 @@ fn convert_rejects_duplicate_schema_keys_while_generic_json_preserves_them() {
 }
 
 #[test]
+fn convert_rejects_oversized_json_expansion_without_partial_output() {
+    let mut files = Files::new();
+    let input = files.path("cbor");
+    let output = files.path("json");
+    let root = Value::Bytes(vec![0; corim::cbor::DEFAULT_MAX_INPUT_BYTES / 2]);
+    std::fs::write(&input, cbor::encode(&root).unwrap()).unwrap();
+    std::fs::write(&output, b"existing output must survive").unwrap();
+    let result = Command::new(bin())
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(result.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("JSON output"));
+    assert_eq!(
+        std::fs::read(&output).unwrap(),
+        b"existing output must survive"
+    );
+    let result = Command::new(bin())
+        .arg("convert")
+        .arg(&input)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(
+        result.stdout.is_empty(),
+        "failed conversion must not leak a JSON prefix"
+    );
+}
+
+#[test]
 fn convert_round_trip_opaque_tagged_uri_and_unknown_extensions() {
     assert_value_round_trip(&Value::Tag(
         TAG_CORIM,

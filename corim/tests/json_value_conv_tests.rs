@@ -238,3 +238,38 @@ fn direct_tree_decoding_enforces_depth_node_and_scalar_budgets() {
     let text = serde_json::Value::String("x".repeat(16 * 1024 * 1024 + 1));
     assert!(json_to_value(&text).is_err());
 }
+
+#[test]
+fn document_json_strings_enforce_default_byte_limit_after_expansion() {
+    let limit = corim::cbor::DEFAULT_MAX_INPUT_BYTES;
+    let mut value = Value::Array(vec![Value::Bytes(vec![]), Value::Text(String::new())]);
+    let overhead = to_json(&value).unwrap().len();
+    assert_eq!((limit - overhead) % 2, 0);
+    let Value::Array(nodes) = &mut value else {
+        panic!()
+    };
+    nodes[0] = Value::Bytes(vec![0; (limit - overhead) / 2]);
+
+    let mut exact = to_json(&value).unwrap();
+    assert_eq!(exact.len(), limit);
+    assert_eq!(from_json::<Value>(&exact).unwrap(), value);
+    assert!(
+        corim::json::to_json_pretty(&value).is_err(),
+        "pretty expansion must obey the same byte limit"
+    );
+
+    exact.push(' ');
+    assert!(
+        from_json::<Value>(&exact).is_err(),
+        "one excess input byte must be rejected"
+    );
+    drop(exact);
+    let Value::Array(nodes) = &mut value else {
+        panic!()
+    };
+    nodes[1] = Value::Text("x".into());
+    assert!(
+        to_json(&value).is_err(),
+        "one excess output byte must be rejected"
+    );
+}
