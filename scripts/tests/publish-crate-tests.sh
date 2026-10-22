@@ -17,12 +17,6 @@ export EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM%% *}" FIXTURE="$temporary"
 export CARGO_TARGET_DIR="$temporary/target"
 mkdir -p "$CARGO_TARGET_DIR/package"
 
-# Keep the baseline script's response-file allocation inside this fixture.
-cat > "$temporary/bin/mktemp" <<'MOCK'
-#!/usr/bin/env bash
-printf '%s\n' "$FIXTURE/response"
-MOCK
-
 cat > "$temporary/bin/cargo" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
