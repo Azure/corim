@@ -17,9 +17,9 @@
 //! ```
 
 use super::{
-    CoseSign1Corim, ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE, COSE_HEADER_CONTENT_TYPE,
-    COSE_HEADER_CORIM_META, COSE_HEADER_CWT_CLAIMS, COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP,
-    CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+    CoseSign1Corim, NumericDate, ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE,
+    COSE_HEADER_CONTENT_TYPE, COSE_HEADER_CORIM_META, COSE_HEADER_CWT_CLAIMS,
+    COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
 };
 use crate::cbor::{self, value::Value, DecodeLimits};
 use crate::nostd_prelude::*;
@@ -36,9 +36,9 @@ use alloc::collections::BTreeSet;
 /// time windows and CWT/metadata agreement, then validates the inline CoRIM.
 /// Protected and unprotected label sets must be disjoint (RFC 9052 Section 3).
 /// CWT `exp` is exclusive; CoRIM validity `not-after` is inclusive. Fractional
-/// CWT times are checked from their original values before legacy conversion.
-/// The returned envelope retains the exact protected bytes; its existing CWT
-/// fields still expose integer seconds. Use the raw bytes for signature work.
+/// CWT times are checked without truncating their fractional precision.
+/// The returned envelope retains exact protected bytes and fractional CWT
+/// timestamps. Use the raw bytes for signature work.
 ///
 /// Supply `detached_payload` for a nil payload. If also supplied for an attached
 /// envelope, it must equal the attached bytes. Missing detached payloads and
@@ -277,20 +277,9 @@ fn disjoint_header_labels(
 }
 
 fn timestamp(value: &Value) -> Result<Number, ValidationError> {
-    match value {
-        Value::Integer(value) => {
-            i64::try_from(*value).map_err(|_| invalid("CWT time is outside i64 range"))?;
-            Ok(Number::Int(*value))
-        }
-        Value::Float(value)
-            if value.is_finite()
-                && *value >= -9_223_372_036_854_775_808.0
-                && *value < 9_223_372_036_854_775_808.0 =>
-        {
-            Ok(Number::Float(*value))
-        }
-        _ => Err(invalid("CWT time must be finite and within i64 range")),
-    }
+    NumericDate::from_value(value)
+        .map(NumericDate::number)
+        .map_err(ValidationError::Invalid)
 }
 
 fn same_time(left: Option<Number>, right: Option<Number>) -> bool {

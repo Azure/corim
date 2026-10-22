@@ -375,6 +375,13 @@ are structural. Their leaf contents are values. Matcher sets are unordered.
 Unknown measurement, header and CWT extensions use recursive CBOR shape:
 map keys, value types, semantic tags and container structure are structural;
 leaf contents are values. Map order is ignored; array order is significant.
+Protected-header extensions preserve integer and text labels independently.
+CWT `exp` and `nbf` preserve integer or fractional seconds as `NumericDate`;
+baseline reporting does not truncate them. The header's `extra` map uses
+`CoseLabel` keys; use `.into()` for existing integer keys. Integer timestamp
+builder calls remain supported; fractional timestamps use
+`NumericDate::Float(...)`. CLI JSON reports header extensions under
+`header_extra.int` and `header_extra.text`, like CWT extension keys.
 Keyed typed collections, extension maps and matcher sets use indexed queues
 rather than repeated candidate scans. Comparison-consistent exact keys are
 prepared before matching; reservation does not run full comparisons or build

@@ -18,6 +18,7 @@ use super::cwt::CwtClaims;
 use super::envelope::{build_sig_structure1, encode_signed_corim, CoseSign1Corim};
 use super::header::{ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE};
 use super::x509::{CoseCertHash, CoseX509};
+use super::CoseLabel;
 use crate::cbor;
 use crate::cbor::value::Value;
 
@@ -64,7 +65,7 @@ pub struct SignedCorimBuilder {
     cwt_claims: Option<CwtClaims>,
     payload: Vec<u8>,
     unprotected: Vec<(Value, Value)>,
-    extra_protected: BTreeMap<i64, Value>,
+    extra_protected: BTreeMap<CoseLabel, Value>,
     // X.509 header fields (RFC 9360)
     kid: Option<Vec<u8>>,
     x5chain: Option<CoseX509>,
@@ -126,8 +127,8 @@ impl SignedCorimBuilder {
     }
 
     /// Add an extra entry to the protected header map.
-    pub fn add_protected(mut self, key: i64, value: Value) -> Self {
-        self.extra_protected.insert(key, value);
+    pub fn add_protected(mut self, key: impl Into<CoseLabel>, value: Value) -> Self {
+        self.extra_protected.insert(key.into(), value);
         self.cached_protected_bytes = None;
         self
     }

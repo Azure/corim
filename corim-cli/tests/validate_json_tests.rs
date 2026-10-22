@@ -784,6 +784,49 @@ fn baseline_nonfinite_differences_preserve_float_bits() {
 }
 
 #[test]
+fn signed_header_json_and_baselines_preserve_labels_and_fractional_times() {
+    use corim::cbor::value::Value;
+    use corim::types::signed::NumericDate;
+    let make = |expiration, extension| {
+        SignedCorimBuilder::new(-7, sample_unsigned_corim())
+            .set_cwt_claims(CwtClaims::new("issuer").with_exp(NumericDate::Float(expiration)))
+            .add_protected(10001, Value::Integer(1))
+            .add_protected("10001", extension)
+            .build_with_signature(vec![0; 64])
+            .unwrap()
+    };
+    let baseline = make(2_000_000_000.25, Value::Integer(1));
+    let report = validate_json(&baseline, "cose");
+    let protected = &report["signed"]["protected"];
+    assert_eq!(protected["exp"], 2_000_000_000.25);
+    assert_eq!(protected["header_extra"]["int"]["10001"], 1);
+    assert_eq!(protected["header_extra"]["text"]["10001"], 1);
+    let path = unique_temp("lossless_header", "cose");
+    std::fs::write(&path, &baseline).unwrap();
+    for (candidate, expected_exit, expected_result) in [
+        (
+            make(2_000_000_000.75, Value::Integer(1)),
+            0,
+            "value-differences",
+        ),
+        (
+            make(2_000_000_000.25, Value::Text("changed".into())),
+            3,
+            "structural-mismatch",
+        ),
+    ] {
+        let output = validate_with_flags(
+            &candidate,
+            &["--baseline", path.to_str().unwrap(), "-f", "json"],
+        );
+        let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(output.status.code(), Some(expected_exit), "{report}");
+        assert_eq!(report["result"], expected_result, "{report}");
+    }
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
 fn baselines_use_same_time_and_structural_policy_as_input() {
     use corim::cbor::{self, value::Tagged};
     let target = sample_unsigned_corim();
