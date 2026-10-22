@@ -28,10 +28,20 @@ const ORIGINAL_BYTES: [&[u8]; 6] = [
 ];
 
 fn template() -> Value {
-    serde_json::from_str(TEMPLATES[0]).unwrap()
+    json!({
+        "corim-id": "test-authoring",
+        "comids": [{
+            "tag-identity": {"id": "test-comid"},
+            "triples": {"reference-triples": [{
+                "ref-env": {"class": {"vendor": "Example"}},
+                "ref-claims": [{"value": {"svn": {"type": "svn", "value": 1}}}]
+            }]}
+        }]
+    })
 }
 
 #[test]
+#[cfg(all(feature = "azure", feature = "cca"))]
 fn six_readable_templates_roundtrip_with_comments_and_aliases() {
     for (source, original) in TEMPLATES.into_iter().zip(ORIGINAL_BYTES) {
         let template: Value = serde_json::from_str(source).unwrap();
@@ -101,14 +111,17 @@ fn prose_and_profile_alias_collisions_fail() {
     assert!(encode_template(input, None)
         .unwrap_err()
         .contains("conflicting"));
-    let mut value = json!({"tcbstatus": "UpToDate", "-700": "Revoked"});
-    let registry = crate::profiles::build_registry();
-    let profile = registry
-        .get(&corim::types::corim::ProfileChoice::Uri(
-            "tag:microsoft.com,2026:azure-profile#1.0.0".into(),
-        ))
-        .unwrap();
-    assert!(encode::resolve_mval_aliases(&mut value, profile).is_err());
+    #[cfg(feature = "azure")]
+    {
+        let mut value = json!({"tcbstatus": "UpToDate", "-700": "Revoked"});
+        let registry = crate::profiles::build_registry();
+        let profile = registry
+            .get(&corim::types::corim::ProfileChoice::Uri(
+                "tag:microsoft.com,2026:azure-profile#1.0.0".into(),
+            ))
+            .unwrap();
+        assert!(encode::resolve_mval_aliases(&mut value, profile).is_err());
+    }
 }
 
 #[test]
@@ -236,16 +249,14 @@ fn native_pretty_json_expansion_obeys_default_budget() {
 }
 
 #[test]
+#[cfg(feature = "azure")]
 fn profile_override_drives_aliases_without_document_validation() {
-    let original = template();
+    let original: Value = serde_json::from_str(TEMPLATES[0]).unwrap();
     let expected = encode_template(original.clone(), None).unwrap();
     let mut input = original;
     input["profile"] = json!("urn:unregistered:profile");
     assert_eq!(
-        encode_template(
-            input,
-            Some("tag:microsoft.com,2026:azure-profile#1.0.0")
-        ).unwrap(),
+        encode_template(input, Some("tag:microsoft.com,2026:azure-profile#1.0.0")).unwrap(),
         expected
     );
 }
@@ -264,7 +275,7 @@ fn scalar_choices_and_text_digest_algorithm_remain_authorable() {
             "triples": {"reference-triples": [{
                 "ref-env": {
                     "class": {"vendor": "Example"},
-                    "instance": {"type": "ueid", "value": "AQID"}
+                    "instance": {"type": "ueid", "value": "AQIDBAUGBw=="}
                 },
                 "ref-claims": [{"value": {"svn": {"type": "svn", "value": 7}}}]
             }]}
