@@ -1,43 +1,216 @@
 {
-  "tag": "501",
-  "type": "tag",
-  "value": {
-    "type": "map",
-    "value": [
-      [
+    "$comment": [
+    "Azure Manticore Trust Endorsement for Key Attestation (non-TDISP). '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "corim-id is 'Manticore_KeyAttest_'<version>"
+    ],
+    "corim-id": "Manticore_KeyAttest_1.1.1",
+    "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+    "comids": [
         {
-          "type": "integer",
-          "value": "0"
-        },
-        "Manticore_KeyAttest_1.1.1"
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "1"
-        },
-        [
-          {
-            "tag": "506",
-            "type": "tag",
-            "value": {
-              "type": "byte-string",
-              "value": "a201a200782431303964643639382d313037612d663061392d653039352d376164646231613539383733010104a108828282a100a1030081a101a101d9022900848281a101a100a20070332e332e352e302d3530373031303031010081a101a13902bb685570546f446174658281a101a100a20070332e342e322e342d3530393232313734010081a101a13902bb685570546f446174658281a101a101d902290181a101a13902bb685570546f446174658281a101a101d902290081a101a13902bb694f75744f66446174658282a100a1030181a101a101d9022900848281a101a100a20070332e332e352e312d3530373032313734010081a101a13902bb685570546f446174658281a101a100a20070332e342e332e372d3531303031323232010081a101a13902bb685570546f446174658281a101a101d902290181a101a13902bb685570546f446174658281a101a101d902290081a101a13902bb694f75744f6644617465"
+            "tag-identity": {
+                "$comment": "The tag-identity id is Manticore OID",
+                "id": "109dd698-107a-f0a9-e095-7addb1a59873",
+                "version": 1
+            },
+            "triples": {
+                "conditional-endorsement-series-triples": [
+                    {
+                        "common-condition": {
+                            "environment": {
+                                "class": {
+                                    "layer": 0
+                                }
+                            },
+                            "claims-list": [
+                                {
+                                    "value": {
+                                        "svn": {
+                                            "type": "min-svn",
+                                            "value": 0
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "series": [
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.3.5.0-50701001",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.4.2.4-50922174",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 1
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "OutOfDate"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                    {
+                        "common-condition": {
+                            "environment": {
+                                "class": {
+                                    "layer": 1
+                                }
+                            },
+                            "claims-list": [
+                                {
+                                    "value": {
+                                        "svn": {
+                                            "type": "min-svn",
+                                            "value": 0
+                                        }
+                                    }
+                                }
+                            ]
+                        },
+                        "series": [
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.3.5.1-50702174",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "version": {
+                                                "version": "3.4.3.7-51001222",
+                                                "version-scheme": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 1
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "UpToDate"
+                                        }
+                                    }
+                                ]
+                            },
+                            {
+                                "condition": [
+                                    {
+                                        "value": {
+                                            "svn": {
+                                                "type": "min-svn",
+                                                "value": 0
+                                            }
+                                        }
+                                    }
+                                ],
+                                "addition": [
+                                    {
+                                        "value": {
+                                            "tcbstatus": "OutOfDate"
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    }
+                ]
             }
-          }
-        ]
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "3"
-        },
-        {
-          "tag": "32",
-          "type": "tag",
-          "value": "tag:microsoft.com,2026:azure-profile#1.0.0"
         }
-      ]
     ]
-  }
 }
+ 

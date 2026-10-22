@@ -1,43 +1,100 @@
 {
-  "tag": "501",
-  "type": "tag",
-  "value": {
-    "type": "map",
-    "value": [
-      [
-        {
-          "type": "integer",
-          "value": "0"
-        },
-        "Manticore_KeyAttest_1.1.1"
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "1"
-        },
-        [
-          {
-            "tag": "506",
-            "type": "tag",
-            "value": {
-              "type": "byte-string",
-              "value": "a201a200782431303964643639382d313037612d663061392d653039352d376164646231613539383733010104a1008282a100a1030081a101a300a20065312e302e30010001d90228000ea1624657818207583000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000082a100a1030182a101a400a20065312e302e30010001d90228000281820744deadbeef0ea163526f5481820744deadbeefa101a400a20065312e302e30010001d90228000281820744deadbeef0ea163526f5481820744deadbeef"
+  "$comment": [
+    "Azure Manticore Authenticity Endorsement for Key Attestation (non-TDISP). '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "Azure profile is optional and may be omitted for this CoRIM",
+    "corim-id is 'Manticore_KeyAttest_'<version>"
+  ],
+  "corim-id": "Manticore_KeyAttest_1.1.1",
+  "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+  "comids": [
+    {
+      "tag-identity": {
+        "$comment": "The tag-identity id is Manticore OID",
+        "id": "109dd698-107a-f0a9-e095-7addb1a59873",
+        "version": 1
+      },
+            "triples": {
+                "reference-triples": [
+                    [
+                        {
+                            "class": {
+                                "layer": 0
+                            }
+                        },
+                        [
+                            {
+                                "value": {
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "integrity-registers": {
+                                        "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                        "FW": [
+                                            [7, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    ],
+                    [
+                        {
+                            "class": {
+                                "layer": 1
+                            }
+                        },
+                        [
+                            {
+                                "value": {
+                                    "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "digests": [
+                                        [7, "3q2+7w=="]
+                                    ],
+                                    "integrity-registers": {
+                                        "RoT": [
+                                            [7, "3q2+7w=="]
+                                        ]
+                                    }
+                                }
+                            },
+                            {
+                                "value": {
+                                    "$comment": "7: SHA-384, Source: https://www.iana.org/assignments/named-information",
+                                    "version": {
+                                        "version": "1.0.0",
+                                        "version-scheme": 0
+                                    },
+                                    "svn": {
+                                        "type": "svn",
+                                        "value": 0
+                                    },
+                                    "digests": [
+                                        [7, "3q2+7w=="]
+                                    ],
+                                    "integrity-registers": {
+                                        "RoT": [
+                                            [7, "3q2+7w=="]
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    ]
+                ]
             }
-          }
-        ]
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "3"
-        },
-        {
-          "tag": "32",
-          "type": "tag",
-          "value": "tag:microsoft.com,2026:azure-profile#1.0.0"
-        }
-      ]
-    ]
-  }
+    }
+  ]
 }

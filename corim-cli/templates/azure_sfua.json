@@ -1,43 +1,236 @@
 {
-  "tag": "501",
-  "type": "tag",
-  "value": {
-    "type": "map",
-    "value": [
-      [
-        {
-          "type": "integer",
-          "value": "0"
-        },
-        "1.3.6.1.4.1.311.102.5_SFUA_20260705"
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "1"
-        },
-        [
+  "$comment": [
+    "Azure SFUA endorsement — equivalent to the build_corim_ovl3_tdisp_ndpa example. '$comment' keys are stripped by 'generate' and never reach the CBOR.",
+    "corim-id is <ovl3-oid-value>_{SFUA|SOCMANA|NDPA}_<yyyymmdd of CoRIM generation>"
+  ],
+  "corim-id": "1.3.6.1.4.1.311.102.5_SFUA_20260705",
+  "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
+  "comids": [
+    {
+      "tag-identity": {
+        "$comment": "The tag-identity id is <ovl3-oid-value>_{SFUA|SOCMANA|NDPA}",
+        "id": "1.3.6.1.4.1.311.102.5_SFUA",
+        "version": 1
+      },
+      "triples": {
+        "identity-triples": [
           {
-            "tag": "506",
-            "type": "tag",
-            "value": {
-              "type": "byte-string",
-              "value": "a201a200781a312e332e362e312e342e312e3331312e3130322e355f53465541010104a2028182a100a101694d6963726f736f667482d9022f8201582044aa336af4cb14a879432e53dd6571c7fa9bccafb75f488259262d6ea3a4d91bd9022f8201582044aa336af4cb14a879432e53dd6571c7fa9bccafb75f488259262d6ea3a4d91b08838282a200a201694d6963726f736f6674030001d90230515350444d2043657274696669636174657380818281a101a101d902290081a101a13902bb685570546f446174658282a200a201694d6963726f736f6674030101d90230515350444d2043657274696669636174657380818281a101a101d902290081a101a13902bb685570546f446174658282a200a101694d6963726f736f667401d90230515350444d204d6561737572656d656e747380818287a2000101a10281820758304b56cfa07faeb2ab57de921e4a97d655144b546470ebaaab6f71c0db518ddf5b4a5fb28fb2ad1b4934264424eb1e5a86a2000801a10281820758304b56cfa07faeb2ab57de921e4a97d655144b546470ebaaab6f71c0db518ddf5b4a5fb28fb2ad1b4934264424eb1e5a86a2000f01a101d9022901a2001001a101d9022901a2001101a101d9022901a2001201a101d9022901a20018fe01a104d902305272617776616c75650a72617776616c75650a81a101a13902bb685570546f44617465"
-            }
+            "environment": {
+              "class": {
+                "vendor": "Microsoft"
+              }
+            },
+            "key-list": [
+              {
+                "$comment": [
+                  "SPDM Root Cert Thumbprint",
+                  "1: SHA-256, Source: https://www.iana.org/assignments/named-information"
+                ],
+                "type": "cert-thumbprint",
+                "value": [
+                  1,
+                  "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
+                ]
+              },
+              {
+                "$comment": [
+                  "SPDM Intermediate Cert Thumbprint",
+                  "1: SHA-256, Source: https://www.iana.org/assignments/named-information"
+                ],
+                "type": "cert-thumbprint",
+                "value": [
+                  1,
+                  "RKozavTLFKh5Qy5T3WVxx/qbzK+3X0iCWSYtbqOk2Rs="
+                ]
+              }
+            ]
+          }
+        ],
+        "conditional-endorsement-series-triples": [
+          {
+            "$comment": "SPDM Certificates DevIK DICE TCBInfo",
+            "common-condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft",
+                  "layer": 0
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBDZXJ0aWZpY2F0ZXM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "condition": [
+                  {
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 0
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "$comment": "SPDM Certificates DevAK DICE TCBInfo",
+            "common-condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft",
+                  "layer": 1
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBDZXJ0aWZpY2F0ZXM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "condition": [
+                  {
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 0
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "$comment": "SPDM Measurements",
+            "common-condition": {
+              "environment": {
+                "class": {
+                  "vendor": "Microsoft"
+                },
+                "instance": {
+                  "type": "bytes",
+                  "value": "U1BETSBNZWFzdXJlbWVudHM="
+                }
+              },
+              "claims-list": []
+            },
+            "series": [
+              {
+                "condition": [
+                  {
+                    "$comment": [
+                      "PLM read-only memory",
+                      "7: SHA-384, Source: https://www.iana.org/assignments/named-information"
+                    ],
+                    "key": 1,
+                    "value": {
+                      "digests": [
+                        [
+                          7,
+                          "S1bPoH+usqtX3pIeSpfWVRRLVGRw66qrb3HA21GN31tKX7KPsq0bSTQmRCTrHlqG"
+                        ]
+                      ]
+                    }
+                  },
+                  {
+                    "$comment": [
+                      "FUSE",
+                      "7: SHA-384, Source: https://www.iana.org/assignments/named-information"
+                    ],
+                    "key": 8,
+                    "value": {
+                      "digests": [
+                        [
+                          7,
+                          "S1bPoH+usqtX3pIeSpfWVRRLVGRw66qrb3HA21GN31tKX7KPsq0bSTQmRCTrHlqG"
+                        ]
+                      ]
+                    }
+                  },
+                  {
+                    "$comment": "PLM FW SVN",
+                    "key": 15,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "SEC FW SVN",
+                    "key": 16,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "NMC  FW SVN",
+                    "key": 17,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "CMC FW SVN",
+                    "key": 18,
+                    "value": {
+                      "svn": {
+                        "type": "min-svn",
+                        "value": 1
+                      }
+                    }
+                  },
+                  {
+                    "$comment": "PLM Debug State",
+                    "key": 254,
+                    "value": {
+                      "raw-value": {
+                        "type": "bytes",
+                        "value": "cmF3dmFsdWUKcmF3dmFsdWUK"
+                      }
+                    }
+                  }
+                ],
+                "addition": [
+                  {
+                    "value": {
+                      "tcbstatus": "UpToDate"
+                    }
+                  }
+                ]
+              }
+            ]
           }
         ]
-      ],
-      [
-        {
-          "type": "integer",
-          "value": "3"
-        },
-        {
-          "tag": "32",
-          "type": "tag",
-          "value": "tag:microsoft.com,2026:azure-profile#1.0.0"
-        }
-      ]
-    ]
-  }
+      }
+    }
+  ]
 }
