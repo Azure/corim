@@ -6,9 +6,10 @@ use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
 use serde_json::{Map, Value};
 use std::fmt;
 
+use super::DEFAULT_MAX_JSON_BYTES;
+
 // A CBOR map adds three JSON containers: wrapper, entries, and entry pair.
 const MAX_JSON_DEPTH: usize = 3 * 64 + 4;
-const MAX_JSON_BYTES: usize = 64 * 1024 * 1024;
 const MAX_JSON_NODES: usize = 8_000_000;
 
 /// Parse JSON with bounded depth, input size, and node count (RFC 8949 §10).
@@ -18,10 +19,10 @@ const MAX_JSON_NODES: usize = 8_000_000;
 /// behind this independently bounded visitor. Duplicate object members are
 /// rejected rather than silently overwriting wrapper fields.
 pub fn parse_json(text: &str) -> Result<Value, DecodeError> {
-    if text.len() > MAX_JSON_BYTES {
-        return Err(DecodeError::Deserialization(
-            "JSON input exceeds 64 MiB".into(),
-        ));
+    if text.len() > DEFAULT_MAX_JSON_BYTES {
+        return Err(DecodeError::Deserialization(format!(
+            "JSON input exceeds maximum size of {DEFAULT_MAX_JSON_BYTES} bytes (16 MiB)"
+        )));
     }
     let mut remaining = MAX_JSON_NODES;
     let mut parser = serde_json::Deserializer::from_str(text);

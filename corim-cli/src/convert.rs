@@ -6,6 +6,7 @@
 //! Known embedded CBOR boundaries share the root's resource and framing budget.
 
 use clap::Parser;
+use std::io::Write;
 use std::{fs, process};
 
 #[derive(Parser)]
@@ -30,13 +31,25 @@ fn run_impl(args: ConvertArgs) -> Result<(), String> {
     let bytes = crate::input::read_document(args.file.as_deref())?;
     let root = corim::document::inspect(&bytes, &corim::cbor::DecodeLimits::default())
         .map_err(|e| format!("decoding CBOR: {e}"))?;
-    let json = corim::json::to_json_pretty(&root).map_err(|e| format!("encoding JSON: {e}"))?;
+    let mut json = corim::json::to_json_pretty(&root).map_err(|e| format!("encoding JSON: {e}"))?;
+    let limit = corim::json::DEFAULT_MAX_JSON_BYTES;
+    if json.len() >= limit {
+        return Err(format!(
+            "lossless JSON output including trailing newline exceeds maximum size of {limit} bytes"
+        ));
+    }
+    json.try_reserve_exact(1)
+        .map_err(|e| format!("allocating JSON newline: {e}"))?;
+    json.push('\n');
     match args.output {
         Some(path) => {
-            fs::write(&path, format!("{json}\n")).map_err(|e| format!("writing {path}: {e}"))?;
+            fs::write(&path, &json).map_err(|e| format!("writing {path}: {e}"))?;
             eprintln!("Wrote lossless JSON: {path}");
         }
-        None => println!("{json}"),
+        None => std::io::stdout()
+            .lock()
+            .write_all(json.as_bytes())
+            .map_err(|e| format!("writing stdout: {e}"))?,
     }
     Ok(())
 }

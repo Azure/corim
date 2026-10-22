@@ -533,6 +533,13 @@ bounded parsing with enough wrapper depth for 64-level CBOR trees; use it
 instead of serde_json's default 128-level parser for document JSON.
 `value_to_json` and `json_to_value` are fallible; generic
 `to_json`/`to_json_pretty`/`from_json` use CBOR-mode serde.
+JSON document input and string output share the named
+`corim::json::DEFAULT_MAX_JSON_BYTES` limit of **16 MiB**. Hex, escaping,
+wrappers, and pretty-printing can expand an otherwise valid CBOR document
+beyond that limit. String serialization stops at the cap and returns an
+explicit resource error, never silently truncating output. `convert` also
+accounts for its trailing newline and completes bounded serialization before
+writing stdout or touching an output file.
 
 ### `generate` — encode a lossless JSON document
 
