@@ -198,9 +198,11 @@ fn corim_builder_add_coswid() {
             EnvironmentMap::for_class("ACME", "Widget"),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                    let mut values = MeasurementValuesMap::default();
+                    values.digests = digests;
+                    values
                 },
                 authorized_by: None,
             }],
@@ -264,10 +266,13 @@ mod json_tests {
         // Round-trip for measurement values that don't contain raw bytes
         let meas = MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(42)),
-                name: Some("test-component".into()),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let svn = Some(SvnChoice::ExactValue(42));
+                let name = Some("test-component".into());
+                let mut values = MeasurementValuesMap::default();
+                values.svn = svn;
+                values.name = name;
+                values
             },
             authorized_by: None,
         };
@@ -281,9 +286,11 @@ mod json_tests {
     fn json_measurement_with_digests_encodes() {
         let meas = MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let digests = Some(vec![Digest::new(7, vec![0xBB; 32])]);
+                let mut values = MeasurementValuesMap::default();
+                values.digests = digests;
+                values
             },
             authorized_by: None,
         };
