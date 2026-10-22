@@ -131,6 +131,27 @@ fn text_and_integer_header_labels_round_trip_independently() {
     );
 }
 
+#[test]
+fn header_labels_accept_only_integer_or_text_keys() {
+    use corim::types::signed::CoseLabel;
+    for label in [CoseLabel::Int(10001), CoseLabel::Text("10001".into())] {
+        let bytes = corim::cbor::encode(&label).unwrap();
+        assert_eq!(
+            corim::cbor::decode_exact::<CoseLabel>(&bytes).unwrap(),
+            label
+        );
+    }
+    for value in [
+        Value::Integer(i128::MAX),
+        Value::Null,
+        Value::Bool(true),
+        Value::Array(vec![]),
+        Value::Bytes(vec![]),
+    ] {
+        assert!(corim::cbor::value::from_value::<CoseLabel>(&value).is_err());
+    }
+}
+
 fn compare_headers(
     input: &ProtectedCorimHeaderMap,
     baseline: &ProtectedCorimHeaderMap,
