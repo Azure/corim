@@ -47,7 +47,9 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Decode-only; encoders always emit draft-11 wire format.
+  firmware). Builders emit draft-11 wire format; lossless JSON transcoding
+  preserves an existing document's wire forms rather than normalizing signed
+  byte strings.
 
 [`Profile`]: https://docs.rs/corim/latest/corim/profile/trait.Profile.html
 [`ProfileRegistry`]: https://docs.rs/corim/latest/corim/profile/struct.ProfileRegistry.html
