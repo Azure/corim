@@ -32,21 +32,25 @@ fn main() {
 
     let ref_meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![
+        mval: {
+            let __corim_field_0 = Some(vec![
                 Digest::new(7, vec![0xAA; 48]), // SHA-384
                 Digest::new(2, vec![0xBB; 32]), // SHA-256
-            ]),
-            ..MeasurementValuesMap::default()
+            ]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     };
 
     let endorsed_meas = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::MinValue(3)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(SvnChoice::MinValue(3));
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.svn = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     };
@@ -61,17 +65,23 @@ fn main() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
-                    mval: MeasurementValuesMap {
-                        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+                        let mut __corim_value: MeasurementValuesMap =
+                            MeasurementValuesMap::default();
+                        __corim_value.digests = __corim_field_0;
+                        __corim_value
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(5)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let __corim_field_0 = Some(SvnChoice::ExactValue(5));
+                        let mut __corim_value: MeasurementValuesMap =
+                            MeasurementValuesMap::default();
+                        __corim_value.svn = __corim_field_0;
+                        __corim_value
                     },
                     authorized_by: None,
                 }],
@@ -79,17 +89,23 @@ fn main() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
-                    mval: MeasurementValuesMap {
-                        digests: Some(vec![Digest::new(7, vec![0xCC; 48])]),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let __corim_field_0 = Some(vec![Digest::new(7, vec![0xCC; 48])]);
+                        let mut __corim_value: MeasurementValuesMap =
+                            MeasurementValuesMap::default();
+                        __corim_value.digests = __corim_field_0;
+                        __corim_value
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(4)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let __corim_field_0 = Some(SvnChoice::ExactValue(4));
+                        let mut __corim_value: MeasurementValuesMap =
+                            MeasurementValuesMap::default();
+                        __corim_value.svn = __corim_field_0;
+                        __corim_value
                     },
                     authorized_by: None,
                 }],

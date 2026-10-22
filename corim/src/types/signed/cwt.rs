@@ -71,11 +71,25 @@ impl NumericDate {
         }
     }
 
-    pub(crate) fn number(self) -> crate::types::matcher::Number {
-        match self {
-            Self::Int(value) => crate::types::matcher::Number::Int(value.into()),
-            Self::Float(value) => crate::types::matcher::Number::Float(value),
-        }
+    /// Compare instants mathematically without changing their encoded forms.
+    ///
+    /// Invalid non-finite or out-of-range dates return an error (RFC 8392 §2).
+    pub fn numeric_cmp(&self, other: &Self) -> Result<core::cmp::Ordering, String> {
+        use crate::Validate;
+        self.valid()?;
+        other.valid()?;
+        let ordering = match (*self, *other) {
+            (Self::Int(left), Self::Int(right)) => Some(left.cmp(&right)),
+            (Self::Float(left), Self::Float(right)) => left.partial_cmp(&right),
+            (Self::Int(integer), Self::Float(float)) => {
+                super::super::numeric::compare_integer_float(integer.into(), float)
+            }
+            (Self::Float(float), Self::Int(integer)) => {
+                super::super::numeric::compare_integer_float(integer.into(), float)
+                    .map(core::cmp::Ordering::reverse)
+            }
+        };
+        ordering.ok_or_else(|| "NumericDate values are not comparable".into())
     }
 }
 
@@ -131,6 +145,7 @@ impl<'de> Deserialize<'de> for NumericDate {
 /// floating-point values. IEEE 754 floats do not satisfy the reflexive
 /// property (`NaN != NaN`), so `Eq` cannot be soundly derived.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct CwtClaims {
     /// `iss` (key 1): Issuer — identifies the CoRIM signer.
     pub iss: String,

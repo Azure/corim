@@ -29,7 +29,9 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   `EnvironmentMap` be shared across triples without duplication, and
   `strict_links` adds a cross-triple env-anchoring lint.
 - **Validation & Appraisal** — structural and registered-profile validation,
-  reference value matching, and conditional endorsement series
+  reference value matching, and conditional endorsement series. The
+  [`document`](src/document.rs) API uses one parser budget and reports
+  time/profile/content coverage explicitly; validated data is read-only.
 - **Profile framework** — [`Profile`] trait, [`ProfileRegistry`], and a
   [`MatchContext`] for time-aware comparators let downstream crates plug in
   CoRIM profiles that define their own validation, tags, matching rules, or
@@ -73,12 +75,11 @@ let env = EnvironmentMap {
     group: None,
 };
 
+let mut values = MeasurementValuesMap::default();
+values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
 let meas = MeasurementMap {
     mkey: Some(MeasuredElement::Text("firmware".into())),
-    mval: MeasurementValuesMap {
-        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-        ..MeasurementValuesMap::default()
-    },
+    mval: values,
     authorized_by: None,
 };
 

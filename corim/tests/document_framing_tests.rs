@@ -48,9 +48,11 @@ fn comid() -> Vec<u8> {
             vec![MeasurementMap {
                 mkey: None,
                 authorized_by: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+                    let mut __corim_value: MeasurementValuesMap = Default::default();
+                    __corim_value.svn = __corim_field_0;
+                    __corim_value
                 },
             }],
         ))
@@ -302,7 +304,7 @@ fn unknown_tagged_structures_remain_opaque() {
     check_document_framing(&bytes, &DecodeLimits::default()).unwrap();
     let signed = decode_signed_corim(&bytes).unwrap();
     assert_eq!(
-        signed.protected.extra.get(&EXTRA_HEADER_LABEL.into()),
+        signed.protected().extra.get(&EXTRA_HEADER_LABEL.into()),
         Some(&extra)
     );
 }
@@ -323,8 +325,8 @@ fn protected_bytes_are_preserved_without_normalization() {
         protected.extend(enc(&v));
     }
     let signed = decode_signed_corim(&envelope(protected.clone(), Some(unsigned(None)))).unwrap();
-    assert_ne!(enc(&signed.protected), protected);
-    assert_eq!(signed.protected_header_bytes, protected);
+    assert_ne!(enc(&signed.protected()), protected);
+    assert_eq!(signed.protected_header_bytes(), protected);
     let Value::Array(tbs) = cbor::decode::<Value>(&signed.to_be_signed(&[]).unwrap()).unwrap()
     else {
         panic!("Sig_structure")

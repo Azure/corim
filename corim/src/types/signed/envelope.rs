@@ -50,10 +50,10 @@ pub struct CoseSign1Corim {
     /// The raw CBOR-encoded protected header bytes.
     /// This is the exact `bstr` from the COSE structure, needed for
     /// signature verification (it is signed as-is).
-    pub protected_header_bytes: Vec<u8>,
+    protected_header_bytes: Vec<u8>,
 
     /// The decoded protected header.
-    pub protected: ProtectedCorimHeaderMap,
+    protected: ProtectedCorimHeaderMap,
 
     /// The unprotected header map.
     /// Stored as CBOR map entries since it contains arbitrary COSE labels.
@@ -68,6 +68,65 @@ pub struct CoseSign1Corim {
 }
 
 impl CoseSign1Corim {
+    /// Assemble an envelope from original header bytes and its other COSE
+    /// elements (RFC 9052 §4). The decoded header is derived from those bytes.
+    ///
+    /// This parses the protected header; it does not validate payload semantics
+    /// or authenticate the signature.
+    pub fn from_parts(
+        protected_header_bytes: Vec<u8>,
+        unprotected: Vec<(Value, Value)>,
+        payload: Option<Vec<u8>>,
+        signature: Vec<u8>,
+    ) -> Result<Self, crate::DecodeError> {
+        let protected = ProtectedCorimHeaderMap::decode_with_limits(
+            &protected_header_bytes,
+            &cbor::DecodeLimits::default(),
+        )?;
+        Ok(Self::from_decoded_parts(
+            protected_header_bytes,
+            protected,
+            unprotected,
+            payload,
+            signature,
+        ))
+    }
+
+    pub(crate) fn from_decoded_parts(
+        protected_header_bytes: Vec<u8>,
+        protected: ProtectedCorimHeaderMap,
+        unprotected: Vec<(Value, Value)>,
+        payload: Option<Vec<u8>>,
+        signature: Vec<u8>,
+    ) -> Self {
+        Self {
+            protected_header_bytes,
+            protected,
+            unprotected,
+            payload,
+            signature,
+        }
+    }
+
+    /// Read the header derived from the original bytes (RFC 9052 §4.4).
+    ///
+    /// Changes require building and signing a new envelope.
+    ///
+    /// ```compile_fail
+    /// # use corim::types::signed::{CoseSign1Corim, CoseAlgorithm};
+    /// fn change(envelope: &mut CoseSign1Corim) {
+    ///     envelope.protected().alg = CoseAlgorithm::Es384;
+    /// }
+    /// ```
+    pub fn protected(&self) -> &ProtectedCorimHeaderMap {
+        &self.protected
+    }
+
+    /// Read the exact protected `bstr` used by signatures (RFC 9052 §4.4).
+    pub fn protected_header_bytes(&self) -> &[u8] {
+        &self.protected_header_bytes
+    }
+
     /// Construct the COSE `Sig_structure1` to-be-signed bytes per RFC 9052 §4.4.
     ///
     /// ```text

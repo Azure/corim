@@ -16,6 +16,7 @@ pub mod coswid;
 pub mod environment;
 pub mod matcher;
 pub mod measurement;
+mod numeric;
 pub mod signed;
 pub mod tags;
 pub mod triples;

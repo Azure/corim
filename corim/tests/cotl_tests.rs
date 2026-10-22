@@ -17,9 +17,11 @@ fn make_comid() -> corim::types::comid::ComidTag {
             EnvironmentMap::for_class("V", "M"),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+                    let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                    __corim_value.digests = __corim_field_0;
+                    __corim_value
                 },
                 authorized_by: None,
             }],

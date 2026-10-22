@@ -76,6 +76,7 @@ pub const CORIM_CONTENT_TYPE: &str = "application/rim+cbor";
 /// }
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ProtectedCorimHeaderMap {
     /// COSE algorithm identifier (key 1).
     pub alg: CoseAlgorithm,
