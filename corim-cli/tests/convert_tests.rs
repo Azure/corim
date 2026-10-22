@@ -90,16 +90,54 @@ fn convert_round_trip_minimal_and_all_shipped_templates() {
 }
 
 #[test]
-fn convert_preserves_mixed_duplicate_and_complex_keys_without_aliases() {
+fn convert_preserves_distinct_integer_text_and_complex_keys_without_aliases() {
     assert_value_round_trip(&Value::Map(vec![
         (Value::Integer(-700), Value::Text("UpToDate".into())),
         (Value::Integer(100), Value::Text("PSA certificate".into())),
         (Value::Integer(1), Value::Bool(false)),
         (Value::Text("1".into()), Value::Bytes(vec![0, 255])),
-        (Value::Integer(1), Value::Bool(true)),
+        (Value::Integer(2), Value::Bool(true)),
         (Value::Array(vec![Value::Null]), Value::Map(vec![])),
         (Value::Map(vec![]), Value::Text("map key".into())),
     ]));
+}
+
+#[test]
+fn convert_rejects_duplicate_schema_keys_while_generic_json_preserves_them() {
+    let root = Value::Tag(
+        TAG_CORIM,
+        Box::new(Value::Map(vec![
+            (
+                Value::Integer(i128::from(CORIM_KEY_ID)),
+                Value::Text("first".into()),
+            ),
+            (
+                Value::Integer(i128::from(CORIM_KEY_ID)),
+                Value::Text("second".into()),
+            ),
+            (
+                Value::Integer(i128::from(CORIM_KEY_TAGS)),
+                Value::Array(vec![]),
+            ),
+        ])),
+    );
+    let json = corim::json::value_to_json(&root).unwrap();
+    assert_eq!(corim::json::json_to_value(&json).unwrap(), root);
+
+    let mut files = Files::new();
+    let input = files.path("cbor");
+    let output = files.path("json");
+    std::fs::write(&input, cbor::encode(&root).unwrap()).unwrap();
+    let result = Command::new(bin())
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(!result.status.success());
+    assert!(String::from_utf8_lossy(&result.stderr).contains("duplicate map key: 0"));
+    assert!(!output.exists());
 }
 
 #[test]
