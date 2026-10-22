@@ -83,8 +83,10 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      - name: Test resumable publishing without network or uploads
-        run: bash scripts/tests/publish-crate-tests.sh
+      - name: Test release packaging and publishing without uploads
+        run: |
+          bash scripts/tests/publish-crate-tests.sh
+          bash scripts/tests/release-packaging-tests.sh
 
   clippy:
     name: Clippy
