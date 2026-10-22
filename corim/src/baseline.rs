@@ -409,7 +409,10 @@ pub fn compare_headers(
         &baseline.extra,
         &input.extra,
         &mut r,
-        |k| PathSegment::MapKey(*k),
+        |k| match k {
+            ClaimKey::Int(number) => PathSegment::MapKey(*number),
+            ClaimKey::Text(text) => PathSegment::TextKey(text.clone()),
+        },
     );
 
     Ok(r)
@@ -535,16 +538,16 @@ fn compare_cwt_claims(
     compare_leaf(
         &p,
         "exp",
-        opt_int(baseline.exp),
-        opt_int(input.exp),
+        opt_val(&baseline.exp)?,
+        opt_val(&input.exp)?,
         r,
         false,
     );
     compare_leaf(
         &p,
         "nbf",
-        opt_int(baseline.nbf),
-        opt_int(input.nbf),
+        opt_val(&baseline.nbf)?,
+        opt_val(&input.nbf)?,
         r,
         false,
     );

@@ -10,6 +10,16 @@ versions.
 
 ### Fixed
 
+- **Lossless protected-header comparison and reporting.** Text COSE labels
+  and fractional CWT `exp` / `nbf` values now survive decoding and re-encoding,
+  so baseline comparisons no longer silently report a match after they change.
+  Protected-header bytes remain unchanged for signature verification.
+  **Source compatibility:** `ProtectedCorimHeaderMap::extra` now uses
+  `CoseLabel` (`Int` / `Text`) keys, and `CwtClaims::exp` / `nbf` now use
+  `NumericDate` (`Int` / `Float`). Existing integer builder calls remain valid;
+  direct field assignments and map access must use `.into()` or typed variants.
+  CLI JSON `header_extra` uses separate `int` and `text` objects, matching CWT
+  extension reporting and preventing same-looking labels from colliding.
 - **Nested CBOR map keys caused exponential re-encoding work.** The encoder
   now writes the key bytes already cached for sorting instead of recursively
   encoding each key twice. This also protects baseline header and payload
