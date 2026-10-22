@@ -26,11 +26,12 @@ use serde::{Deserialize, Serialize};
 use super::super::corim::CorimMetaMap;
 use super::super::measurement::DigestAlg;
 use super::algorithm::CoseAlgorithm;
-use super::cwt::{value_to_epoch, CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_NBF, CWT_CLAIM_SUB};
+use super::cwt::{CwtClaims, NumericDate, CWT_CLAIM_EXP, CWT_CLAIM_NBF, CWT_CLAIM_SUB};
 use super::x509::{
     deserialize_cose_cert_hash, deserialize_cose_x509, serialize_cose_x509, CoseCertHash, CoseX509,
     COSE_HEADER_KID, COSE_HEADER_X5BAG, COSE_HEADER_X5CHAIN, COSE_HEADER_X5T, COSE_HEADER_X5U,
 };
+use super::CoseLabel;
 use crate::cbor;
 use crate::cbor::value::Value;
 use crate::Validate;
@@ -109,7 +110,7 @@ pub struct ProtectedCorimHeaderMap {
     pub x5u: Option<String>,
 
     /// Any additional COSE header labels not explicitly modeled above.
-    pub extra: BTreeMap<i64, Value>,
+    pub extra: BTreeMap<CoseLabel, Value>,
 }
 
 impl ProtectedCorimHeaderMap {
@@ -236,8 +237,8 @@ impl ProtectedCorimHeaderMapBuilder {
     }
 
     /// Add an extra COSE header label.
-    pub fn extra(mut self, key: i64, value: Value) -> Self {
-        self.inner.extra.insert(key, value);
+    pub fn extra(mut self, key: impl Into<CoseLabel>, value: Value) -> Self {
+        self.inner.extra.insert(key.into(), value);
         self
     }
 
@@ -276,7 +277,7 @@ impl Serialize for ProtectedCorimHeaderMap {
                 self.payload_location.is_some(),
             ),
         ] {
-            if present && self.extra.contains_key(&key) {
+            if present && self.extra.contains_key(&CoseLabel::Int(key)) {
                 return Err(serde::ser::Error::custom(format!(
                     "extra header key {key} collides with a modeled field"
                 )));
@@ -450,16 +451,15 @@ impl ProtectedCorimHeaderMap {
         // nested under key 15. Track them separately and synthesize at the end.
         let mut cwt_iss: Option<String> = None;
         let mut cwt_sub: Option<String> = None;
-        let mut cwt_exp: Option<i64> = None;
-        let mut cwt_nbf: Option<i64> = None;
+        let mut cwt_exp = None;
+        let mut cwt_nbf = None;
 
         for (k, v) in map {
             let key = match &k {
                 Value::Integer(n) => i64::try_from(*n)
                     .map_err(|_| serde::de::Error::custom("header key out of range"))?,
-                Value::Text(_) => {
-                    // Text COSE labels are valid per RFC 9052 but not modeled;
-                    // skip since our extra map uses i64 keys only.
+                Value::Text(text) => {
+                    extra.insert(CoseLabel::Text(text.clone()), v);
                     continue;
                 }
                 _ => continue,
@@ -493,7 +493,7 @@ impl ProtectedCorimHeaderMap {
                             cwt_sub = Some(t);
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -507,13 +507,15 @@ impl ProtectedCorimHeaderMap {
                     // Key 4: CWT `exp` (int/float) or COSE `kid` (bstr).
                     match v {
                         Value::Integer(_) | Value::Float(_) => {
-                            cwt_exp = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
+                            cwt_exp = Some(
+                                NumericDate::from_value(&v).map_err(serde::de::Error::custom)?,
+                            );
                         }
                         Value::Bytes(b) => {
                             kid = Some(b);
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -521,10 +523,12 @@ impl ProtectedCorimHeaderMap {
                     // Key 5: CWT `nbf` (int/float) or COSE header (other).
                     match &v {
                         Value::Integer(_) | Value::Float(_) => {
-                            cwt_nbf = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
+                            cwt_nbf = Some(
+                                NumericDate::from_value(&v).map_err(serde::de::Error::custom)?,
+                            );
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -555,12 +559,12 @@ impl ProtectedCorimHeaderMap {
                                 Err(_) => {
                                     // Store the raw bytes in extra for forward-compat;
                                     // some producers emit malformed corim-meta.
-                                    extra.insert(key, Value::Bytes(b));
+                                    extra.insert(CoseLabel::Int(key), Value::Bytes(b));
                                 }
                             }
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -612,7 +616,7 @@ impl ProtectedCorimHeaderMap {
                     });
                 }
                 _ => {
-                    extra.insert(key, v);
+                    extra.insert(CoseLabel::Int(key), v);
                 }
             }
         }

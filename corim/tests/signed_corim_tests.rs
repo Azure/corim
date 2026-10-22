@@ -639,8 +639,8 @@ fn cwt_claims_round_trip() {
 
     assert_eq!(decoded.iss, "Test Issuer");
     assert_eq!(decoded.sub.as_deref(), Some("test-doc"));
-    assert_eq!(decoded.nbf, Some(1700000000));
-    assert_eq!(decoded.exp, Some(1800000000));
+    assert_eq!(decoded.nbf, Some(1700000000.into()));
+    assert_eq!(decoded.exp, Some(1800000000.into()));
 }
 
 #[test]
@@ -764,8 +764,8 @@ fn protected_header_with_cwt_claims_round_trip() {
     assert!(decoded.cwt_claims.is_some());
     let dc = decoded.cwt_claims.unwrap();
     assert_eq!(dc.iss, "ACME Corp");
-    assert_eq!(dc.nbf, Some(1700000000));
-    assert_eq!(dc.exp, Some(1800000000));
+    assert_eq!(dc.nbf, Some(1700000000.into()));
+    assert_eq!(dc.exp, Some(1800000000.into()));
 }
 
 #[test]
@@ -1395,7 +1395,7 @@ fn protected_header_extra_fields_preserved() {
         cwt_claims: None,
         extra: {
             let mut m = std::collections::BTreeMap::new();
-            m.insert(99, Value::Text("custom-value".into()));
+            m.insert(99.into(), Value::Text("custom-value".into()));
             m
         },
         kid: None,
@@ -1408,7 +1408,7 @@ fn protected_header_extra_fields_preserved() {
     let bytes = cbor::encode(&header).unwrap();
     let decoded: ProtectedCorimHeaderMap = cbor::decode(&bytes).unwrap();
     assert_eq!(
-        decoded.extra.get(&99),
+        decoded.extra.get(&99.into()),
         Some(&Value::Text("custom-value".into()))
     );
 }
@@ -2053,7 +2053,7 @@ fn signed_corim_builder_with_cwt_claims_round_trip() {
     let decoded = decode_signed_corim(&signed_bytes).unwrap();
     let cwt = decoded.protected.cwt_claims.unwrap();
     assert_eq!(cwt.iss, "ACME Corp");
-    assert_eq!(cwt.exp, Some(9999999999));
+    assert_eq!(cwt.exp, Some(9999999999.into()));
 }
 
 #[test]
@@ -2074,8 +2074,8 @@ fn cwt_claims_builder_methods_set_each_field() {
         .with_nbf(1000);
     assert_eq!(c.iss, "iss");
     assert_eq!(c.sub, Some("sub".into()));
-    assert_eq!(c.exp, Some(9999));
-    assert_eq!(c.nbf, Some(1000));
+    assert_eq!(c.exp, Some(9999.into()));
+    assert_eq!(c.nbf, Some(1000.into()));
 }
 
 // ===========================================================================

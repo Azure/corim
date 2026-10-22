@@ -302,7 +302,7 @@ fn unknown_tagged_structures_remain_opaque() {
     check_document_framing(&bytes, &DecodeLimits::default()).unwrap();
     let signed = decode_signed_corim(&bytes).unwrap();
     assert_eq!(
-        signed.protected.extra.get(&EXTRA_HEADER_LABEL),
+        signed.protected.extra.get(&EXTRA_HEADER_LABEL.into()),
         Some(&extra)
     );
 }

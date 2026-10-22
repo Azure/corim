@@ -157,12 +157,8 @@ pub fn protected_header_value(p: &ProtectedCorimHeaderMap, size: usize) -> JsonV
         json!(p.x5chain.as_ref().map(|x| x.certs().len()).unwrap_or(0)),
     );
     o.insert("has_x5t".into(), json!(p.x5t.is_some()));
-    if !p.extra.is_empty() {
-        let mut ext = Map::new();
-        for (k, v) in &p.extra {
-            ext.insert(k.to_string(), cbor_to_json(v));
-        }
-        o.insert("header_extra".into(), JsonValue::Object(ext));
+    if let Some(extra) = claim_extras(&p.extra) {
+        o.insert("header_extra".into(), extra);
     }
     JsonValue::Object(o)
 }

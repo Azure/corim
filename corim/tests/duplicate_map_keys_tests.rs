@@ -230,7 +230,7 @@ fn serializers_reject_extras_colliding_with_populated_modeled_fields() {
         .extra
         .insert(ClaimKey::Int(CWT_CLAIM_ISS), text("issuer"));
     let mut h = header();
-    h.extra.insert(COSE_HEADER_ALG, int(h.alg.to_i64()));
+    h.extra.insert(COSE_HEADER_ALG.into(), int(h.alg.to_i64()));
     let errors = [
         cbor::encode(&mval).is_err(),
         cbor::encode(&claims).is_err(),
@@ -292,12 +292,12 @@ fn type_disjoint_flat_claims_accept_both_orders_preserving_protected_bytes() {
             CwtClaims::new("issuer")
                 .with_sub("subject")
                 .with_exp(123)
-                .with_nbf(12),
+                .with_nbf(corim::types::signed::NumericDate::Float(12.0)),
         );
         expected
             .extra
-            .insert(COSE_CRIT, Value::Array(vec![int(COSE_HEADER_ALG)]));
-        expected.extra.insert(COSE_IV, Value::Bytes(vec![5]));
+            .insert(COSE_CRIT.into(), Value::Array(vec![int(COSE_HEADER_ALG)]));
+        expected.extra.insert(COSE_IV.into(), Value::Bytes(vec![5]));
         assert_eq!(parsed.protected, expected);
         let tbs = parsed.to_be_signed_detached(b"payload", &[]).unwrap();
         let tbs = cbor::decode::<Value>(&tbs).unwrap().into_array().unwrap();
@@ -333,7 +333,7 @@ fn unique_unknown_fields_remain_forward_compatible() {
         .insert(ClaimKey::Text("custom".into()), text("text"));
     assert_eq!(decode::<CwtClaims>(&value(&claims)).unwrap(), claims);
     let mut h = header();
-    h.extra.insert(EXTENSION, raw);
+    h.extra.insert(EXTENSION.into(), raw);
     assert_eq!(decode::<Header>(&value(&h)).unwrap(), h);
 }
 
@@ -511,7 +511,9 @@ fn optional_header_fields_reject_populated_extra_collisions() {
             panic!("integer label")
         };
         let mut collision = h.clone();
-        collision.extra.insert(i64::try_from(key).unwrap(), v);
+        collision
+            .extra
+            .insert(i64::try_from(key).unwrap().into(), v);
         assert!(cbor::encode(&collision).is_err(), "populated key {key}");
     }
 }
@@ -520,7 +522,7 @@ fn optional_header_fields_reject_populated_extra_collisions() {
 fn malformed_metadata_remains_a_raw_extra_when_typed_metadata_is_absent() {
     let mut h = header();
     h.extra.insert(
-        COSE_HEADER_CORIM_META,
+        COSE_HEADER_CORIM_META.into(),
         Value::Bytes(cbor::encode(&Value::Null).unwrap()),
     );
     let bytes = cbor::encode(&h).unwrap();
