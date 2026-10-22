@@ -3,6 +3,9 @@
 
 //! Tests for `corim::baseline` structural conformance comparison.
 
+// These fixtures also compile when the public models are non-exhaustive.
+#![allow(clippy::field_reassign_with_default)]
+
 use corim::baseline::{compare as try_compare, MismatchKind};
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::cbor::{self, value::Tagged, value::Value};
