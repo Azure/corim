@@ -57,7 +57,8 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
   role, patches link).
 
 - **Optional JSON** — `json` feature gate adds `Value ↔ serde_json::Value`
-  conversion with integer-to-string key remapping and type-choice JSON format.
+  conversion preserving typed map keys, duplicate entries, tags, bytes, and
+  every binary64 float bit.
 
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
@@ -211,11 +212,11 @@ corim-cli validate --diagnose myfile.corim
 # Structural conformance check against a known-good baseline (JSON or CBOR)
 corim-cli validate myfile.corim --baseline golden.json
 
-# Generate an unsigned CoRIM from a JSON template
+# Generate a CoRIM from lossless document JSON (requires complete validation)
 corim-cli generate template.json -o out.cbor
 
 # Convert a CoRIM back to a JSON template (inverse of generate;
-# accepts unsigned or signed-with-attached-payload input)
+# preserves the entire root, including signed and detached envelopes)
 corim-cli convert myfile.corim -o template.json
 
 # Extract the unsigned CoRIM payload from a signed CoRIM
@@ -248,7 +249,7 @@ uses the distinct endorsement profile
 `tag:arm.com,2025:endorsements/cca_realm#1.0.0`, per
 [draft-ydb-rats-cca-endorsements-04 §3.2](https://www.ietf.org/archive/id/draft-ydb-rats-cca-endorsements-04.html#section-3.2).
 The environment class ID contains the RIM from Realm claim 44238 as
-tagged bytes (base64 in the JSON template), not a hardware product ID or
+tagged bytes (hex in the embedded CBOR byte string), not a hardware product ID or
 device serial number. The class also carries user-supplied sample labels
 `vendor: "NVIDIA"` and `model: "VR72"`; these are not extracted from the
 Realm token. Environment matching treats these fields as constraints, so
@@ -380,15 +381,16 @@ CWT `exp` and `nbf` preserve integer or fractional seconds as `NumericDate`;
 baseline reporting does not truncate them. The header's `extra` map uses
 `CoseLabel` keys; use `.into()` for existing integer keys. Integer timestamp
 builder calls remain supported; fractional timestamps use
-`NumericDate::Float(...)`. CLI JSON reports header extensions under
-`header_extra.int` and `header_extra.text`, like CWT extension keys.
+`NumericDate::Float(...)`. CLI JSON reports header and CWT extensions as
+lossless map nodes, retaining the type of each integer or text key.
 Keyed typed collections, extension maps and matcher sets use indexed queues
 rather than repeated candidate scans. Comparison-consistent exact keys are
 prepared before matching; reservation does not run full comparisons or build
 temporary reports. Unkeyed measurements pair directly at their original indices.
 Recursive key identity, duplicate multiplicity and ordered series are retained.
 No profile-specific meaning is inferred for unknown extension values.
-Non-finite numeric differences use the existing `float-bits` JSON representation.
+All CBOR-valued differences use the shared lossless JSON representation,
+including finite and non-finite floats.
 
 The structure/value boundary follows
 [draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
@@ -453,89 +455,75 @@ back out of a signed CoRIM (attached payloads only). `validate` on a
 signed CoRIM checks structure, temporal validity and registered profiles, but
 the signature is **not** cryptographically verified.
 
-### `generate` — build a CoRIM from a JSON template
+### Lossless document JSON
 
-`generate` builds an **unsigned** CoRIM from a hand-authored JSON
-template. A template has a `corim-id`, an optional `profile`, optional
-CoRIM-level fields (`rim-validity`, `entities`, `dependent-rims`), and
-one or more tag arrays (`comids`, `coswids`, `cotls`). Each tag is
-deserialized into its decoded type (CoMID gets the full triples tree),
-then encoded and wrapped by the builder.
+The library's `json` feature, document templates, and CBOR-valued report
+fields share one strict representation of the RFC 8949 §3 data model:
 
-Map keys may be written as **prose names** (`"tag-identity"`,
-`"triples"`, `"vendor"`, `"svn"`, …); the CLI rewrites them to the CBOR
-integer keys the core `json` layer expects using a context-aware state
-machine (it knows, e.g., that `"version"` is key 1 in `tag-identity` but
-key 0 in `measurement-values-map`). Raw integer-string keys (`"1"`,
-`"4"`, …) are still accepted, and the rewrite is idempotent — so
-prose, integer, and mixed templates all produce identical output.
-Triple records may be written as **labeled objects** using the CDDL
-field names (e.g. a conditional-endorsement-series triple as
-`{ "common-condition": { "environment": …, "claims-list": … }, "series": [ {
-"condition": …, "addition": … } ] }`) or as the legacy **positional
-arrays**; both are accepted, and `convert` emits the labeled form.
+| CBOR value | JSON node |
+| --- | --- |
+| null, boolean, text | native JSON null, boolean, string |
+| array | native array of encoded nodes |
+| integer | `{"type":"integer","value":"-42"}` |
+| float (all values) | `{"type":"float-bits","value":"8000000000000000"}` |
+| byte string | `{"type":"byte-string","value":"00ff"}` |
+| tag | `{"type":"tag","tag":"32","value":"https://example.com"}` |
+| map | `{"type":"map","value":[[ENCODED_KEY,ENCODED_VALUE],...]}` |
 
-In JSON templates, `corim-id` and `profile` accept either a plain string
-(text id / URI) or a type-choice object for the other variants — `corim-id` as
-`{ "type": "uuid", "value": "…" }`, `profile` as
-`{ "type": "oid", "value": "<base64>" }`. `rim-validity` is
-`{ "not-before"?: <epoch>, "not-after": <epoch> }` (epoch seconds). Generated
-CBOR encodes URI profile identifiers as RFC 8610 `#6.32(tstr)`.
+Decimal integers and tag numbers are canonical strings; bytes and binary64
+float bits use lowercase hexadecimal. Integer range is `[-2^64, 2^64-1]`;
+tag numbers fit `u64`. Maps retain entry order, key types, and duplicate
+multiplicity. Even maps whose text keys resemble codec wrappers are encoded
+as map nodes. Opaque byte strings stay opaque: embedded CoMID CBOR and COSE
+protected headers are **not** parsed or normalized by JSON conversion.
+Report status, error, count, and other ordinary metadata remain ordinary JSON.
 
-Any object may carry a `$comment` (or `//`) key as an authoring note;
-these are stripped before encoding and never reach the CBOR output. The
-template stays valid standard JSON, so any JSON tool accepts it.
-Comments can annotate objects (the root, a CoMID, a triple record, an
-environment, …) but not bare array elements or scalars.
+There is no legacy mode or fallback: prose/integer-string map keys,
+semantic type-choice wrappers, aliases, base64 coercion, and authoring comments
+are not accepted. Unknown/additional wrapper members, malformed scalars, and
+duplicate JSON object members are errors. `corim::json::parse_json` performs
+bounded parsing with enough wrapper depth for 64-level CBOR trees; use it
+instead of serde_json's default 128-level parser for document JSON.
+`value_to_json` and `json_to_value` are fallible; generic
+`to_json`/`to_json_pretty`/`from_json` use CBOR-mode serde.
 
-Profile-defined `measurement-values-map` extension keys can be written
-by alias (e.g. `"tcbstatus": "UpToDate"` instead of `"-700": ...`) when
-the template's `profile` field names a profile the CLI was compiled with.
-See [`corim-cli/templates/azure_ndpa.json`](corim-cli/templates/azure_ndpa.json)
-for a worked example (equivalent to the `build_corim_ovl3_tdisp_ndpa`
-example). Signed CoRIM generation is out of scope — sign the output
-separately via `SignedCorimBuilder`.
+### `generate` — encode a lossless JSON document
 
-Byte-string fields are authored as **base64** text (matching the output
-of `corim-cli validate -f json`). Bare `bstr` positions — digest values,
-`ueid`, `uuid`, `mac-addr`, `ip-addr`, and `integrity-registers` digests
-— are decoded to CBOR bytes automatically, as is the `bstr` inside
-byte-bearing type-choice tags the core layer leaves as text
-(`oid`, `cose-key`, `key-thumbprint`, `cert-thumbprint`,
-`cert-path-thumbprint`, `pkix-asn1der-cert`, `masked-raw-value`). All
-three `ovl3_tdisp` reference examples (NDPA, SOCMANA, SFUA) reproduce
-byte-identically from templates. Remaining gaps: signed CoRIMs, and
-type-choice variants the core `json` layer does not round-trip.
+`generate` encodes the raw root and runs non-cryptographic document validation
+before writing output. Invalid documents fail; partial coverage (including an
+unregistered profile or unknown tag content) exits `4` without writing.
+Attached signed envelopes retain the full envelope, signature, payload, and
+exact protected-header byte string; no signature is produced or verified.
+Detached envelopes cannot pass generation's attached-document validation gate.
+`--profile URI` replaces an unsigned tag-501 document's profile with
+`#6.32(tstr)` and is rejected for signed documents.
 
-### `convert` — dump a CoRIM back to a JSON template
+The shipped [templates](corim-cli/templates/azure_ndpa.json) use only this
+new format. They preserve the original sample documents, including byte-string
+embedded CBOR and profile-specific keys. To edit embedded structures, decode
+and rebuild their bytes using the typed builder APIs.
 
-`convert` is the inverse of `generate`. It decodes a tag-501 unsigned
-CoRIM and emits a **prose-keyed** JSON template (to `-o FILE`, or stdout)
-that feeds straight back into `generate`, reproducing the original bytes:
+### `convert` — inspect raw CBOR as lossless JSON
+
+`convert` reads one bounded, exactly framed CBOR item and emits the entire
+raw root (to `-o FILE`, or stdout). It does **not** perform document or crypto
+validation, peel compatibility wrappers, or extract a signed payload:
 
 ```sh
 corim-cli convert myfile.corim -o template.json
-corim-cli generate template.json -o roundtrip.corim   # byte-identical
+corim-cli generate template.json -o roundtrip.corim
 
-# A signed CoRIM works too — its embedded payload is converted
+# A signed CoRIM works too — its FULL envelope is converted
 corim-cli convert signed.cose -o template.json
 ```
 
-A signed (`#6.18`) CoRIM is accepted directly: the embedded payload is
-converted, so no separate `extract` step is needed. Detached (nil)
-payloads cannot be converted — the unsigned document travels separately.
-
-For signed input the template also carries a `protected-header` object
-describing the COSE envelope (algorithm, CWT issuer/subject/claims,
-`corim-meta` signer, certificate presence). It is informational —
-`generate` ignores it, so the round trip stays byte-identical.
-
-This differs from `validate -f json`, which prints a validation
-*summary* (validity, counts, triple types), not the CoRIM contents. Use
-`convert` when you want the full structure as editable JSON, and `validate
---edn` for CBOR Extended Diagnostic Notation. All three `ovl3_tdisp`
-reference examples round-trip `convert` → `generate` byte-identically.
-Signed CoRIMs are out of scope — convert the payload instead.
+Detached (`nil` payload) and unvalidated envelopes are inspectable too.
+`convert` never adds informational keys to the document. JSON preserves the
+raw data model, not original noncanonical CBOR integer widths or outer map
+encoding order: re-encoding uses deterministic CBOR. Byte strings, in
+particular signed protected headers and payloads, remain byte-exact.
+`validate -f json` instead prints a validation summary whose CBOR-valued
+fields use the same codec; `validate --edn` displays diagnostic notation.
 
 Two worked examples show how to build fixtures directly with the builder
 API (they write the CoRIM to stdout):

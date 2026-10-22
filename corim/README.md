@@ -15,7 +15,8 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   Set and numeric-range conditions accept exact observations only. Numeric
   comparison preserves integer precision; NaN never matches. The Rust map fields
   are `r#bool`, `number`, `text`, and `bytes`. See the
-  [matcher module](src/types/matcher.rs) for usage and lossless JSON formats.
+  [matcher module](src/types/matcher.rs) for Rust usage. Document JSON uses the
+  shared lossless CBOR-tree codec in `corim::json`, not semantic matcher wrappers.
 - **Full CDDL coverage** — `corim-map`, CoMID, CoTL, all 9 triple types,
   `measurement-values-map` with all fields
 - **Signed CoRIM (`#6.18`)** — decode, validate, construct (attached + detached);
@@ -36,6 +37,11 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   Arm PSA, and Arm CCA Platform/Realm profiles.
 - **CoSWID** — structured types per RFC 9393 with co-constraint validation
 - **Optional JSON** — `json` feature gate for `Value ↔ serde_json::Value` conversion
+  with ordered entry-array maps, decimal integer strings, lowercase hex byte
+  strings, explicit tags, and exact binary64 float bits. Generic helpers use
+  CBOR-mode serde; legacy prose/semantic JSON is rejected. For untrusted JSON,
+  `json::parse_json` bounds input size, expanded wrapper depth, and node count,
+  and rejects duplicate object members.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC

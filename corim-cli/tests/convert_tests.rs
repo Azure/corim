@@ -1,139 +1,252 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Integration tests for `corim-cli convert` and the
-//! `convert -> generate` round trip.
-
-use std::process::Command;
+//! Inspection must preserve the entire raw CBOR tree, not a typed subset.
+use corim::cbor::{self, value::Value};
+use corim::types::tags::*;
+use std::{path::PathBuf, process::Command};
 
 fn bin() -> &'static str {
     env!("CARGO_BIN_EXE_corim-cli")
 }
 
-/// A unique temp path (`corim_cli_<stem>_<pid>_<n>.<ext>`) so tests
-/// running in parallel — or re-runs that left files behind — never
-/// collide on a fixed filename.
-fn unique_temp(stem: &str, ext: &str) -> std::path::PathBuf {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static N: AtomicU64 = AtomicU64::new(0);
-    let n = N.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("corim_cli_{stem}_{}_{n}.{ext}", std::process::id()))
+struct Files(Vec<PathBuf>);
+impl Files {
+    fn new() -> Self {
+        Self(Vec::new())
+    }
+    fn path(&mut self, ext: &str) -> PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target-json-tests");
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(format!(
+            "convert_{}_{}.{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed),
+            ext
+        ));
+        self.0.push(path.clone());
+        path
+    }
 }
-
-/// Generate a CoRIM from a template, convert it back to a template, then
-/// generate again — the two CBOR outputs must be byte-identical.
-fn assert_round_trip(name: &str, template: &str) {
-    let dir = std::env::temp_dir();
-    let src_t = dir.join(format!("corim_cli_conv_{name}_src.json"));
-    let src_c = dir.join(format!("corim_cli_conv_{name}_src.cbor"));
-    let back_t = dir.join(format!("corim_cli_conv_{name}_back.json"));
-    let back_c = dir.join(format!("corim_cli_conv_{name}_back.cbor"));
-
-    std::fs::write(&src_t, template).unwrap();
-
-    // template -> CBOR
-    let s = Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            src_c.to_str().unwrap(),
-        ])
-        .status()
-        .expect("generate src");
-    assert!(s.success(), "{name}: generate src failed");
-
-    // CBOR -> template
-    let s = Command::new(bin())
-        .args([
-            "convert",
-            src_c.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap(),
-        ])
-        .status()
-        .expect("convert");
-    assert!(s.success(), "{name}: convert failed");
-
-    // template -> CBOR again
-    let s = Command::new(bin())
-        .args([
-            "generate",
-            back_t.to_str().unwrap(),
-            "-o",
-            back_c.to_str().unwrap(),
-        ])
-        .status()
-        .expect("generate back");
-    assert!(s.success(), "{name}: generate back failed");
-
-    let a = std::fs::read(&src_c).unwrap();
-    let b = std::fs::read(&back_c).unwrap();
-    assert_eq!(a, b, "{name}: convert -> generate must be byte-identical");
-
-    for f in [&src_t, &src_c, &back_t, &back_c] {
-        let _ = std::fs::remove_file(f);
+impl Drop for Files {
+    fn drop(&mut self) {
+        for p in &self.0 {
+            let _ = std::fs::remove_file(p);
+        }
     }
 }
 
-/// A minimal CoMID-only CoRIM round-trips through convert.
-#[test]
-fn convert_round_trip_minimal_comid() {
-    assert_round_trip(
-        "minimal",
-        r#"{
-          "corim-id": "id-1",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
-              ] } }
-          ]
-        }"#,
+fn convert(bytes: &[u8]) -> String {
+    let mut files = Files::new();
+    let input = files.path("cbor");
+    let output = files.path("json");
+    std::fs::write(&input, bytes).unwrap();
+    let result = Command::new(bin())
+        .arg("convert")
+        .arg(&input)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
     );
+    std::fs::read_to_string(output).unwrap()
+}
+
+fn assert_value_round_trip(value: &Value) {
+    let bytes = cbor::encode(value).unwrap();
+    let raw: Value = cbor::decode_exact(&bytes).unwrap();
+    let text = convert(&bytes);
+    let decoded: Value = corim::json::from_json(&text).unwrap();
+    // Compare encoded nodes, rather than PartialEq, to check NaN payload bits.
+    assert_eq!(
+        corim::json::value_to_json(&decoded).unwrap(),
+        corim::json::value_to_json(&raw).unwrap()
+    );
+    assert_eq!(cbor::encode(&decoded).unwrap(), bytes);
 }
 
 #[test]
-fn convert_round_trip_measurement_matchers() {
-    for (name, values) in [
-        (
-            "matcher_exact",
-            r#""bool":false,"number":1.5,"text":"abc","bytes":{"type":"byte-string","value":"00ff"}"#,
-        ),
-        (
-            "matcher_sets",
-            r#""bool":true,"number":{"type":"number-set","value":[1,{"type":"integer","value":"18446744073709551615"}]},"text":{"type":"text-set","value":["a","b"]},"bytes":{"type":"bytes-set","value":[{"type":"byte-string","value":""},{"type":"byte-string","value":"ff"}]}"#,
-        ),
-        (
-            "matcher_range",
-            r#""number":{"type":"number-range","value":[null,{"type":"float-bits","value":"7ff0000000000000"}]}"#,
-        ),
-        (
-            "matcher_nan",
-            r#""number":{"type":"float-bits","value":"7ff8000000001234"}"#,
-        ),
+fn convert_round_trip_minimal_and_all_shipped_templates() {
+    for name in [
+        "azure_ndpa",
+        "azure_sfua",
+        "azure_socmana",
+        "azure_manticore_auth_keyattest",
+        "azure_manticore_trust_keyattest",
+        "cca_realm_vr72",
     ] {
-        let template = format!(
-            r#"{{"corim-id":"matchers","comids":[{{"tag-identity":{{"id":"c1"}},"triples":{{"reference-triples":[[{{"class":{{"vendor":"ACME"}}}},[{{"value":{{{values}}}}}]]]}}}}]}}"#
-        );
-        assert_round_trip(name, &template);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("templates")
+            .join(format!("{name}.json"));
+        let value: Value = corim::json::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        assert_value_round_trip(&value);
     }
+}
+
+#[test]
+fn convert_preserves_mixed_duplicate_and_complex_keys_without_aliases() {
+    assert_value_round_trip(&Value::Map(vec![
+        (Value::Integer(-700), Value::Text("UpToDate".into())),
+        (Value::Integer(100), Value::Text("PSA certificate".into())),
+        (Value::Integer(1), Value::Bool(false)),
+        (Value::Text("1".into()), Value::Bytes(vec![0, 255])),
+        (Value::Integer(1), Value::Bool(true)),
+        (Value::Array(vec![Value::Null]), Value::Map(vec![])),
+        (Value::Map(vec![]), Value::Text("map key".into())),
+    ]));
+}
+
+#[test]
+fn convert_round_trip_opaque_tagged_uri_and_unknown_extensions() {
+    assert_value_round_trip(&Value::Tag(
+        TAG_CORIM,
+        Box::new(Value::Map(vec![
+            (
+                Value::Integer(-999),
+                Value::Tag(TAG_URI, Box::new(Value::Text("https://example.com".into()))),
+            ),
+            (Value::Text("type".into()), Value::Text("integer".into())),
+            (Value::Text("value".into()), Value::Text("42".into())),
+            (
+                Value::Integer(10001),
+                Value::Tag(u64::MAX, Box::new(Value::Null)),
+            ),
+        ])),
+    ));
+}
+
+#[test]
+fn convert_round_trip_measurement_matchers_and_float_bits() {
+    for value in [
+        Value::Bool(false),
+        Value::Text("abc".into()),
+        Value::Bytes(vec![0, 255]),
+        Value::Tag(
+            TAG_MATCHER_SET,
+            Box::new(Value::Array(vec![Value::Integer(1), Value::Float(1.5)])),
+        ),
+        Value::Tag(
+            TAG_NUMBER_RANGE,
+            Box::new(Value::Array(vec![Value::Null, Value::Float(f64::INFINITY)])),
+        ),
+        Value::Float(f64::from_bits(0x7ff8_0000_0000_1234)),
+        Value::Float(-0.0),
+        Value::Integer(-(1_i128 << 64)),
+        Value::Integer(i128::from(u64::MAX)),
+    ] {
+        assert_value_round_trip(&value);
+    }
+}
+
+#[test]
+fn convert_preserves_full_signed_and_detached_envelopes_without_validation() {
+    // Deliberately noncanonical protected CBOR, unknown fields, a placeholder
+    // signature, and an opaque payload. Inspection must not validate or rewrite.
+    let protected = vec![0xa1, 0x18, 0x01, 0x38, 0x06];
+    for payload in [Value::Bytes(vec![0xd9, 0x01, 0xf5, 0xa0]), Value::Null] {
+        let root = Value::Tag(
+            TAG_SIGNED_CORIM,
+            Box::new(Value::Array(vec![
+                Value::Bytes(protected.clone()),
+                Value::Map(vec![(Value::Integer(10001), Value::Bytes(vec![0xaa]))]),
+                payload.clone(),
+                Value::Bytes(vec![0x55; 64]),
+            ])),
+        );
+        let text = convert(&cbor::encode(&root).unwrap());
+        let decoded: Value = corim::json::from_json(&text).unwrap();
+        assert_eq!(decoded, root);
+        assert!(
+            !text.contains("protected-header"),
+            "no informational fields in document JSON"
+        );
+        let Value::Tag(_, inner) = decoded else {
+            panic!()
+        };
+        let Value::Array(elements) = *inner else {
+            panic!()
+        };
+        assert_eq!(elements[0], Value::Bytes(protected.clone()));
+        assert_eq!(elements[2], payload);
+    }
+}
+
+#[test]
+fn convert_does_not_peel_legacy_wrappers_or_interpret_embedded_bytes() {
+    let inner = Value::Tag(
+        TAG_CORIM,
+        Box::new(Value::Map(vec![(
+            Value::Integer(CORIM_KEY_TAGS.into()),
+            Value::Array(vec![Value::Bytes(vec![0xd9, 0x01, 0xfa, 0xa0])]),
+        )])),
+    );
+    assert_value_round_trip(&Value::Tag(
+        TAG_LEGACY_TOP,
+        Box::new(Value::Tag(TAG_LEGACY_SIGNED, Box::new(inner))),
+    ));
+}
+
+#[test]
+fn convert_rejects_truncated_or_concatenated_cbor_before_creating_output() {
+    let mut files = Files::new();
+    for bytes in [vec![], vec![0xd2], vec![0xd2, 0x84, 0x40], vec![0xf6, 0xf6]] {
+        let input = files.path("cbor");
+        let output = files.path("json");
+        std::fs::write(&input, bytes).unwrap();
+        let result = Command::new(bin())
+            .arg("convert")
+            .arg(input)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(!output.exists());
+    }
+}
+
+#[test]
+fn convert_reads_stdin_and_emits_raw_scalar() {
+    use std::io::Write;
+    use std::process::Stdio;
+    let mut child = Command::new(bin())
+        .args(["convert", "-"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(&[0x01]).unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json, serde_json::json!({"type":"integer","value":"1"}));
+}
+
+#[test]
+fn convert_sixty_four_nested_maps_exceeding_default_json_depth() {
+    let mut root = Value::Null;
+    for _ in 0..64 {
+        root = Value::Map(vec![(Value::Null, root)]);
+    }
+    assert_value_round_trip(&root);
 }
 
 #[test]
 fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
-    use corim::cbor::{self, value::Value};
-    use corim::types::tags::*;
-    let source = unique_temp("matcher_diagnose", "cbor");
+    let mut files = Files::new();
+    let source = files.path("cbor");
+    let key = |n: i64| Value::Integer(i128::from(n));
     for invalid in [false, true] {
         let mval = Value::Map(vec![
+            (key(MVAL_KEY_BOOL), Value::Bool(false)),
             (
-                Value::Integer(i128::from(MVAL_KEY_BOOL)),
-                Value::Bool(false),
-            ),
-            (
-                Value::Integer(i128::from(MVAL_KEY_NUMBER)),
+                key(MVAL_KEY_NUMBER),
                 if invalid {
                     Value::Tag(
                         TAG_MATCHER_SET,
@@ -143,35 +256,26 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
                     Value::Integer(2)
                 },
             ),
-            (
-                Value::Integer(i128::from(MVAL_KEY_TEXT)),
-                Value::Text("abc".into()),
-            ),
-            (
-                Value::Integer(i128::from(MVAL_KEY_BYTES)),
-                Value::Bytes(vec![0, 255]),
-            ),
+            (key(MVAL_KEY_TEXT), Value::Text("abc".into())),
+            (key(MVAL_KEY_BYTES), Value::Bytes(vec![0, 255])),
         ]);
-        let measurement = Value::Map(vec![(Value::Integer(i128::from(MEAS_KEY_MVAL)), mval)]);
         let environment = Value::Map(vec![(
-            Value::Integer(i128::from(ENV_KEY_CLASS)),
-            Value::Map(vec![(
-                Value::Integer(i128::from(CLASS_KEY_VENDOR)),
-                Value::Text("ACME".into()),
-            )]),
+            key(ENV_KEY_CLASS),
+            Value::Map(vec![(key(CLASS_KEY_VENDOR), Value::Text("ACME".into()))]),
         )]);
+        let measurement = Value::Map(vec![(key(MEAS_KEY_MVAL), mval)]);
         let comid = Value::Map(vec![
             (
-                Value::Integer(i128::from(COMID_KEY_TAG_IDENTITY)),
+                key(COMID_KEY_TAG_IDENTITY),
                 Value::Map(vec![(
-                    Value::Integer(i128::from(TAG_IDENTITY_KEY_TAG_ID)),
+                    key(TAG_IDENTITY_KEY_TAG_ID),
                     Value::Text("c1".into()),
                 )]),
             ),
             (
-                Value::Integer(i128::from(COMID_KEY_TRIPLES)),
+                key(COMID_KEY_TRIPLES),
                 Value::Map(vec![(
-                    Value::Integer(i128::from(TRIPLES_KEY_REFERENCE)),
+                    key(TRIPLES_KEY_REFERENCE),
                     Value::Array(vec![Value::Array(vec![
                         environment,
                         Value::Array(vec![measurement]),
@@ -179,15 +283,12 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
                 )]),
             ),
         ]);
-        let corim = Value::Tag(
+        let root = Value::Tag(
             TAG_CORIM,
             Box::new(Value::Map(vec![
+                (key(CORIM_KEY_ID), Value::Text("matcher".into())),
                 (
-                    Value::Integer(i128::from(CORIM_KEY_ID)),
-                    Value::Text("matcher".into()),
-                ),
-                (
-                    Value::Integer(i128::from(CORIM_KEY_TAGS)),
+                    key(CORIM_KEY_TAGS),
                     Value::Array(vec![Value::Tag(
                         TAG_COMID,
                         Box::new(Value::Bytes(cbor::encode(&comid).unwrap())),
@@ -195,10 +296,10 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
                 ),
             ])),
         );
-        std::fs::write(&source, cbor::encode(&corim).unwrap()).unwrap();
+        std::fs::write(&source, cbor::encode(&root).unwrap()).unwrap();
         for mode in [None, Some("--diagnose")] {
             let mut command = Command::new(bin());
-            command.args(["validate", source.to_str().unwrap()]);
+            command.arg("validate").arg(&source);
             if let Some(mode) = mode {
                 command.arg(mode);
             }
@@ -210,474 +311,11 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
                 String::from_utf8_lossy(&output.stdout)
             );
             if !invalid && mode.is_none() {
-                let output = String::from_utf8(output.stdout).unwrap();
+                let text = String::from_utf8(output.stdout).unwrap();
                 for field in ["bool: false", "number:", "text:", "bytes:"] {
-                    assert!(output.contains(field), "{output}");
+                    assert!(text.contains(field), "{text}");
                 }
             }
         }
-    }
-    std::fs::remove_file(source).unwrap();
-}
-
-/// All CoRIM-level fields (UUID id, OID profile, validity, entities,
-/// dependent-rims), integrity-registers, and a CoTL round-trip.
-#[test]
-fn convert_round_trip_full_fields() {
-    assert_round_trip(
-        "full",
-        r#"{
-          "corim-id": { "type": "uuid", "value": "550e8400-e29b-41d4-a716-446655440000" },
-          "profile": { "type": "oid", "value": "BgYrBgEEAQ==" },
-          "rim-validity": { "not-before": 1700000000, "not-after": 1900000000 },
-          "entities": [ { "entity-name": "ACME", "reg-id": "https://acme.example", "role": [1] } ],
-          "dependent-rims": [ { "href": "https://example.com/rim1", "thumbprint": [7, "3q2+7w=="] } ],
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "integrity-registers": {
-                        "0": [ [7, "3q2+7w=="] ],
-                        "cfg": [ [2, "3q2+7w=="] ] } } } ] ]
-              ] } }
-          ],
-          "cotls": [
-            { "tag-identity": { "id": "tl1" },
-              "tags-list": [ { "id": "c1" } ],
-              "tl-validity": { "not-after": 1900000000 } }
-          ]
-        }"#,
-    );
-}
-
-/// An identity triple with a cert-thumbprint crypto key round-trips
-/// (digest bytes inside a type-choice tag).
-#[test]
-fn convert_round_trip_cert_thumbprint() {
-    assert_round_trip(
-        "thumbprint",
-        r#"{
-          "corim-id": "id-1",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "identity-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "type": "cert-thumbprint", "value": [ 2, "3q2+7w==" ] } ] ]
-              ] } }
-          ]
-        }"#,
-    );
-}
-
-/// An opaque tag-32 profile extension remains tagged across JSON conversion.
-#[test]
-fn convert_round_trip_opaque_tagged_uri_extension() {
-    assert_round_trip(
-        "opaque_tagged_uri",
-        r#"{
-          "corim-id": "id-uri-extension",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": {
-                    "-999": {
-                      "__cbor_tag": 32,
-                      "__cbor_value": "https://example.com/extension"
-                    }
-                  } } ] ]
-              ] } }
-          ]
-        }"#,
-    );
-}
-
-/// Convert rejects a signed CoRIM with a clear message.
-#[test]
-fn convert_rejects_signed_corim() {
-    // Minimal tag-18 (0xD2) wrapper prefix is enough to trip the check.
-    let dir = std::env::temp_dir();
-    let f = dir.join("corim_cli_conv_signed.cbor");
-    std::fs::write(&f, [0xD2u8, 0x84, 0x40, 0xA0, 0xF6, 0x40]).unwrap();
-
-    let out = Command::new(bin())
-        .args(["convert", f.to_str().unwrap()])
-        .output()
-        .expect("run convert");
-    assert!(!out.status.success(), "expected failure on signed input");
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("signed CoRIM"),
-        "expected signed-CoRIM error, got: {stderr}"
-    );
-
-    let _ = std::fs::remove_file(&f);
-}
-
-/// Convert uses profile-aware alias names for mval extension keys
-/// (Azure: -700 -> tcbstatus).
-#[test]
-fn convert_emits_azure_mval_alias_name() {
-    let dir = std::env::temp_dir();
-    let src_t = dir.join("corim_cli_conv_azure_alias_src.json");
-    let src_c = dir.join("corim_cli_conv_azure_alias_src.cbor");
-    let back_t = dir.join("corim_cli_conv_azure_alias_back.json");
-
-    let template = r#"{
-            "corim-id": "id-azure-1",
-            "profile": "tag:microsoft.com,2026:azure-profile#1.0.0",
-            "comids": [
-                {
-                    "tag-identity": { "id": "c1" },
-                    "triples": {
-                        "reference-triples": [
-                            [
-                                { "class": { "vendor": "Microsoft" } },
-                                [ { "value": { "-700": "UpToDate" } } ]
-                            ]
-                        ]
-                    }
-                }
-            ]
-        }"#;
-
-    std::fs::write(&src_t, template).unwrap();
-
-    let s = Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            src_c.to_str().unwrap(),
-        ])
-        .status()
-        .expect("generate src");
-    assert!(s.success(), "azure alias test: generate src failed");
-
-    let s = Command::new(bin())
-        .args([
-            "convert",
-            src_c.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap(),
-        ])
-        .status()
-        .expect("convert");
-    assert!(s.success(), "azure alias test: convert failed");
-
-    let back = std::fs::read_to_string(&back_t).unwrap();
-    let back_json: serde_json::Value = serde_json::from_str(&back).unwrap();
-    assert_eq!(
-        back_json["profile"], "tag:microsoft.com,2026:azure-profile#1.0.0",
-        "expected profile URI to remain a plain JSON string"
-    );
-    assert!(
-        back.contains("\"tcbstatus\": \"UpToDate\""),
-        "expected tcbstatus alias in output JSON, got: {back}"
-    );
-    assert!(
-        !back.contains("\"-700\": \"UpToDate\""),
-        "did not expect raw -700 key in output JSON, got: {back}"
-    );
-
-    for f in [&src_t, &src_c, &back_t] {
-        let _ = std::fs::remove_file(f);
-    }
-}
-
-/// Convert uses profile-aware alias names for mval extension keys
-/// (PSA: 100 -> psa-cert-num).
-#[test]
-fn convert_emits_psa_mval_alias_name() {
-    let src_t = unique_temp("conv_psa_alias_src", "json");
-    let src_c = unique_temp("conv_psa_alias_src", "cbor");
-    let back_t = unique_temp("conv_psa_alias_back", "json");
-
-    let template = r#"{
-            "corim-id": "id-psa-1",
-            "profile": "tag:arm.com,2025:psa#1.0.0",
-            "comids": [
-                {
-                    "tag-identity": { "id": "c1" },
-                    "triples": {
-                        "reference-triples": [
-                            [
-                                { "class": { "vendor": "Arm" } },
-                                [ { "value": { "100": "1234567890123 - 12345" } } ]
-                            ]
-                        ]
-                    }
-                }
-            ]
-        }"#;
-
-    std::fs::write(&src_t, template).unwrap();
-
-    let s = Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            src_c.to_str().unwrap(),
-        ])
-        .status()
-        .expect("generate src");
-    assert!(s.success(), "psa alias test: generate src failed");
-
-    let s = Command::new(bin())
-        .args([
-            "convert",
-            src_c.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap(),
-        ])
-        .status()
-        .expect("convert");
-    assert!(s.success(), "psa alias test: convert failed");
-
-    let back = std::fs::read_to_string(&back_t).unwrap();
-    assert!(
-        back.contains("\"psa-cert-num\": \"1234567890123 - 12345\""),
-        "expected psa-cert-num alias in output JSON, got: {back}"
-    );
-    assert!(
-        !back.contains("\"100\":"),
-        "did not expect raw 100 key in output JSON, got: {back}"
-    );
-
-    for f in [&src_t, &src_c, &back_t] {
-        let _ = std::fs::remove_file(f);
-    }
-}
-
-/// `convert` accepts a signed CoRIM directly: it converts the embedded
-/// payload rather than requiring a separate `extract` step first.
-#[test]
-fn convert_accepts_a_signed_corim() {
-    let src_t = unique_temp("conv_signed_src", "json");
-    let unsigned = unique_temp("conv_signed_unsigned", "cbor");
-    let signed = unique_temp("conv_signed_signed", "cose");
-    let back_t = unique_temp("conv_signed_back", "json");
-    let back_c = unique_temp("conv_signed_back", "cbor");
-
-    std::fs::write(
-        &src_t,
-        r#"{
-          "corim-id": "signed-convert",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
-              ] } }
-          ]
-        }"#,
-    )
-    .unwrap();
-
-    // template -> unsigned CBOR -> signed COSE (placeholder signature)
-    assert!(Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            unsigned.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-    assert!(Command::new(bin())
-        .args([
-            "sign",
-            "prepare",
-            unsigned.to_str().unwrap(),
-            "--alg",
-            "ES256",
-            "--signer-name",
-            "Test Signer",
-            "--out-staging",
-            signed.to_str().unwrap(),
-            "--out-tbs",
-            unique_temp("conv_signed_tbs", "bin").to_str().unwrap(),
-        ])
-        .status()
-        .unwrap()
-        .success());
-
-    // convert straight from the signed CoRIM
-    let s = Command::new(bin())
-        .args([
-            "convert",
-            signed.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap(),
-        ])
-        .status()
-        .expect("convert signed");
-    assert!(s.success(), "convert must accept a signed CoRIM");
-
-    // and the template still regenerates the original payload byte-for-byte
-    assert!(Command::new(bin())
-        .args([
-            "generate",
-            back_t.to_str().unwrap(),
-            "-o",
-            back_c.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-    assert_eq!(
-        std::fs::read(&unsigned).unwrap(),
-        std::fs::read(&back_c).unwrap(),
-        "convert(signed) -> generate must reproduce the payload"
-    );
-
-    for f in [&src_t, &unsigned, &signed, &back_t, &back_c] {
-        let _ = std::fs::remove_file(f);
-    }
-}
-
-/// Converting a signed CoRIM also carries the COSE protected header into the
-/// template, without breaking the `generate` round trip (`generate` ignores
-/// the informational key).
-#[test]
-fn convert_signed_includes_protected_header() {
-    let src_t = unique_temp("conv_hdr_src", "json");
-    let unsigned = unique_temp("conv_hdr_unsigned", "cbor");
-    let signed = unique_temp("conv_hdr_signed", "cose");
-    let back_t = unique_temp("conv_hdr_back", "json");
-    let back_c = unique_temp("conv_hdr_back", "cbor");
-
-    std::fs::write(
-        &src_t,
-        r#"{
-          "corim-id": "hdr-convert",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
-              ] } }
-          ]
-        }"#,
-    )
-    .unwrap();
-
-    assert!(Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            unsigned.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-    assert!(Command::new(bin())
-        .args([
-            "sign",
-            "prepare",
-            unsigned.to_str().unwrap(),
-            "--alg",
-            "ES256",
-            "--signer-name",
-            "Header Signer",
-            "--out-staging",
-            signed.to_str().unwrap(),
-            "--out-tbs",
-            unique_temp("conv_hdr_tbs", "bin").to_str().unwrap(),
-        ])
-        .status()
-        .unwrap()
-        .success());
-
-    assert!(Command::new(bin())
-        .args([
-            "convert",
-            signed.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-
-    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&back_t).unwrap()).unwrap();
-    let header = &t["protected-header"];
-    assert_eq!(header["issuer"], "Header Signer");
-    assert_eq!(header["alg"], "ES256 (deprecated)");
-    assert!(header["size"].as_u64().unwrap() > 0);
-
-    // The informational key must not disturb the round trip.
-    assert!(Command::new(bin())
-        .args([
-            "generate",
-            back_t.to_str().unwrap(),
-            "-o",
-            back_c.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-    assert_eq!(
-        std::fs::read(&unsigned).unwrap(),
-        std::fs::read(&back_c).unwrap(),
-        "protected-header key must not affect the regenerated payload"
-    );
-
-    for f in [&src_t, &unsigned, &signed, &back_t, &back_c] {
-        let _ = std::fs::remove_file(f);
-    }
-}
-
-/// An unsigned CoRIM has no envelope, so no header key is emitted.
-#[test]
-fn convert_unsigned_has_no_protected_header_key() {
-    let src_t = unique_temp("conv_nohdr_src", "json");
-    let cbor = unique_temp("conv_nohdr", "cbor");
-    let back_t = unique_temp("conv_nohdr_back", "json");
-
-    std::fs::write(
-        &src_t,
-        r#"{
-          "corim-id": "no-hdr",
-          "comids": [
-            { "tag-identity": { "id": "c1" },
-              "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "svn": { "type": "svn", "value": 3 } } } ] ]
-              ] } }
-          ]
-        }"#,
-    )
-    .unwrap();
-
-    assert!(Command::new(bin())
-        .args([
-            "generate",
-            src_t.to_str().unwrap(),
-            "-o",
-            cbor.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-    assert!(Command::new(bin())
-        .args([
-            "convert",
-            cbor.to_str().unwrap(),
-            "-o",
-            back_t.to_str().unwrap()
-        ])
-        .status()
-        .unwrap()
-        .success());
-
-    let t: serde_json::Value = serde_json::from_slice(&std::fs::read(&back_t).unwrap()).unwrap();
-    assert!(t.get("protected-header").is_none());
-
-    for f in [&src_t, &cbor, &back_t] {
-        let _ = std::fs::remove_file(f);
     }
 }
