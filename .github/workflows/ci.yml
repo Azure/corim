@@ -55,7 +55,15 @@ jobs:
             "profile-intel,profile-azure" \
             "profile-intel,profile-psa" \
             "profile-azure,profile-psa" \
-            "profile-intel,profile-azure,profile-psa"; do
+            "profile-intel,profile-azure,profile-psa" \
+            "profile-cca" \
+            "profile-cca,profile-intel" \
+            "profile-cca,profile-azure" \
+            "profile-cca,profile-psa" \
+            "profile-cca,profile-intel,profile-azure" \
+            "profile-cca,profile-intel,profile-psa" \
+            "profile-cca,profile-azure,profile-psa" \
+            "profile-cca,profile-intel,profile-azure,profile-psa"; do
             echo "::group::no_std profiles: ${features:-none}"
             cargo build -p corim --no-default-features --features "$features" --locked
             echo "::endgroup::"

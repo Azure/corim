@@ -64,7 +64,7 @@ jobs:
           fi
 
       # Pre-flight: full test + clippy on the exact tagged commit, across
-      # every feature combination we ship (default, +profile-intel, +json),
+      # all optional profiles and JSON support,
       # plus a no-default-features build for the no_std + alloc path.
       - name: Test (workspace, all features)
         run: cargo test --workspace --all-features
