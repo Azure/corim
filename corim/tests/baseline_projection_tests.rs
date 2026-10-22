@@ -3,6 +3,9 @@
 
 //! Behavioral invariants for baseline comparison's private interpretation.
 
+// These fixtures also compile when the public models are non-exhaustive.
+#![allow(clippy::field_reassign_with_default)]
+
 use corim::baseline::{compare, render_path};
 use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::types::common::{MeasuredElement, TagIdChoice};
@@ -148,4 +151,49 @@ fn extension_map_order_is_unordered_but_nested_arrays_remain_positional() {
     let report = compare(&document(vec![reordered]), &document(vec![baseline])).unwrap();
     assert!(report.structural_mismatches.is_empty());
     assert_eq!(report.value_differences.len(), 2);
+}
+
+#[test]
+fn decoded_flags_serialization_failures_remain_errors_on_either_side() {
+    use corim::cbor::{self, value::Value};
+    use corim::types::corim::ConciseTagChoice;
+    use corim::types::tags::*;
+
+    fn field(value: &mut Value, label: i64) -> &mut Value {
+        let Value::Map(entries) = value else {
+            panic!("map fixture")
+        };
+        &mut entries
+            .iter_mut()
+            .find(|(key, _)| *key == Value::Integer(i128::from(label)))
+            .unwrap()
+            .1
+    }
+    fn item(value: &mut Value, index: usize) -> &mut Value {
+        let Value::Array(values) = value else {
+            panic!("array fixture")
+        };
+        &mut values[index]
+    }
+
+    let valid = document(vec![measurement(1, false)]);
+    let mut extension_only = valid.clone();
+    let mut comid: Value =
+        cbor::decode(&cbor::encode(&valid.tags[0].as_comid().unwrap()).unwrap()).unwrap();
+    let references = field(field(&mut comid, COMID_KEY_TRIPLES), TRIPLES_KEY_REFERENCE);
+    let measurements = item(item(references, 0), 1);
+    let Value::Map(mval) = field(item(measurements, 0), MEAS_KEY_MVAL) else {
+        panic!("mval fixture");
+    };
+    mval.push((
+        Value::Integer(i128::from(MVAL_KEY_FLAGS)),
+        Value::Map(vec![(Value::Integer(10001), Value::Bool(true))]),
+    ));
+    extension_only.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
+    for (input, baseline) in [(&extension_only, &valid), (&valid, &extension_only)] {
+        let error = compare(input, baseline).unwrap_err();
+        assert!(
+            matches!(error, corim::ValidationError::Invalid(ref detail) if detail.contains("non-empty constraint") && detail.contains("FlagsMap"))
+        );
+    }
 }
