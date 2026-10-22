@@ -41,6 +41,11 @@ registry_checksum() {
         *) echo "registry returned HTTP $status for $package $version" >&2; return 1 ;;
     esac
     jq -r -s --arg version "$version" '
+        if length == 0 then error("empty registry index")
+        elif any(.[]; type != "object") then error("registry index records must be objects")
+        elif any(.[]; (.vers | type) != "string") then
+            error("registry index records must have a string vers")
+        else . end |
         map(select(.vers == $version)) |
         if length == 0 then ""
         elif length != 1 then error("duplicate registry version")
