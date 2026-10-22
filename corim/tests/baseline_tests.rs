@@ -37,13 +37,10 @@ fn corim_with(digest: Vec<u8>, svn: SvnChoice, mkey: &str) -> CorimMap {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new(7, digest)]);
-
-            let __corim_field_1 = Some(svn);
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value.svn = __corim_field_1;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, digest)]);
+            values.svn = Some(svn);
+            values
         },
         authorized_by: None,
     };
@@ -97,10 +94,9 @@ fn check_large_typed_list(scope: &str) {
                 Some(MeasuredElement::Text("same".into()))
             },
             mval: {
-                let __corim_field_0 = Some(false);
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.r#bool = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.r#bool = Some(false);
+                values
             },
             authorized_by: None,
         };
@@ -129,10 +125,9 @@ fn nested_map_keys_in_measurement_extensions_compare_without_reencoding_explosio
     let mut document = corim_with(vec![1], SvnChoice::MinValue(1), "MRTD");
     let mut comid = document.tags[0].as_comid().unwrap();
     comid.triples.reference_triples.as_mut().unwrap()[0].1[0].mval = {
-        let __corim_field_0 = [(10001, Value::Null)].into();
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.extra_entries = __corim_field_0;
-        __corim_value
+        let mut values = MeasurementValuesMap::default();
+        values.extra_entries = [(10001, Value::Null)].into();
+        values
     };
     let mut bytes = cbor::encode(&comid).unwrap();
     assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
@@ -501,28 +496,25 @@ fn typed_field_shapes_are_structural_but_contents_are_values() {
         document
     };
     let registers = |id, algorithm, byte| {
-        let __corim_field_0 = Some(IntegrityRegisters(
+        let mut values = MeasurementValuesMap::default();
+        values.integrity_registers = Some(IntegrityRegisters(
             [(
                 IntegrityRegisterId::Uint(id),
                 vec![Digest::new(algorithm, vec![byte; 48])],
             )]
             .into(),
         ));
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.integrity_registers = __corim_field_0;
-        __corim_value
+        values
     };
     let keys = |key| {
-        let __corim_field_0 = Some(vec![key]);
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.cryptokeys = __corim_field_0;
-        __corim_value
+        let mut values = MeasurementValuesMap::default();
+        values.cryptokeys = Some(vec![key]);
+        values
     };
     let range = |value| {
-        let __corim_field_0 = Some(value);
-        let mut __corim_value: MeasurementValuesMap = Default::default();
-        __corim_value.int_range = __corim_field_0;
-        __corim_value
+        let mut values = MeasurementValuesMap::default();
+        values.int_range = Some(value);
+        values
     };
     for (baseline, input, conforms) in [
         (registers(0, 7, 1), registers(1, 7, 1), false),
@@ -813,11 +805,9 @@ fn missing_svn_field_in_input_is_a_structural_mismatch() {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("MRTD".into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
-
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            values
         },
         authorized_by: None,
     };
@@ -866,20 +856,18 @@ fn ces_series_addition_digest_is_compared() {
         let cond_meas = MeasurementMap {
             mkey: Some(MeasuredElement::Text("cond".into())),
             mval: {
-                let __corim_field_0 = Some(SvnChoice::MinValue(1));
-                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-                __corim_value.svn = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::MinValue(1));
+                values
             },
             authorized_by: None,
         };
         let add_meas = MeasurementMap {
             mkey: Some(MeasuredElement::Text("add".into())),
             mval: {
-                let __corim_field_0 = Some(vec![Digest::new(7, addition_digest)]);
-                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-                __corim_value.digests = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, addition_digest)]);
+                values
             },
             authorized_by: None,
         };
@@ -944,11 +932,9 @@ fn profile_difference_is_a_structural_mismatch() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("MRTD".into())),
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::MinValue(1));
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::MinValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -1003,14 +989,10 @@ fn mval_extension_keys_render_distinctly() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("MRTD".into())),
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::MinValue(1));
-
-                        let __corim_field_1 = extra;
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value.extra_entries = __corim_field_1;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::MinValue(1));
+                        values.extra_entries = extra;
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -1076,11 +1058,9 @@ fn measurement_authorized_by_difference_is_structural() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("MRTD".into())),
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::MinValue(1));
-                        let mut __corim_value: MeasurementValuesMap =
-                            MeasurementValuesMap::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::MinValue(1));
+                        values
                     },
                     authorized_by: authority.map(|k| vec![k]),
                 }],
@@ -1148,10 +1128,9 @@ fn corim_with_meta(
             vec![MeasurementMap {
                 mkey: Some(MeasuredElement::Text("MRTD".into())),
                 mval: {
-                    let __corim_field_0 = Some(SvnChoice::MinValue(1));
-                    let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-                    __corim_value.svn = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::MinValue(1));
+                    values
                 },
                 authorized_by: None,
             }],

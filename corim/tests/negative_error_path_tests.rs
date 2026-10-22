@@ -281,10 +281,9 @@ fn env_match_instance_mismatch() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -298,10 +297,9 @@ fn env_match_instance_mismatch() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -321,10 +319,9 @@ fn env_match_group_mismatch() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -338,10 +335,9 @@ fn env_match_group_mismatch() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -367,10 +363,9 @@ fn class_match_class_id_mismatch() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -390,10 +385,9 @@ fn class_match_class_id_mismatch() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -419,10 +413,9 @@ fn class_match_layer_mismatch() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -442,10 +435,9 @@ fn class_match_layer_mismatch() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -471,10 +463,9 @@ fn class_match_index_mismatch() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -494,10 +485,9 @@ fn class_match_index_mismatch() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -517,10 +507,9 @@ fn class_match_target_missing_class() {
         vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -534,10 +523,9 @@ fn class_match_target_missing_class() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some("x".into());
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.name = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -558,10 +546,9 @@ fn validate_corim_not_yet_valid() {
             vec![MeasurementMap {
                 mkey: None,
                 mval: {
-                    let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                    let mut __corim_value: MeasurementValuesMap = Default::default();
-                    __corim_value.svn = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -672,20 +659,18 @@ fn ces_triple_invalid_condition_env() {
             vec![MeasurementMap {
                 mkey: None,
                 mval: {
-                    let __corim_field_0 = Some("x".into());
-                    let mut __corim_value: MeasurementValuesMap = Default::default();
-                    __corim_value.name = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("x".into());
+                    values
                 },
                 authorized_by: None,
             }],
             vec![MeasurementMap {
                 mkey: None,
                 mval: {
-                    let __corim_field_0 = Some("y".into());
-                    let mut __corim_value: MeasurementValuesMap = Default::default();
-                    __corim_value.name = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("y".into());
+                    values
                 },
                 authorized_by: None,
             }],
@@ -733,10 +718,9 @@ fn validate_coswid_decode_failure_opaque() {
             vec![MeasurementMap {
                 mkey: None,
                 mval: {
-                    let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                    let mut __corim_value: MeasurementValuesMap = Default::default();
-                    __corim_value.svn = __corim_field_0;
-                    __corim_value
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -774,20 +758,18 @@ fn validate_series_inconsistent_mkeys() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Uint(1)),
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                        let mut __corim_value: MeasurementValuesMap = Default::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
                     mval: {
-                        let __corim_field_0 = Some("a".into());
-                        let mut __corim_value: MeasurementValuesMap = Default::default();
-                        __corim_value.name = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.name = Some("a".into());
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -796,20 +778,18 @@ fn validate_series_inconsistent_mkeys() {
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Uint(99)), // different mkey
                     mval: {
-                        let __corim_field_0 = Some(SvnChoice::ExactValue(2));
-                        let mut __corim_value: MeasurementValuesMap = Default::default();
-                        __corim_value.svn = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(2));
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
                     mval: {
-                        let __corim_field_0 = Some("b".into());
-                        let mut __corim_value: MeasurementValuesMap = Default::default();
-                        __corim_value.name = __corim_field_0;
-                        __corim_value
+                        let mut values = MeasurementValuesMap::default();
+                        values.name = Some("b".into());
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -821,10 +801,9 @@ fn validate_series_inconsistent_mkeys() {
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Uint(1)),
             mval: {
-                let __corim_field_0 = Some(SvnChoice::ExactValue(1));
-                let mut __corim_value: MeasurementValuesMap = Default::default();
-                __corim_value.svn = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],

@@ -49,10 +49,9 @@ fn make_selection_svn(min_svn: u64) -> corim::types::measurement::MeasurementMap
     MeasurementMap {
         mkey: None,
         mval: {
-            let __corim_field_0 = Some(SvnChoice::MinValue(min_svn));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(min_svn));
+            values
         },
         authorized_by: None,
     }
@@ -127,10 +126,9 @@ fn uint_digest_selection(
     MeasurementMap {
         mkey: Some(MeasuredElement::Uint(key)),
         mval: {
-            let __corim_field_0 = Some(vec![digest]);
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![digest]);
+            values
         },
         authorized_by: None,
     }
@@ -144,10 +142,9 @@ fn uint_svn_selection(key: u64, min_svn: u64) -> corim::types::measurement::Meas
     MeasurementMap {
         mkey: Some(MeasuredElement::Uint(key)),
         mval: {
-            let __corim_field_0 = Some(SvnChoice::MinValue(min_svn));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.svn = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(min_svn));
+            values
         },
         authorized_by: None,
     }
@@ -161,10 +158,9 @@ fn uint_raw_value_selection(key: u64, raw: Vec<u8>) -> corim::types::measurement
     MeasurementMap {
         mkey: Some(MeasuredElement::Uint(key)),
         mval: {
-            let __corim_field_0 = Some(RawValueChoice::Bytes(raw));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.raw_value = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.raw_value = Some(RawValueChoice::Bytes(raw));
+            values
         },
         authorized_by: None,
     }
@@ -271,10 +267,9 @@ fn main() {
         measurements: vec![MeasurementMap {
             mkey: None,
             mval: {
-                let __corim_field_0 = Some(SvnChoice::ExactValue(0));
-                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-                __corim_value.svn = __corim_field_0;
-                __corim_value
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(0));
+                values
             },
             authorized_by: None,
         }],

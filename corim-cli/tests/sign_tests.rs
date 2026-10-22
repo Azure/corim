@@ -42,10 +42,9 @@ fn sample_unsigned_corim() -> Vec<u8> {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xBB; 48])]);
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xBB; 48])]);
+            values
         },
         authorized_by: None,
     };

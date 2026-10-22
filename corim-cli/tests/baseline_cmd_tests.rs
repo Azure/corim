@@ -39,13 +39,10 @@ fn corim_bytes(digest: Vec<u8>, with_svn: bool) -> Vec<u8> {
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("MRTD".into())),
         mval: {
-            let __corim_field_0 = Some(vec![Digest::new(7, digest)]);
-
-            let __corim_field_1 = with_svn.then_some(SvnChoice::MinValue(1));
-            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
-            __corim_value.digests = __corim_field_0;
-            __corim_value.svn = __corim_field_1;
-            __corim_value
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, digest)]);
+            values.svn = with_svn.then_some(SvnChoice::MinValue(1));
+            values
         },
         authorized_by: None,
     };
