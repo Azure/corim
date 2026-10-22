@@ -1,15 +1,12 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Tests for the CBOR ↔ JSON conversion in `json/value_conv.rs`,
-//! covering tagged-value translation in both directions and the
-//! string-key-to-int-key mapping driven by the global key table.
-
+//! Behavioral tests for the strict, lossless CBOR JSON contract.
 #![cfg(feature = "json")]
 
 use corim::cbor::value::Value;
-use corim::json::{json_to_value, value_to_json};
-use corim::types::tags::TAG_URI;
+use corim::json::{from_json, json_to_value, parse_json, to_json, value_to_json};
+use serde_json::json;
 
 #[test]
 fn lossless_float_bits_and_typed_duplicate_map_keys() {
@@ -19,8 +16,8 @@ fn lossless_float_bits_and_typed_duplicate_map_keys() {
         (Value::Text("1".into()), Value::Bytes(vec![0, 255])),
         (Value::Integer(1), Value::Bool(true)),
     ]);
-    let json = corim::json::to_json(&value).unwrap();
-    let decoded: Value = corim::json::from_json(&json).unwrap();
+    let encoded = to_json(&value).unwrap();
+    let decoded: Value = from_json(&encoded).unwrap();
     match decoded {
         Value::Map(entries) => {
             assert_eq!(entries.len(), 3);
@@ -33,292 +30,211 @@ fn lossless_float_bits_and_typed_duplicate_map_keys() {
                 entries[1],
                 (Value::Text("1".into()), Value::Bytes(vec![0, 255]))
             );
-            assert_eq!(entries[2].0, Value::Integer(1));
+            assert_eq!(entries[2], (Value::Integer(1), Value::Bool(true)));
         }
         other => panic!("lost map: {other:?}"),
     }
 }
 
-// ===========================================================================
-// value_to_json — primitive edges
-// ===========================================================================
-
 #[test]
-fn float_nan_becomes_null() {
-    let v = Value::Float(f64::NAN);
-    assert!(value_to_json(&v).is_null());
-}
-
-#[test]
-fn large_integer_above_i64_becomes_string() {
-    let v = Value::Integer(i128::MAX);
-    assert!(value_to_json(&v).is_string());
-}
-
-#[test]
-fn map_with_text_key_becomes_object() {
-    let v = Value::Map(vec![(
-        Value::Text("name".into()),
-        Value::Text("test".into()),
-    )]);
-    let j = value_to_json(&v);
-    assert_eq!(j["name"], "test");
-}
-
-#[test]
-fn map_with_non_standard_key_still_emits_object() {
-    let v = Value::Map(vec![(Value::Bool(true), Value::Integer(1))]);
-    let j = value_to_json(&v);
-    assert!(j.is_object());
-}
-
-// ===========================================================================
-// value_to_json — tagged-value translation
-// ===========================================================================
-
-#[test]
-fn opaque_tagged_uri_preserves_tag_envelope() {
-    let uri = "https://example.com/profile";
-    let value = Value::Tag(TAG_URI, Box::new(Value::Text(uri.into())));
-    let json = value_to_json(&value);
-    assert_eq!(json["__cbor_tag"], TAG_URI);
-    assert_eq!(json["__cbor_value"], uri);
-    assert_eq!(json_to_value(&json), value);
-}
-
-#[test]
-fn tag_oid_becomes_typed_object() {
-    let v = Value::Tag(111, Box::new(Value::Bytes(vec![0x06, 0x03, 0x55, 0x04])));
-    assert_eq!(value_to_json(&v)["type"], "oid");
-}
-
-#[test]
-fn tag_ueid_with_non_bytes_payload_still_typed() {
-    let v = Value::Tag(550, Box::new(Value::Text("not-bytes".into())));
-    assert_eq!(value_to_json(&v)["type"], "ueid");
-}
-
-#[test]
-fn tag_uuid_with_non_bytes_payload_still_typed() {
-    let v = Value::Tag(37, Box::new(Value::Text("not-bytes".into())));
-    assert_eq!(value_to_json(&v)["type"], "uuid");
-}
-
-#[test]
-fn tag_svn_carries_value() {
-    let v = Value::Tag(552, Box::new(Value::Integer(42)));
-    let j = value_to_json(&v);
-    assert_eq!(j["type"], "svn");
-    assert_eq!(j["value"], 42);
-}
-
-#[test]
-fn tag_min_svn_typed() {
-    let v = Value::Tag(553, Box::new(Value::Integer(10)));
-    assert_eq!(value_to_json(&v)["type"], "min-svn");
-}
-
-#[test]
-fn crypto_key_tag_table_roundtrips_to_named_type() {
-    for (tag, expected_type) in [
-        (554, "pkix-base64-key"),
-        (555, "pkix-base64-cert"),
-        (556, "pkix-base64-cert-path"),
-        (557, "key-thumbprint"),
-        (558, "cose-key"),
-        (559, "cert-thumbprint"),
-        (560, "bytes"),
-        (561, "cert-path-thumbprint"),
-        (562, "pkix-asn1der-cert"),
-        (563, "masked-raw-value"),
-        (564, "int-range"),
-    ] {
-        let v = Value::Tag(tag, Box::new(Value::Integer(0)));
-        assert_eq!(value_to_json(&v)["type"], expected_type, "tag {tag}");
-    }
-}
-
-#[test]
-fn coswid_comid_cotl_tags_use_cbor_tag_envelope() {
-    for tag in [505, 506, 508] {
-        let v = Value::Tag(tag, Box::new(Value::Bytes(vec![0xA0])));
-        assert_eq!(value_to_json(&v)["__cbor_tag"], tag);
-    }
-}
-
-#[test]
-fn unknown_tag_uses_cbor_tag_envelope() {
-    let v = Value::Tag(99999, Box::new(Value::Text("hello".into())));
-    let j = value_to_json(&v);
-    assert_eq!(j["__cbor_tag"], 99999);
-    assert_eq!(j["__cbor_value"], "hello");
-}
-
-#[test]
-fn epoch_time_tag_uses_cbor_tag_envelope() {
-    // Tag 1 is preserved via the generic `__cbor_tag` envelope so it can be
-    // recovered on the reverse conversion (see the round-trip test below).
-    let v = Value::Tag(1, Box::new(Value::Integer(1234567890)));
-    let j = value_to_json(&v);
-    assert_eq!(j["__cbor_tag"], 1);
-    assert_eq!(j["__cbor_value"], 1234567890);
-}
-
-#[test]
-fn epoch_time_tag_survives_json_round_trip() {
-    // Regression: an opaque `#6.1(int)` value (e.g. a profile extension
-    // timestamp in an mval-extension) must round-trip through JSON without
-    // silently losing its tag. Unlike `validity`, extension values have no
-    // typed decoder to re-add the tag, so the JSON form must be lossless.
-    let v = Value::Tag(1, Box::new(Value::Integer(1234567890)));
-    let round_tripped = json_to_value(&value_to_json(&v));
-    assert_eq!(round_tripped, v);
-}
-
-// ===========================================================================
-// json_to_value — typed-object dispatch
-// ===========================================================================
-
-#[test]
-fn typed_svn_object_to_tag() {
-    let j = serde_json::json!({"type": "svn", "value": 42});
-    assert!(matches!(json_to_value(&j), Value::Tag(552, _)));
-}
-
-#[test]
-fn typed_min_svn_object_to_tag() {
-    let j = serde_json::json!({"type": "min-svn", "value": 10});
-    assert!(matches!(json_to_value(&j), Value::Tag(553, _)));
-}
-
-#[test]
-fn typed_crypto_key_objects_dispatch_to_tags() {
+fn exact_schema_for_all_value_types() {
     let cases = vec![
-        ("pkix-base64-key", 554),
-        ("pkix-base64-cert", 555),
-        ("pkix-base64-cert-path", 556),
-        ("key-thumbprint", 557),
-        ("cose-key", 558),
-        ("cert-thumbprint", 559),
-        ("cert-path-thumbprint", 561),
-        ("pkix-asn1der-cert", 562),
-        ("masked-raw-value", 563),
-        ("int-range", 564),
+        (Value::Null, json!(null)),
+        (Value::Bool(false), json!(false)),
+        (Value::Text("text".into()), json!("text")),
+        (Value::Integer(-42), json!({"type":"integer","value":"-42"})),
+        (
+            Value::Bytes(vec![0, 255]),
+            json!({"type":"byte-string","value":"00ff"}),
+        ),
+        (
+            Value::Float(1.5),
+            json!({"type":"float-bits","value":"3ff8000000000000"}),
+        ),
+        (Value::Array(vec![Value::Null]), json!([null])),
+        (Value::Map(vec![]), json!({"type":"map","value":[]})),
+        (
+            Value::Tag(u64::MAX, Box::new(Value::Null)),
+            json!({"type":"tag","tag":"18446744073709551615","value":null}),
+        ),
     ];
-    for (type_name, expected_tag) in cases {
-        let j = serde_json::json!({"type": type_name, "value": 0});
-        match json_to_value(&j) {
-            Value::Tag(t, _) => assert_eq!(t, expected_tag, "type: {type_name}"),
-            other => panic!("expected tag for {type_name}, got {other:?}"),
+    for (value, expected) in cases {
+        assert_eq!(value_to_json(&value).unwrap(), expected);
+        assert_eq!(json_to_value(&expected).unwrap(), value);
+    }
+}
+
+#[test]
+fn floats_preserve_finite_nonfinite_signed_zero_and_nan_payloads() {
+    for bits in [
+        0,
+        1,
+        0x8000_0000_0000_0000,
+        0x3ff0_0000_0000_0000,
+        0x7fef_ffff_ffff_ffff,
+        0x7ff0_0000_0000_0000,
+        0xfff0_0000_0000_0000,
+        0x7ff8_0000_0000_0123,
+        0xfff0_0000_0000_0001,
+    ] {
+        let value = Value::Float(f64::from_bits(bits));
+        let encoded = to_json(&value).unwrap();
+        match from_json::<Value>(&encoded).unwrap() {
+            Value::Float(n) => assert_eq!(n.to_bits(), bits),
+            other => panic!("lost float: {other:?}"),
         }
     }
 }
 
 #[test]
-fn typed_ueid_with_base64_string_decodes_to_bytes() {
-    let j = serde_json::json!({"type": "ueid", "value": "AQID"});
-    match json_to_value(&j) {
-        Value::Tag(550, inner) => assert!(matches!(*inner, Value::Bytes(_))),
-        _ => panic!("expected tag 550"),
+fn integer_extremes_roundtrip_and_overflow_is_rejected() {
+    for n in [
+        -(1_i128 << 64),
+        i128::from(i64::MIN),
+        0,
+        i128::from(u64::MAX),
+    ] {
+        let value = Value::Integer(n);
+        assert_eq!(
+            from_json::<Value>(&to_json(&value).unwrap()).unwrap(),
+            value
+        );
+    }
+    for n in [
+        i128::MIN,
+        -(1_i128 << 64) - 1,
+        i128::from(u64::MAX) + 1,
+        i128::MAX,
+    ] {
+        assert!(value_to_json(&Value::Integer(n)).is_err());
+        assert!(json_to_value(&json!({"type":"integer","value":n.to_string()})).is_err());
     }
 }
 
 #[test]
-fn typed_bytes_with_base64_string_decodes_to_bytes() {
-    let j = serde_json::json!({"type": "bytes", "value": "AQID"});
-    match json_to_value(&j) {
-        Value::Tag(560, inner) => assert!(matches!(*inner, Value::Bytes(_))),
-        _ => panic!("expected tag 560"),
+fn complex_keys_duplicate_entries_and_wrapper_shaped_maps_roundtrip() {
+    let value = Value::Map(vec![
+        (Value::Text("type".into()), Value::Text("integer".into())),
+        (Value::Text("value".into()), Value::Text("42".into())),
+        (Value::Bool(true), Value::Null),
+        (Value::Bytes(vec![1]), Value::Array(vec![])),
+        (Value::Array(vec![Value::Integer(1)]), Value::Null),
+        (
+            Value::Map(vec![]),
+            Value::Tag(32, Box::new(Value::Text("uri".into()))),
+        ),
+        (Value::Integer(1), Value::Text("first".into())),
+        (Value::Text("1".into()), Value::Text("text".into())),
+        (Value::Integer(1), Value::Text("second".into())),
+    ]);
+    assert_eq!(
+        from_json::<Value>(&to_json(&value).unwrap()).unwrap(),
+        value
+    );
+}
+
+#[test]
+fn malformed_wrappers_and_legacy_schema_are_rejected() {
+    for value in [
+        json!(1),
+        json!(1.5),
+        json!({}),
+        json!({"corim-id":"old"}),
+        json!({"type":"uuid","value":"01010101"}),
+        json!({"__cbor_tag":32,"__cbor_value":"uri"}),
+        json!({"type":"integer"}),
+        json!({"type":"integer","value":"1","extra":false}),
+        json!({"type":"integer","value":1}),
+        json!({"type":"integer","value":"+1"}),
+        json!({"type":"integer","value":"01"}),
+        json!({"type":"integer","value":"-0"}),
+        json!({"type":"integer","value":" 1"}),
+        json!({"type":"integer","value":"1.0"}),
+        json!({"type":"integer","value":"9999999999999999999999999999999999999999"}),
+        json!({"type":"byte-string","value":"0"}),
+        json!({"type":"byte-string","value":"AA"}),
+        json!({"type":"byte-string","value":"gg"}),
+        json!({"type":"byte-string","value":null}),
+        json!({"type":"float-bits","value":"0000"}),
+        json!({"type":"float-bits","value":"FFF0000000000000"}),
+        json!({"type":"float-bits","value":"xxx0000000000000"}),
+        json!({"type":"tag","value":null}),
+        json!({"type":"tag","tag":32,"value":null}),
+        json!({"type":"tag","tag":"-1","value":null}),
+        json!({"type":"tag","tag":"18446744073709551616","value":null}),
+        json!({"type":"tag","tag":"01","value":null}),
+        json!({"type":"tag","tag":"32","value":null,"extra":0}),
+        json!({"type":"map","value":{}}),
+        json!({"type":"map","value":[[]]}),
+        json!({"type":"map","value":[[null]]}),
+        json!({"type":"map","value":[[null,null,null]]}),
+        json!({"type":"map","value":[[null,3]]}),
+    ] {
+        assert!(json_to_value(&value).is_err(), "accepted {value}");
     }
 }
 
 #[test]
-fn typed_uuid_with_invalid_format_falls_back_to_recursive_value() {
-    let j = serde_json::json!({"type": "uuid", "value": "not-a-uuid"});
-    assert!(matches!(json_to_value(&j), Value::Tag(37, _)));
-}
-
-#[test]
-fn unknown_typed_object_preserved_as_map() {
-    let j = serde_json::json!({"type": "custom-type", "value": "data"});
-    assert!(matches!(json_to_value(&j), Value::Map(_)));
-}
-
-#[test]
-fn cbor_tag_envelope_object_round_trips_to_tag() {
-    let j = serde_json::json!({"__cbor_tag": 501, "__cbor_value": {"0": "test"}});
-    assert!(matches!(json_to_value(&j), Value::Tag(501, _)));
-}
-
-// ===========================================================================
-// json_to_value — number kinds
-// ===========================================================================
-
-#[test]
-fn u64_max_becomes_integer_value() {
-    let j = serde_json::json!(u64::MAX);
-    assert!(matches!(json_to_value(&j), Value::Integer(_)));
-}
-
-#[test]
-fn float_becomes_float_value() {
-    let j = serde_json::json!(core::f64::consts::PI);
-    assert!(matches!(json_to_value(&j), Value::Float(_)));
-}
-
-// ===========================================================================
-// json_to_value — string-key-to-int-key mapping
-// ===========================================================================
-
-#[test]
-fn registered_string_key_maps_to_int() {
-    // "entity-name" is in the global key table at index 31.
-    let j = serde_json::json!({"entity-name": "ACME"});
-    if let Value::Map(entries) = json_to_value(&j) {
-        assert_eq!(entries[0].0, Value::Integer(31));
-    } else {
-        panic!("expected map");
+fn parse_rejects_duplicate_members_trailing_data_and_excessive_nesting() {
+    for text in [
+        r#"{"type":"integer","type":"integer","value":"1"}"#,
+        r#"{"type":"integer","value":"1","value":"2"}"#,
+        "null null",
+        "[",
+        "NaN",
+    ] {
+        assert!(parse_json(text).is_err(), "accepted {text}");
     }
+    let text = format!("{}null{}", "[".repeat(300), "]".repeat(300));
+    assert!(parse_json(&text).is_err());
 }
 
 #[test]
-fn numeric_string_key_parses_to_int() {
-    let j = serde_json::json!({"99": "value"});
-    if let Value::Map(entries) = json_to_value(&j) {
-        assert_eq!(entries[0].0, Value::Integer(99));
-    } else {
-        panic!("expected map");
+fn sixty_four_deep_maps_survive_expanded_json_nesting() {
+    let mut value = Value::Null;
+    for _ in 0..64 {
+        value = Value::Map(vec![(Value::Null, value)]);
     }
+    let text = to_json(&value).unwrap();
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&text).is_err(),
+        "fixture must exceed serde_json's default recursion limit"
+    );
+    assert_eq!(from_json::<Value>(&text).unwrap(), value);
+    let excessive = Value::Array(vec![value]);
+    assert!(value_to_json(&excessive).is_err());
 }
 
 #[test]
-fn unregistered_non_numeric_key_stays_text() {
-    let j = serde_json::json!({"custom-key": "value"});
-    if let Value::Map(entries) = json_to_value(&j) {
-        assert_eq!(entries[0].0, Value::Text("custom-key".into()));
-    } else {
-        panic!("expected map");
+fn bytes_and_tags_are_never_semantically_coerced() {
+    for tag in [18, 32, 37, 111, 501, 506, 550, u64::MAX] {
+        for inner in [
+            Value::Bytes(vec![0, 255]),
+            Value::Text("not bytes".into()),
+            Value::Null,
+        ] {
+            let value = Value::Tag(tag, Box::new(inner));
+            assert_eq!(
+                from_json::<Value>(&to_json(&value).unwrap()).unwrap(),
+                value
+            );
+        }
     }
-}
-
-// ===========================================================================
-// to_json_pretty / from_json
-// ===========================================================================
-
-#[test]
-fn pretty_round_trip_preserves_structure() {
-    use corim::json;
-    use corim::types::environment::ClassMap;
-    let class = ClassMap::new("Test", "Widget");
-    let pretty = json::to_json_pretty(&class).unwrap();
-    assert!(pretty.contains('\n'));
-    let decoded: ClassMap = json::from_json(&pretty).unwrap();
-    assert_eq!(class, decoded);
+    let bytes = Value::Bytes(vec![]);
+    assert_eq!(
+        from_json::<Value>(&to_json(&bytes).unwrap()).unwrap(),
+        bytes
+    );
 }
 
 #[test]
-fn from_json_invalid_input_errors() {
-    use corim::json;
-    use corim::types::environment::ClassMap;
-    assert!(json::from_json::<ClassMap>("not valid json{{{").is_err());
+fn direct_tree_decoding_enforces_depth_node_and_scalar_budgets() {
+    let mut array = json!(null);
+    for _ in 0..65 {
+        array = json!([array]);
+    }
+    assert!(json_to_value(&array).is_err());
+    assert!(json_to_value(&json!(vec![serde_json::Value::Null; 1_000_001])).is_err());
+    let text = serde_json::Value::String("x".repeat(16 * 1024 * 1024 + 1));
+    assert!(json_to_value(&text).is_err());
 }

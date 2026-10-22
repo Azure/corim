@@ -160,10 +160,7 @@ impl<T> Tagged<T> {
 ///
 /// This is the first step in JSON encoding: `T → Value → serde_json::Value`.
 pub fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
-    // Use our minimal backend serializer to get a Value
-    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
-    let val: Value = crate::cbor::decode(&bytes).map_err(|e| e.to_string())?;
-    Ok(val)
+    super::minimal_backend::value_ser::to_value(value)
 }
 
 /// Serialize a Rust type into a human-readable `Value` using serde.
@@ -178,7 +175,5 @@ pub fn to_human_readable_value<T: serde::Serialize>(value: &T) -> Result<Value, 
 ///
 /// This is the last step in JSON decoding: `serde_json::Value → Value → T`.
 pub fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
-    // Encode the Value to CBOR bytes, then decode into T
-    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
-    crate::cbor::decode(&bytes).map_err(|e| e.to_string())
+    super::minimal_backend::value_de::from_value(value.clone())
 }
