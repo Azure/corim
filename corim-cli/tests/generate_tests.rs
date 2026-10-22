@@ -358,8 +358,10 @@ fn generate_rejects_invalid_cca_profile_document_without_writing() {
     let mut mval = MeasurementValuesMap::default();
     mval.digests = Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]);
     mval.cryptokeys = Some(vec![CryptoKey::Bytes(vec![0xaa; 32])]);
-    let mut class = ClassMap::default();
-    class.class_id = Some(corim::types::common::ClassIdChoice::Bytes(vec![0x5a; 32]));
+    let class = ClassMap {
+        class_id: Some(corim::types::common::ClassIdChoice::Bytes(vec![0x5a; 32])),
+        ..Default::default()
+    };
     let environment = EnvironmentMap {
         class: Some(class),
         instance: None,
