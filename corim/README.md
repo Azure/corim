@@ -44,6 +44,9 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   CBOR-mode serde; legacy prose/semantic JSON is rejected. For untrusted JSON,
   `json::parse_json` bounds input size, expanded wrapper depth, and node count,
   and rejects duplicate object members.
+  Document string input/output is capped at `json::DEFAULT_MAX_JSON_BYTES`
+  (16 MiB). Hex, escaping, wrappers, and pretty-printing can deliberately
+  produce a resource error after expansion; output is never truncated.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC

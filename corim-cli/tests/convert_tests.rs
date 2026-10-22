@@ -145,7 +145,7 @@ fn convert_rejects_oversized_json_expansion_without_partial_output() {
     let mut files = Files::new();
     let input = files.path("cbor");
     let output = files.path("json");
-    let root = Value::Bytes(vec![0; corim::cbor::DEFAULT_MAX_INPUT_BYTES / 2]);
+    let root = Value::Bytes(vec![0; corim::json::DEFAULT_MAX_JSON_BYTES / 2]);
     std::fs::write(&input, cbor::encode(&root).unwrap()).unwrap();
     std::fs::write(&output, b"existing output must survive").unwrap();
     let result = Command::new(bin())

@@ -241,7 +241,8 @@ fn direct_tree_decoding_enforces_depth_node_and_scalar_budgets() {
 
 #[test]
 fn document_json_strings_enforce_default_byte_limit_after_expansion() {
-    let limit = corim::cbor::DEFAULT_MAX_INPUT_BYTES;
+    let limit = corim::json::DEFAULT_MAX_JSON_BYTES;
+    assert_eq!(limit, corim::cbor::DEFAULT_MAX_INPUT_BYTES);
     let mut value = Value::Array(vec![Value::Bytes(vec![]), Value::Text(String::new())]);
     let overhead = to_json(&value).unwrap().len();
     assert_eq!((limit - overhead) % 2, 0);
