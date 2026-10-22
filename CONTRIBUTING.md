@@ -126,11 +126,16 @@ Download and retain them longer if needed; check the extracted files with
 Publishing
 checks the sparse-index checksum for each exact version: an already-published
 version is skipped only when its archive checksum matches the local package.
-Cargo publishes with the same `--locked --all-features` packaging options, and its
-repackaged archive is checked against the saved verified checksum immediately
-after publication. This is an after-upload check, not a custom uploader or an
-atomic pre-upload guarantee: any drift fails the release and blocks the dependent
-crate. The registry checksum must independently match those same verified bytes.
+For an absent version, native `cargo publish --locked --all-features --dry-run`
+first repackages and verifies the crate without uploading. Its archive must match
+the saved verified checksum before an actual upload is attempted; dry-run
+failures or drift stop publication. Matching existing versions skip both dry-run
+and upload. Actual publication uses the same `--locked --all-features` options,
+and its repackaged archive is checked again immediately afterward. This uses
+Cargo's uploader, not a custom uploader; it is not atomic against changes between
+dry-run and actual publication. Any later drift still fails the release and
+blocks the dependent crate. The registry checksum must independently match those
+same verified bytes.
 After an upload, bounded polling waits for that checksum to appear before the
 dependent crate is published. Registry errors, yanked versions and checksum
 mismatches fail explicitly.
