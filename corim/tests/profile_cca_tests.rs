@@ -110,6 +110,113 @@ fn realm_environment(rim: &[u8]) -> EnvironmentMap {
     environment_with_class_id(rim)
 }
 
+fn cca_digest_validation_results(digests: Option<Vec<Digest>>) -> (bool, bool) {
+    let mut software_component =
+        software_component_measurement("cca.software-component", &[0xAA; 32], &[0xBB; 32]);
+    software_component.mval.digests = digests.clone();
+    let platform = ReferenceTriple::new(
+        platform_environment(),
+        vec![
+            software_component,
+            masked_raw_value_measurement("cca.platform-config", &[0xA0], &[0xF0]),
+        ],
+    );
+    let mut rim = measurement_with_mkey("cca.rim", &[0xAA; 32]);
+    rim.mval.digests = digests;
+    let realm = ReferenceTriple::new(realm_environment(&[0xAA; 32]), vec![rim]);
+    (
+        CcaPlatformProfile::new()
+            .validate_reference_triple(&platform)
+            .is_ok(),
+        CcaRealmProfile::new()
+            .validate_reference_triple(&realm)
+            .is_ok(),
+    )
+}
+
+#[test]
+fn cca_digest_validation_preserves_algorithm_and_size_rules() {
+    let cases = [
+        ("absent", None, false),
+        ("empty", Some(vec![]), false),
+        (
+            "all accepted sizes and case-sensitive arbitrary text labels",
+            Some(vec![
+                Digest::new_text("", vec![0xAA; 32]),
+                Digest::new_text("custom", vec![0xAA; 48]),
+                Digest::new_text("CUSTOM", vec![0xAA; 64]),
+            ]),
+            true,
+        ),
+        (
+            "integer algorithm",
+            Some(vec![Digest::new(7, vec![0xAA; 32])]),
+            false,
+        ),
+        (
+            "duplicate label with identical bytes",
+            Some(vec![
+                Digest::new_text("sha-256", vec![0xAA; 32]),
+                Digest::new_text("sha-256", vec![0xAA; 32]),
+            ]),
+            false,
+        ),
+        (
+            "nonadjacent duplicate label with different bytes and sizes",
+            Some(vec![
+                Digest::new_text("custom", vec![0xAA; 32]),
+                Digest::new_text("other", vec![0xAA; 64]),
+                Digest::new_text("custom", vec![0xBB; 48]),
+            ]),
+            false,
+        ),
+    ];
+    for (name, digests, accepted) in cases {
+        assert_eq!(
+            cca_digest_validation_results(digests),
+            (accepted, accepted),
+            "{name}"
+        );
+    }
+    for size in [0, 1, 31, 33, 47, 49, 63, 65] {
+        assert_eq!(
+            cca_digest_validation_results(Some(vec![Digest::new_text(
+                "sha-256",
+                vec![0xAA; size],
+            )])),
+            (false, false),
+            "invalid digest size {size}"
+        );
+    }
+}
+
+#[test]
+fn cca_digest_validation_scales_with_many_distinct_algorithms() {
+    let mut rim = measurement_with_mkey("cca.rim", &[0xAA; 32]);
+    rim.mval.digests = Some(
+        (0..50_000)
+            .map(|i| {
+                Digest::new_text(
+                    format!("cca-profile-defined-algorithm-{i:05}"),
+                    vec![0xAA; 32],
+                )
+            })
+            .collect(),
+    );
+    let triple = ReferenceTriple::new(realm_environment(&[0xAA; 32]), vec![rim]);
+    let profile = CcaRealmProfile::new();
+
+    // Time validation only: one bounded input exposes the pairwise scan's
+    // 1,249,975,000 comparisons, while leaving ample headroom for indexed lookup.
+    let start = std::time::Instant::now();
+    assert!(profile.validate_reference_triple(&triple).is_ok());
+    let elapsed = start.elapsed();
+    assert!(
+        elapsed < std::time::Duration::from_secs(10),
+        "validating 50,000 distinct digest algorithms took {elapsed:?}"
+    );
+}
+
 #[test]
 fn platform_profile_uses_cca_platform_uri() {
     let profile = CcaPlatformProfile::new();
