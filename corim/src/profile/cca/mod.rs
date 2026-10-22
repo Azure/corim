@@ -34,11 +34,10 @@ use crate::profile::{MatchContext, Profile};
 use crate::types::common::{ClassIdChoice, CryptoKey, InstanceIdChoice, MeasuredElement};
 use crate::types::corim::ProfileChoice;
 use crate::types::environment::EnvironmentMap;
-use crate::types::measurement::{
-    Digest, DigestAlg, MeasurementMap, MeasurementValuesMap, RawValueChoice,
-};
+use crate::types::measurement::{DigestAlg, MeasurementMap, MeasurementValuesMap, RawValueChoice};
 use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 use crate::validate::EvidenceClaim;
+use alloc::collections::BTreeSet;
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 
 /// Profile URI for CCA Platform endorsements
@@ -259,19 +258,16 @@ fn has_no_mval_fields_except(
 
 fn has_cca_digests(mval: &MeasurementValuesMap) -> bool {
     mval.digests.as_ref().is_some_and(|digests| {
+        // Borrow labels for O(n log n) uniqueness checks without cloning text.
+        let mut algorithms = BTreeSet::new();
         !digests.is_empty()
-            && digests.iter().all(is_cca_digest)
-            && digests.iter().enumerate().all(|(i, digest)| {
-                digests
-                    .iter()
-                    .skip(i + 1)
-                    .all(|other| digest.alg() != other.alg())
+            && digests.iter().all(|digest| {
+                let DigestAlg::Text(algorithm) = digest.alg() else {
+                    return false;
+                };
+                is_cca_hash_size(digest.value().len()) && algorithms.insert(algorithm.as_str())
             })
     })
-}
-
-fn is_cca_digest(digest: &Digest) -> bool {
-    matches!(digest.alg(), DigestAlg::Text(_)) && is_cca_hash_size(digest.value().len())
 }
 
 fn is_cca_hash_size(len: usize) -> bool {
