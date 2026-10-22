@@ -88,3 +88,22 @@ fn bridge_bounds_tree_before_replaying_ignored_content() {
         assert!(from_value::<serde::de::IgnoredAny>(&value).is_err());
     }
 }
+
+#[test]
+fn bridge_input_size_counts_wire_headers_not_only_scalar_contents() {
+    // RFC 8949 §3.1: these lengths need a five-byte definite-length header.
+    let mut bytes = Value::Bytes(vec![0; DEFAULT_MAX_INPUT_BYTES - 5]);
+    assert_eq!(to_value(&bytes).unwrap(), bytes);
+    assert!(from_value::<serde::de::IgnoredAny>(&bytes).is_ok());
+    let Value::Bytes(body) = &mut bytes else {
+        panic!()
+    };
+    body.push(0);
+    assert!(to_value(&bytes).is_err());
+    assert!(from_value::<serde::de::IgnoredAny>(&bytes).is_err());
+
+    // Container and child headers also consume the input-size budget.
+    let nested = Value::Array(vec![Value::Bytes(vec![0; DEFAULT_MAX_INPUT_BYTES - 5])]);
+    assert!(to_value(&nested).is_err());
+    assert!(from_value::<serde::de::IgnoredAny>(&nested).is_err());
+}
