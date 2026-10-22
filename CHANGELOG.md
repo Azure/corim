@@ -210,15 +210,17 @@ versions.
   `signed` object with the protected header (`alg`/`alg_id`,
   `content_type`, CWT `issuer`/`subject`, `corim-meta` `signer_name`, and
   the `kid` / `x5chain` / `x5t` presence flags), the unprotected header,
-  payload, signature sizes, and `signature_verified: false`. A detached
-  signed CoRIM now also honours `-f json` (it previously fell back to the
-  text header view) and reports `payload_decoded: false`.
+  payload, signature sizes,   and `signature_verified: false`. Detached signed CoRIMs return structured
+  JSON validation errors because their payload is unavailable. Use
+  `extract --header --json` to inspect their protected header.
 - **Protected-header baseline comparison.** `corim::baseline::compare_headers`
   compares two signed CoRIMs' COSE protected headers, and
   `ConformanceReport::merge` combines a payload report with a header
   report. `validate --baseline` now compares protected headers when both
-  the baseline and the target are signed (and supports detached,
-  nil-payload signed CoRIMs, comparing the header alone). Structural
+  the baseline and the target are signed and carry complete attached
+  payloads. The library can compare separately decoded headers, including
+  those from detached envelopes, but this is not complete document validation.
+  Structural
   header fields (`alg`, `content-type`, hash-envelope mode, CWT `iss`,
   and the presence of `corim-meta` / `CWT-Claims` / `kid` / `x5chain` /
   `x5bag` / `x5t` / `x5u`) must match; signer name, `sub`, timestamps,
