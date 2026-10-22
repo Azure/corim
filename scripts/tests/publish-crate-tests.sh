@@ -50,6 +50,26 @@ case "$CASE" in
     network) echo 'simulated connection failure' >&2; exit 7 ;;
     http-error) printf 'unavailable' > "$output"; printf 503; exit ;;
     invalid-index) printf 'not json\n' > "$output"; printf 200; exit ;;
+    empty-index) : > "$output"; printf 200; exit ;;
+    whitespace-index) printf ' \t\n' > "$output"; printf 200; exit ;;
+    missing-version) printf '{}\n' > "$output"; printf 200; exit ;;
+    array-record) printf '[]\n' > "$output"; printf 200; exit ;;
+    null-record) printf 'null\n' > "$output"; printf 200; exit ;;
+    numeric-record) printf '42\n' > "$output"; printf 200; exit ;;
+    string-record) printf '"metadata"\n' > "$output"; printf 200; exit ;;
+    nonstring-version) printf '{"vers":42}\n' > "$output"; printf 200; exit ;;
+    mixed-records)
+        printf '{"vers":"0.2.0"}\n{}\n' > "$output"
+        printf 200
+        exit
+        ;;
+    post-upload-invalid-index)
+        if [[ -f "$FIXTURE/published" ]]; then
+            printf '{}\n' > "$output"
+            printf 200
+            exit
+        fi
+        ;;
     new-crate)
         if [[ ! -f "$FIXTURE/published" ]]; then
             printf 'not found' > "$output"
@@ -79,6 +99,7 @@ case "$CASE" in
         fi
         ;;
     publish-failure) version=0.2.0 ;;
+    post-upload-invalid-index) version=0.2.0 ;;
 esac
 printf '{"vers":"%s","cksum":"%s","yanked":%s}\n' "$version" "$checksum" "$yanked" > "$output"
 printf 200
@@ -123,6 +144,16 @@ run_case timeout failure 1 'not indexed' || failures=$((failures + 1))
 run_case network failure 0 'registry request failed' || failures=$((failures + 1))
 run_case http-error failure 0 'HTTP 503' || failures=$((failures + 1))
 run_case invalid-index failure 0 'parse error' || failures=$((failures + 1))
+run_case empty-index failure 0 'empty registry index' || failures=$((failures + 1))
+run_case whitespace-index failure 0 'empty registry index' || failures=$((failures + 1))
+run_case missing-version failure 0 'string vers' || failures=$((failures + 1))
+run_case array-record failure 0 'records must be objects' || failures=$((failures + 1))
+run_case null-record failure 0 'records must be objects' || failures=$((failures + 1))
+run_case numeric-record failure 0 'records must be objects' || failures=$((failures + 1))
+run_case string-record failure 0 'records must be objects' || failures=$((failures + 1))
+run_case nonstring-version failure 0 'string vers' || failures=$((failures + 1))
+run_case mixed-records failure 0 'string vers' || failures=$((failures + 1))
+run_case post-upload-invalid-index failure 1 'string vers' || failures=$((failures + 1))
 run_case yanked failure 0 'yanked' || failures=$((failures + 1))
 run_case publish-failure failure 1 'simulated publish failure' || failures=$((failures + 1))
 run_case missing-archive failure 0 'missing archive' || failures=$((failures + 1))
