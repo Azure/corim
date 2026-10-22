@@ -11,6 +11,34 @@ use corim::cbor::value::Value;
 use corim::json::{json_to_value, value_to_json};
 use corim::types::tags::TAG_URI;
 
+#[test]
+fn lossless_float_bits_and_typed_duplicate_map_keys() {
+    let bits = 0xfff8_0000_0000_0123;
+    let value = Value::Map(vec![
+        (Value::Integer(1), Value::Float(f64::from_bits(bits))),
+        (Value::Text("1".into()), Value::Bytes(vec![0, 255])),
+        (Value::Integer(1), Value::Bool(true)),
+    ]);
+    let json = corim::json::to_json(&value).unwrap();
+    let decoded: Value = corim::json::from_json(&json).unwrap();
+    match decoded {
+        Value::Map(entries) => {
+            assert_eq!(entries.len(), 3);
+            assert_eq!(entries[0].0, Value::Integer(1));
+            match entries[0].1 {
+                Value::Float(float) => assert_eq!(float.to_bits(), bits),
+                ref other => panic!("lost float: {other:?}"),
+            }
+            assert_eq!(
+                entries[1],
+                (Value::Text("1".into()), Value::Bytes(vec![0, 255]))
+            );
+            assert_eq!(entries[2].0, Value::Integer(1));
+        }
+        other => panic!("lost map: {other:?}"),
+    }
+}
+
 // ===========================================================================
 // value_to_json — primitive edges
 // ===========================================================================
