@@ -6,8 +6,9 @@
 //! This module contains relaxations applied **before** strict decoding so
 //! that real-world CoRIM files that were produced against early drafts or
 //! the TCG Endorsement spec can still be parsed. None of these helpers
-//! affect encoding — encoding always emits draft-ietf-rats-corim-11
-//! wire format.
+//! affect builder encoding — builders emit draft-ietf-rats-corim-11 wire format.
+//! Lossless transcoding can retain existing producer encodings; it must not
+//! normalize authenticated byte strings.
 //!
 //! See the README "Decode interop relaxations" section for the complete
 //! list of relaxations and their justifications.
