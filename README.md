@@ -213,12 +213,14 @@ corim-cli validate --diagnose myfile.corim
 # Structural conformance check against a known-good baseline (JSON or CBOR)
 corim-cli validate myfile.corim --baseline golden.json
 
-# Generate a CoRIM from lossless document JSON (requires complete validation)
+# Generate from a readable, commented template (requires complete validation)
 corim-cli generate template.json -o out.cbor
 
-# Convert a CoRIM back to a JSON template (inverse of generate;
-# preserves the entire root, including signed and detached envelopes)
+# Convert back to readable authoring JSON with decoded CoMID fields
 corim-cli convert myfile.corim -o template.json
+
+# Explicit raw interchange, including the entire signed envelope
+corim-cli convert signed.cose --lossless -o signed.lossless.json
 
 # Extract the unsigned CoRIM payload from a signed CoRIM
 corim-cli extract signed.cose -o unsigned.cbor
@@ -277,8 +279,8 @@ or execute the conditional endorsement. Signature verification, freshness,
 Platform binding, and production trust are outside this sample's scope.
 MEC-policy references are deliberately deferred: the token reports claim
 44243 as 0 (shared), but the cited endorsement profile does not define a
-CoMID mapping for that claim. The migrated template uses the lossless CBOR-tree
-format; legacy semantic-template comment annotations are not accepted.
+CoMID mapping for that claim. The readable template retains its `$comment`
+annotations; they are authoring metadata and are not encoded into CBOR.
 
 ### `validate -f json` — machine-readable report
 
@@ -502,10 +504,50 @@ back out of a signed CoRIM (attached payloads only). `validate` on a
 signed CoRIM checks structure, temporal validity and registered profiles, but
 the signature is **not** cryptographically verified.
 
-### Lossless document JSON
+### Readable JSON authoring
 
-The library's `json` feature, document templates, and CBOR-valued report
-fields share one strict representation of the RFC 8949 §3 data model:
+Readable templates remain the default document interface. They use named
+fields, decoded `comids` / `coswids` / `cotls`, semantic type choices and
+registered-profile aliases. Shipped [templates](corim-cli/templates/azure_manticore_auth_keyattest.json)
+retain their original readable structure and comments:
+
+```json
+{
+  "$comment": "Authoring metadata, not part of the encoded document.",
+  "corim-id": "example",
+  "comids": [{
+    "tag-identity": { "id": "example-comid" },
+    "triples": {
+      "reference-triples": [[
+        { "class": { "vendor": "Example", "model": "Device" } },
+        [{ "key": "firmware", "value": {
+          "//": "The expected minimum firmware SVN.",
+          "svn": { "type": "min-svn", "value": 1 }
+        }}]
+      ]]
+    }
+  }]
+}
+```
+
+`$comment` and `"//"` are annotation **keys** in standard JSON, not JSONC
+syntax. They may appear in nested authoring objects and are stripped before
+semantic decoding. Input byte/depth/node limits and duplicate-member checks
+still run before annotation removal. Comment-like strings in actual lossless
+CBOR data are never stripped.
+
+Readable conversion is an authoring projection, not an arbitrary-wire codec.
+It refuses data it cannot represent faithfully and recommends `--lossless`
+instead of silently dropping it. Converting an attached signed document in
+readable mode extracts its unsigned payload and includes an informational
+`protected-header` summary; `generate` does not reuse that signature or header.
+After editing a payload, sign it again using the external-signing workflow.
+
+### Lossless interchange JSON
+
+The library's `json` feature, CBOR-valued report fields, and explicit
+`convert --lossless` output share one strict representation of the RFC 8949 §3
+data model:
 
 | CBOR value | JSON node |
 | --- | --- |
@@ -525,10 +567,12 @@ as map nodes. Opaque byte strings stay opaque: embedded CoMID CBOR and COSE
 protected headers are **not** parsed or normalized by JSON conversion.
 Report status, error, count, and other ordinary metadata remain ordinary JSON.
 
-There is no legacy mode or fallback: prose/integer-string map keys,
-semantic type-choice wrappers, aliases, base64 coercion, and authoring comments
-are not accepted. Unknown/additional wrapper members, malformed scalars, and
-duplicate JSON object members are errors. `corim::json::parse_json` performs
+This codec does not interpret prose keys, semantic choices, aliases or
+authoring annotations. Unknown/additional wrapper members, malformed scalars,
+and duplicate JSON object members are errors. Generation and JSON baselines
+select either readable or lossless input by its distinct root structure;
+mixed forms are rejected, and a failed parse never falls back to another format.
+`corim::json::parse_json` performs
 bounded parsing with enough wrapper depth for 64-level CBOR trees; use it
 instead of serde_json's default 128-level parser for document JSON.
 `value_to_json` and `json_to_value` are fallible; generic
@@ -541,38 +585,41 @@ explicit resource error, never silently truncating output. `convert` also
 accounts for its trailing newline and completes bounded serialization before
 writing stdout or touching an output file.
 
-### `generate` — encode a lossless JSON document
+### `generate` — validate readable or lossless JSON
 
-`generate` encodes the raw root and runs non-cryptographic document validation
+`generate` accepts a readable authoring template or a lossless document without
+an input-mode flag. It runs the same non-cryptographic validation pipeline
 before writing output. Invalid documents fail; partial coverage (including an
 unregistered profile or unknown tag content) exits `4` without writing.
-Attached signed envelopes retain the full envelope, signature, payload, and
+Lossless attached signed input retains the full envelope, signature, payload, and
 exact protected-header byte string; no signature is produced or verified.
 Detached envelopes cannot pass generation's attached-document validation gate.
 `--profile URI` replaces an unsigned tag-501 document's profile with
 `#6.32(tstr)` and is rejected for signed documents.
 
-The shipped [templates](corim-cli/templates/azure_ndpa.json) use only this
-new format. They preserve the original sample documents, including byte-string
-embedded CBOR and profile-specific keys. To edit embedded structures, decode
-and rebuild their bytes using the typed builder APIs.
+Readable input produces an unsigned document, with the same profile aliases
+and known-byte coercions as the original authoring workflow. JSON baselines
+accept both formats and apply validation exactly once. Authoring annotations
+are not accepted as extra members of lossless wrappers.
 
-### `convert` — inspect raw CBOR as lossless JSON
+### `convert` — readable by default, lossless when requested
 
-`convert` reads one bounded, exactly framed CBOR item and emits the entire
-raw root (to `-o FILE`, or stdout). It does **not** perform document or crypto
-validation, peel compatibility wrappers, or extract a signed payload:
+`convert` reads one bounded, exactly framed document and emits a readable
+template by default (to `-o FILE`, or stdout). Both modes enforce known embedded
+framing and resource limits without authenticating signatures:
 
 ```sh
 corim-cli convert myfile.corim -o template.json
 corim-cli generate template.json -o roundtrip.corim
 
-# A signed CoRIM works too — its FULL envelope is converted
-corim-cli convert signed.cose -o template.json
+# Full-envelope interchange, without projecting an unsigned payload
+corim-cli convert signed.cose --lossless -o signed.lossless.json
+corim-cli generate signed.lossless.json -o roundtrip.cose
 ```
 
-Detached (`nil` payload) and unvalidated envelopes are inspectable too.
-`convert` never adds informational keys to the document. JSON preserves the
+Detached (`nil` payload), hash envelopes and unmodeled data require
+`--lossless`; readable mode cannot author a missing payload. Lossless conversion
+never adds informational keys, peels wrappers or extracts the payload. It preserves the
 raw data model, not original noncanonical CBOR integer widths or outer map
 encoding order: re-encoding uses deterministic CBOR. Byte strings, in
 particular signed protected headers and payloads, remain byte-exact.

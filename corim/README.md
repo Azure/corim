@@ -16,7 +16,8 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   comparison preserves integer precision; NaN never matches. The Rust map fields
   are `r#bool`, `number`, `text`, and `bytes`. See the
   [matcher module](src/types/matcher.rs) for Rust usage. Document JSON uses the
-  shared lossless CBOR-tree codec in `corim::json`, not semantic matcher wrappers.
+  lossless CBOR-tree codec in `corim::json`. The CLI separately supports
+  readable authoring templates with semantic matcher wrappers and annotations.
 - **Full CDDL coverage** — `corim-map`, CoMID, CoTL, all 9 triple types,
   `measurement-values-map` with all fields
 - **Signed CoRIM (`#6.18`)** — decode, validate, construct (attached + detached);
@@ -41,7 +42,8 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 - **Optional JSON** — `json` feature gate for `Value ↔ serde_json::Value` conversion
   with ordered entry-array maps, decimal integer strings, lowercase hex byte
   strings, explicit tags, and exact binary64 float bits. Generic helpers use
-  CBOR-mode serde; legacy prose/semantic JSON is rejected. For untrusted JSON,
+  CBOR-mode serde. These library helpers do not parse the CLI's separate
+  readable authoring format. For untrusted JSON,
   `json::parse_json` bounds input size, expanded wrapper depth, and node count,
   and rejects duplicate object members.
   Document string input/output is capped at `json::DEFAULT_MAX_JSON_BYTES`

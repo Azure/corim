@@ -1,8 +1,9 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Generate CBOR from strict lossless JSON. Embedded CBOR remains opaque;
-//! document validation runs before any output file is written.
+//! Generate CBOR from readable authoring templates or strict lossless JSON.
+//! Format selection is structural, never a fallback after a parser fails.
+//! Document validation runs before any output file is written.
 
 use clap::Parser;
 use corim::cbor::value::Value;
@@ -13,7 +14,7 @@ use std::{fs, path::PathBuf, process};
 
 #[derive(Parser)]
 pub struct GenerateArgs {
-    /// Path to a lossless JSON document.
+    /// Readable JSON template (with comment annotations) or lossless document.
     #[arg(value_name = "TEMPLATE")]
     template: String,
     /// Output path; defaults to the input path with a `.cbor` extension.
@@ -24,7 +25,7 @@ pub struct GenerateArgs {
     profile: Option<String>,
 }
 
-/// Entry point for lossless JSON generation.
+/// Entry point for validated JSON generation.
 pub fn run(args: GenerateArgs) {
     match run_impl(args) {
         Ok(path) => eprintln!("Wrote CoRIM: {}", path.display()),
@@ -101,18 +102,45 @@ fn build_with_time(
     Ok(bytes)
 }
 
-/// Encode a lossless root without document validation. Baseline callers feed
+/// Encode either document format without validation. Baseline callers feed
 /// these bytes to the shared validation pipeline exactly once.
 pub(crate) fn encode_document(
     template: serde_json::Value,
     profile_override: Option<&str>,
 ) -> Result<Vec<u8>, String> {
+    if is_authoring_template(&template)? {
+        return crate::authoring::encode_template(template, profile_override);
+    }
     let mut root =
         corim::json::json_to_value(&template).map_err(|e| format!("lossless JSON: {e}"))?;
     if let Some(uri) = profile_override {
         override_unsigned_profile(&mut root, uri)?;
     }
     corim::cbor::encode(&root).map_err(|e| format!("encoding CBOR: {e}"))
+}
+
+fn is_authoring_template(value: &serde_json::Value) -> Result<bool, String> {
+    let Some(object) = value.as_object() else {
+        return Ok(false);
+    };
+    let readable = [
+        "corim-id",
+        "comids",
+        "coswids",
+        "cotls",
+        "profile",
+        "rim-validity",
+        "entities",
+        "dependent-rims",
+        "protected-header",
+    ]
+    .iter()
+    .any(|key| object.contains_key(*key));
+    let lossless = object.contains_key("type");
+    if readable && lossless {
+        return Err("ambiguous document JSON: readable template fields and a lossless wrapper cannot be mixed".into());
+    }
+    Ok(readable || !lossless && (object.contains_key("$comment") || object.contains_key("//")))
 }
 
 // Central gate for the shared CLI validation pipeline. Keep this before writes.

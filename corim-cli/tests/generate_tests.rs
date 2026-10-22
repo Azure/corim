@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Lossless document generation and its mandatory validation gate.
+//! Dual-format document generation and its mandatory validation gate.
 use corim::builder::{ComidBuilder, CorimBuilder, CotlBuilder};
 use corim::cbor::{self, value::Value};
 use corim::types::common::{CryptoKey, EntityMap, MeasuredElement, TagIdChoice};
@@ -231,7 +231,7 @@ fn generate_coswid_tag() {
 }
 
 #[test]
-fn generate_all_migrated_shipped_templates_and_roundtrip() {
+fn generate_all_readable_shipped_templates_and_lossless_roundtrip() {
     let mut files = Files::new();
     for name in [
         "azure_ndpa",
@@ -337,7 +337,7 @@ fn generate_vr72_realm_template_preserves_references_and_conditional_svn() {
 }
 
 #[test]
-fn generate_rejects_legacy_prose_integer_keys_comments_and_malformed_wrappers() {
+fn generate_rejects_invalid_authoring_and_malformed_lossless_wrappers() {
     let mut files = Files::new();
     for text in [
         r#"{"corim-id":"x","comids":[]}"#,
@@ -346,6 +346,7 @@ fn generate_rejects_legacy_prose_integer_keys_comments_and_malformed_wrappers() 
         r#"{"type":"integer","value":"1","value":"2"}"#,
         r#"{"type":"uuid","value":"550e8400-e29b-41d4-a716-446655440000"}"#,
         r#"{"type":"tag","tag":"501","value":{"type":"map","value":[]}}"#,
+        r#"{"corim-id":"x","comids":[],"type":"tag","tag":"501","value":{"type":"map","value":[]}}"#,
     ] {
         let (result, output) = generate(&mut files, text, None);
         assert!(!result.status.success(), "accepted {text}");

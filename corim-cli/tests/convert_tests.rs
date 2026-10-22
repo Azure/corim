@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Inspection must preserve the entire raw CBOR tree, not a typed subset.
+//! Explicit lossless inspection preserves the entire raw CBOR tree.
 use corim::cbor::{self, value::Value};
 use corim::types::tags::*;
 use std::{path::PathBuf, process::Command};
@@ -44,7 +44,7 @@ fn convert(bytes: &[u8]) -> String {
     let output = files.path("json");
     std::fs::write(&input, bytes).unwrap();
     let result = Command::new(bin())
-        .arg("convert")
+        .args(["convert", "--lossless"])
         .arg(&input)
         .arg("-o")
         .arg(&output)
@@ -73,6 +73,7 @@ fn assert_value_round_trip(value: &Value) {
 
 #[test]
 fn convert_round_trip_minimal_and_all_shipped_templates() {
+    let mut files = Files::new();
     for name in [
         "azure_ndpa",
         "azure_sfua",
@@ -84,7 +85,20 @@ fn convert_round_trip_minimal_and_all_shipped_templates() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("templates")
             .join(format!("{name}.json"));
-        let value: Value = corim::json::from_json(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let output = files.path("cbor");
+        let result = Command::new(bin())
+            .arg("generate")
+            .arg(path)
+            .arg("-o")
+            .arg(&output)
+            .output()
+            .unwrap();
+        assert!(
+            result.status.success(),
+            "{name}: {}",
+            String::from_utf8_lossy(&result.stderr)
+        );
+        let value: Value = cbor::decode_exact(&std::fs::read(output).unwrap()).unwrap();
         assert_value_round_trip(&value);
     }
 }
@@ -129,7 +143,7 @@ fn convert_rejects_duplicate_schema_keys_while_generic_json_preserves_them() {
     let output = files.path("json");
     std::fs::write(&input, cbor::encode(&root).unwrap()).unwrap();
     let result = Command::new(bin())
-        .arg("convert")
+        .args(["convert", "--lossless"])
         .arg(&input)
         .arg("-o")
         .arg(&output)
@@ -149,7 +163,7 @@ fn convert_rejects_oversized_json_expansion_without_partial_output() {
     std::fs::write(&input, cbor::encode(&root).unwrap()).unwrap();
     std::fs::write(&output, b"existing output must survive").unwrap();
     let result = Command::new(bin())
-        .arg("convert")
+        .args(["convert", "--lossless"])
         .arg(&input)
         .arg("-o")
         .arg(&output)
@@ -163,7 +177,7 @@ fn convert_rejects_oversized_json_expansion_without_partial_output() {
         b"existing output must survive"
     );
     let result = Command::new(bin())
-        .arg("convert")
+        .args(["convert", "--lossless"])
         .arg(&input)
         .output()
         .unwrap();
@@ -272,7 +286,7 @@ fn convert_rejects_truncated_or_concatenated_cbor_before_creating_output() {
         let output = files.path("json");
         std::fs::write(&input, bytes).unwrap();
         let result = Command::new(bin())
-            .arg("convert")
+            .args(["convert", "--lossless"])
             .arg(input)
             .arg("-o")
             .arg(&output)
@@ -288,7 +302,7 @@ fn convert_reads_stdin_and_emits_raw_scalar() {
     use std::io::Write;
     use std::process::Stdio;
     let mut child = Command::new(bin())
-        .args(["convert", "-"])
+        .args(["convert", "--lossless", "-"])
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
