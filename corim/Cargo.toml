@@ -46,6 +46,6 @@ profile-cca = ["dep:base64", "dep:spki"]
 base64 = { version = "0.22", default-features = false, features = ["alloc"], optional = true }
 corim-macros.workspace = true
 serde.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["unbounded_depth"] }
 spki = { version = "0.7", default-features = false, optional = true }
 thiserror.workspace = true

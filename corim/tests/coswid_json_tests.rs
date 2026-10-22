@@ -279,8 +279,6 @@ mod json_tests {
 
     #[test]
     fn json_measurement_with_digests_encodes() {
-        // Digests encode to JSON (bytes → base64), but round-trip requires
-        // context-aware bytes detection (deferred: tracked in Phase 7B.4)
         let meas = MeasurementMap {
             mkey: None,
             mval: MeasurementValuesMap {
@@ -290,8 +288,9 @@ mod json_tests {
             authorized_by: None,
         };
         let json_str = json::to_json(&meas).unwrap();
-        // Should contain the base64-encoded digest value
-        assert!(json_str.len() > 10, "json: {json_str}");
+        assert!(json_str.contains("byte-string"), "json: {json_str}");
+        let decoded: MeasurementMap = json::from_json(&json_str).unwrap();
+        assert_eq!(meas, decoded);
     }
 
     #[test]
@@ -319,21 +318,20 @@ mod json_tests {
     }
 
     #[test]
-    fn json_coswid_entity_uses_string_keys() {
+    fn json_coswid_entity_preserves_cbor_keys() {
         let entity = make_swid_entity();
         let json_str = json::to_json(&entity).unwrap();
-        // Keys 31+ should use string names from the global table
-        assert!(json_str.contains("entity-name"), "json: {json_str}");
-        assert!(json_str.contains("reg-id"), "json: {json_str}");
-        assert!(json_str.contains("role"), "json: {json_str}");
+        let raw: cbor::value::Value = json::from_json(&json_str).unwrap();
+        assert_eq!(raw, cbor::value::to_value(&entity).unwrap());
+        assert_eq!(json::from_json::<SwidEntity>(&json_str).unwrap(), entity);
     }
 
     #[test]
-    fn json_swid_link_uses_string_keys() {
+    fn json_swid_link_preserves_cbor_keys() {
         let link = SwidLink::new("https://example.com", SWID_REL_COMPONENT);
         let json_str = json::to_json(&link).unwrap();
-        assert!(json_str.contains("href"), "json: {json_str}");
-        assert!(json_str.contains("rel"), "json: {json_str}");
+        let raw: cbor::value::Value = json::from_json(&json_str).unwrap();
+        assert_eq!(raw, cbor::value::to_value(&link).unwrap());
     }
 
     #[test]
@@ -348,9 +346,9 @@ mod json_tests {
     fn json_uuid_type_choice() {
         let tag_id = TagIdChoice::Uuid([0x01; 16]);
         let json_str = json::to_json(&tag_id).unwrap();
-        // Should be {"type":"uuid","value":"01010101-0101-0101-0101-010101010101"}
-        assert!(json_str.contains("uuid"), "json: {json_str}");
+        assert!(json_str.contains("\"tag\":\"37\""), "json: {json_str}");
         assert!(json_str.contains("01010101"), "json: {json_str}");
+        assert_eq!(json::from_json::<TagIdChoice>(&json_str).unwrap(), tag_id);
     }
 
     #[test]
