@@ -63,9 +63,11 @@ fn make_env() -> EnvironmentMap {
 fn make_meas(mkey: &str) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     }
@@ -747,14 +749,17 @@ fn measurement_values_map_all_14_fields() {
         vec![Digest::new(7, vec![0x11; 48])],
     );
 
-    round_trip(&MeasurementValuesMap {
-        version: Some(VersionMap {
+    round_trip(&{
+        let __corim_field_0 = Some(VersionMap {
             version: "2.0".into(),
             version_scheme: Some(VERSION_SCHEME_SEMVER),
-        }),
-        svn: Some(SvnChoice::MinValue(3)),
-        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-        flags: Some(FlagsMap {
+        });
+
+        let __corim_field_1 = Some(SvnChoice::MinValue(3));
+
+        let __corim_field_2 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+
+        let __corim_field_3 = Some(FlagsMap {
             is_configured: Some(true),
             is_secure: Some(true),
             is_recovery: None,
@@ -766,25 +771,47 @@ fn measurement_values_map_all_14_fields() {
             is_tcb: Some(true),
             is_confidentiality_protected: None,
             is_runtime_updatable: None,
-        }),
-        raw_value: Some(RawValueChoice::Bytes(vec![0xDE, 0xAD])),
-        mac_addr: Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])),
-        ip_addr: Some(IpAddr::V4([192, 168, 1, 1])),
-        serial_number: Some("SN-12345".into()),
-        ueid: Some(vec![0x01; 17]),
-        uuid: Some(vec![0x02; 16]),
-        name: Some("firmware-component".into()),
-        cryptokeys: Some(vec![CryptoKey::PkixBase64Key("MIIBIj...".into())]),
-        integrity_registers: Some(IntegrityRegisters(regs)),
-        int_range: Some(IntRangeChoice::Range {
+        });
+
+        let __corim_field_4 = Some(RawValueChoice::Bytes(vec![0xDE, 0xAD]));
+
+        let __corim_field_5 = Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
+
+        let __corim_field_6 = Some(IpAddr::V4([192, 168, 1, 1]));
+
+        let __corim_field_7 = Some("SN-12345".into());
+
+        let __corim_field_8 = Some(vec![0x01; 17]);
+
+        let __corim_field_9 = Some(vec![0x02; 16]);
+
+        let __corim_field_10 = Some("firmware-component".into());
+
+        let __corim_field_11 = Some(vec![CryptoKey::PkixBase64Key("MIIBIj...".into())]);
+
+        let __corim_field_12 = Some(IntegrityRegisters(regs));
+
+        let __corim_field_13 = Some(IntRangeChoice::Range {
             min: Some(0),
             max: Some(100),
-        }),
-        r#bool: None,
-        number: None,
-        text: None,
-        bytes: None,
-        extra_entries: BTreeMap::new(),
+        });
+
+        let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+        __corim_value.version = __corim_field_0;
+        __corim_value.svn = __corim_field_1;
+        __corim_value.digests = __corim_field_2;
+        __corim_value.flags = __corim_field_3;
+        __corim_value.raw_value = __corim_field_4;
+        __corim_value.mac_addr = __corim_field_5;
+        __corim_value.ip_addr = __corim_field_6;
+        __corim_value.serial_number = __corim_field_7;
+        __corim_value.ueid = __corim_field_8;
+        __corim_value.uuid = __corim_field_9;
+        __corim_value.name = __corim_field_10;
+        __corim_value.cryptokeys = __corim_field_11;
+        __corim_value.integrity_registers = __corim_field_12;
+        __corim_value.int_range = __corim_field_13;
+        __corim_value
     });
 }
 
@@ -796,9 +823,11 @@ fn measurement_values_map_all_14_fields() {
 fn measurement_map_with_authorized_by() {
     round_trip(&MeasurementMap {
         mkey: Some(MeasuredElement::Uint(7)),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xEE; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xEE; 48])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: Some(vec![CryptoKey::PkixBase64Key("key-data".into())]),
     });
@@ -809,9 +838,11 @@ fn measurement_map_anonymous() {
     // No mkey = "anonymous" measurement per §5.1.4.5.1
     round_trip(&MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.svn = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     });
@@ -993,9 +1024,11 @@ fn conditional_endorsement_series_triple() {
             vec![make_meas("fw")],
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(5)),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let __corim_field_0 = Some(SvnChoice::ExactValue(5));
+                    let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                    __corim_value.svn = __corim_field_0;
+                    __corim_value
                 },
                 authorized_by: None,
             }],
@@ -1285,9 +1318,11 @@ fn end_to_end_build_encode_decode_validate() {
             env.clone(),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::MinValue(3)),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let __corim_field_0 = Some(SvnChoice::MinValue(3));
+                    let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                    __corim_value.svn = __corim_field_0;
+                    __corim_value
                 },
                 authorized_by: None,
             }],
@@ -1307,9 +1342,12 @@ fn end_to_end_build_encode_decode_validate() {
                 vec![make_meas("fw")],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(5)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let __corim_field_0 = Some(SvnChoice::ExactValue(5));
+                        let mut __corim_value: MeasurementValuesMap =
+                            MeasurementValuesMap::default();
+                        __corim_value.svn = __corim_field_0;
+                        __corim_value
                     },
                     authorized_by: None,
                 }],

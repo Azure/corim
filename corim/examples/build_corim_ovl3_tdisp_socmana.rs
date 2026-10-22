@@ -47,9 +47,11 @@ fn uint_svn_selection(key: u64, min_svn: u64) -> corim::types::measurement::Meas
 
     MeasurementMap {
         mkey: Some(MeasuredElement::Uint(key)),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::MinValue(min_svn)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(SvnChoice::MinValue(min_svn));
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.svn = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     }
@@ -121,9 +123,11 @@ fn main() {
             .clone(),
         measurements: vec![MeasurementMap {
             mkey: Some(corim::types::common::MeasuredElement::Uint(19)),
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.svn = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],

@@ -46,7 +46,7 @@ fn nvidia_cx7_decode_signed_corim_succeeds() {
         .expect("decode_signed_corim must accept legacy-wrapped input");
     // Check we parsed the protected header sensibly.
     let signer = parsed
-        .protected
+        .protected()
         .corim_meta
         .as_ref()
         .map(|m| m.signer.signer_name.as_str());
@@ -94,9 +94,11 @@ fn builder_never_emits_legacy_tags() {
     };
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("fw".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     };

@@ -256,9 +256,11 @@ fn unsigned(tag_count: usize) -> Vec<u8> {
             },
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+                    let mut __corim_value: MeasurementValuesMap = Default::default();
+                    __corim_value.svn = __corim_field_0;
+                    __corim_value
                 },
                 authorized_by: None,
             }],
@@ -422,7 +424,7 @@ fn signed_outer_header_meta_payload_and_tags_share_exact_value_budget() {
     assert_eq!(
         decode_signed_corim_with_limits(&bytes, &limits)
             .unwrap()
-            .protected_header_bytes,
+            .protected_header_bytes(),
         protected
     );
     check_decode_limits(&bytes, &limits).unwrap();
@@ -561,7 +563,7 @@ fn hash_payload_is_opaque_even_when_it_looks_like_hostile_cbor() {
     let required = nodes(&decoded(&bytes)) + header_nodes(&protected);
     let limits = limits_with_values(required);
     let signed = decode_signed_corim_with_limits(&bytes, &limits).unwrap();
-    assert!(signed.protected.is_hash_envelope());
+    assert!(signed.protected().is_hash_envelope());
     assert_eq!(signed.payload.as_deref(), Some(hash.as_slice()));
     check_decode_limits(&bytes, &limits).unwrap();
     assert_limit(
@@ -782,15 +784,15 @@ fn original_nonpreferred_protected_bytes_are_preserved_for_signatures() {
     let payload = unsigned(1);
     let bytes = envelope(&original, Some(&payload));
     let signed = decode_signed_corim_with_limits(&bytes, &DecodeLimits::default()).unwrap();
-    assert_eq!(signed.protected_header_bytes, original);
-    assert_ne!(cbor::encode(&signed.protected).unwrap(), original);
+    assert_eq!(signed.protected_header_bytes(), original);
+    assert_ne!(cbor::encode(&signed.protected()).unwrap(), original);
     let tbs = decoded(&signed.to_be_signed(&[]).unwrap());
     let Value::Array(parts) = tbs else {
         panic!("Sig_structure1 array")
     };
     assert_eq!(parts[1], Value::Bytes(original.clone()));
     validate_signed_corim_payload_with_limits(&signed, NOW, &DecodeLimits::default()).unwrap();
-    assert_eq!(signed.protected_header_bytes, original);
+    assert_eq!(signed.protected_header_bytes(), original);
 }
 
 #[test]
@@ -880,7 +882,7 @@ fn typed_header_and_real_fixture_fit_a_512_kib_stack_in_subprocess() {
                 assert_eq!(validated.comids.len(), 1);
                 assert_eq!(
                     signed
-                        .protected
+                        .protected()
                         .corim_meta
                         .as_ref()
                         .unwrap()

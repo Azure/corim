@@ -57,9 +57,11 @@ fn unsigned() -> Vec<u8> {
             vec![MeasurementMap {
                 mkey: None,
                 authorized_by: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+                    let mut __corim_value: MeasurementValuesMap = Default::default();
+                    __corim_value.svn = __corim_field_0;
+                    __corim_value
                 },
             }],
         ))

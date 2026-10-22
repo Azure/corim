@@ -95,7 +95,10 @@ fn numeric_dates_round_trip_without_truncation_or_saturation() {
         Value::Text("1".into()),
         Value::Integer(i128::MAX),
     ] {
-        assert!(corim::cbor::value::from_value::<NumericDate>(&value).is_err());
+        assert!(
+            corim::cbor::value::from_value::<NumericDate>(&value).is_err(),
+            "{value:?}"
+        );
     }
 }
 
@@ -113,21 +116,21 @@ fn text_and_integer_header_labels_round_trip_independently() {
     assert_ne!(builder.to_be_signed(&[]).unwrap(), before);
     let envelope =
         decode_signed_corim(&builder.build_with_signature(vec![0; 64]).unwrap()).unwrap();
-    assert_eq!(envelope.protected.cwt_claims, Some(claims));
+    assert_eq!(envelope.protected().cwt_claims, Some(claims));
     assert_eq!(
-        envelope.protected.extra.get(&CoseLabel::Int(10001)),
+        envelope.protected().extra.get(&CoseLabel::Int(10001)),
         Some(&Value::Integer(1))
     );
     assert_eq!(
         envelope
-            .protected
+            .protected()
             .extra
             .get(&CoseLabel::Text("10001".into())),
         Some(&Value::Text("text".into()))
     );
     assert_eq!(
-        corim::cbor::encode(&envelope.protected).unwrap(),
-        envelope.protected_header_bytes
+        corim::cbor::encode(&envelope.protected()).unwrap(),
+        envelope.protected_header_bytes()
     );
 }
 
@@ -148,7 +151,10 @@ fn header_labels_accept_only_integer_or_text_keys() {
         Value::Array(vec![]),
         Value::Bytes(vec![]),
     ] {
-        assert!(corim::cbor::value::from_value::<CoseLabel>(&value).is_err());
+        assert!(
+            corim::cbor::value::from_value::<CoseLabel>(&value).is_err(),
+            "{value:?}"
+        );
     }
 }
 

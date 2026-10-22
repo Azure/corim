@@ -41,9 +41,11 @@ fn sample_unsigned_corim() -> Vec<u8> {
     };
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xBB; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xBB; 48])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     };
@@ -252,7 +254,7 @@ fn extract_header_returns_protected_header_bytes() {
     let envelope = corim::types::signed::decode_signed_corim(&signed).unwrap();
     assert_eq!(
         std::fs::read(&out).unwrap(),
-        envelope.protected_header_bytes
+        envelope.protected_header_bytes()
     );
 
     let _ = std::fs::remove_file(&sc);

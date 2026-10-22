@@ -28,9 +28,11 @@ fn make_env() -> EnvironmentMap {
 fn make_meas() -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("fw".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     }

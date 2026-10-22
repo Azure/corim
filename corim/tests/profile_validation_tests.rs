@@ -108,9 +108,11 @@ fn ref_with_digest(byte: u8) -> ReferenceTriple {
         EnvironmentMap::for_class("ACME", "Widget"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![byte; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![byte; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -122,9 +124,11 @@ fn evidence_with_digest(byte: u8) -> EvidenceClaim {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![byte; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![byte; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -253,9 +257,11 @@ fn environment_mismatch_skipped_before_profile_consulted() {
         EnvironmentMap::for_class("ACME", "Widget"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -264,9 +270,11 @@ fn environment_mismatch_skipped_before_profile_consulted() {
         environment: EnvironmentMap::for_class("OTHER", "Thing"),
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -295,17 +303,21 @@ fn build_series_triple(
     };
     let selection = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Text("k".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![selection_byte; 32])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![selection_byte; 32])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     }];
     let addition = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Text("k".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![addition_byte; 32])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let __corim_field_0 = Some(vec![Digest::new(7, vec![addition_byte; 32])]);
+            let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+            __corim_value.digests = __corim_field_0;
+            __corim_value
         },
         authorized_by: None,
     }];
@@ -320,9 +332,11 @@ fn endorsement_series_with_profile_none_matches_default() {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Text("k".into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -350,9 +364,11 @@ fn endorsement_series_always_match_profile_forces_endorsement() {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Text("k".into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xBB; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -375,9 +391,11 @@ fn endorsement_series_always_reject_profile_blocks_endorsement() {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Text("k".into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],
@@ -399,9 +417,11 @@ fn endorsement_series_rejects_profile_invalid_evidence_claim() {
         environment: EnvironmentMap::for_class("ACME", "Widget"),
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Text("k".into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let __corim_field_0 = Some(vec![Digest::new(7, vec![0xBB; 32])]);
+                let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+                __corim_value.digests = __corim_field_0;
+                __corim_value
             },
             authorized_by: None,
         }],

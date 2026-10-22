@@ -22,20 +22,19 @@
 //! use corim::types::{MeasurementValuesMap, Number, NumberMatcher};
 //! use corim::Validate;
 //!
-//! let values = MeasurementValuesMap {
-//!     r#bool: Some(false),
-//!     number: Some(NumberMatcher::Range {
+//! let mut values = MeasurementValuesMap::default();
+//! values.r#bool = Some(false);
+//! values.number = Some(NumberMatcher::Range {
 //!         min: Some(Number::Int(1)),
 //!         max: Some(Number::Float(3.5)),
-//!     }),
-//!     ..Default::default()
-//! };
+//!     });
 //! assert!(values.valid().is_ok());
 //! assert!(values.number.as_ref().unwrap().matches(
 //!     &NumberMatcher::Exact(Number::Float(2.5))
 //! ));
 //! ```
 
+use super::numeric::compare_integer_float;
 use super::tags::{TAG_MATCHER_SET, TAG_NUMBER_RANGE};
 use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
@@ -107,24 +106,6 @@ impl Number {
         };
         number.valid()?;
         Ok(number)
-    }
-}
-
-fn compare_integer_float(integer: i128, float: f64) -> Option<Ordering> {
-    if float.is_nan() {
-        return None;
-    }
-    let bound = 18_446_744_073_709_551_616.0_f64;
-    if float >= bound {
-        return Some(Ordering::Less);
-    }
-    if float < -bound {
-        return Some(Ordering::Greater);
-    }
-    let truncated = float as i128;
-    match integer.cmp(&truncated) {
-        Ordering::Equal => (truncated as f64).partial_cmp(&float),
-        ordering => Some(ordering),
     }
 }
 

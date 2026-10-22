@@ -97,9 +97,11 @@ fn signed(protected: &[u8]) -> Vec<u8> {
 // Same typed fixture recipe used by signed_corim_tests, with an SVN measurement.
 fn sample_corim() -> CorimMap {
     let env = EnvironmentMap::for_class("V", "M");
-    let mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(1)),
-        ..Default::default()
+    let mval = {
+        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+        let mut __corim_value: MeasurementValuesMap = Default::default();
+        __corim_value.svn = __corim_field_0;
+        __corim_value
     };
     let meas = MeasurementMap {
         mkey: None,
@@ -219,9 +221,11 @@ fn skipped_environment_extension_duplicates_reject() {
 
 #[test]
 fn serializers_reject_extras_colliding_with_populated_modeled_fields() {
-    let mut mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(1)),
-        ..Default::default()
+    let mut mval = {
+        let __corim_field_0 = Some(SvnChoice::ExactValue(1));
+        let mut __corim_value: MeasurementValuesMap = Default::default();
+        __corim_value.svn = __corim_field_0;
+        __corim_value
     };
     mval.extra_entries
         .insert(MVAL_KEY_SVN, value(&SvnChoice::ExactValue(1)));
@@ -285,7 +289,7 @@ fn type_disjoint_flat_claims_accept_both_orders_preserving_protected_bytes() {
         let bytes = cbor::encode(&Value::Map(m)).unwrap();
         encodings.push(bytes.clone());
         let parsed = decode_signed_corim(&signed(&bytes)).unwrap();
-        assert_eq!(parsed.protected_header_bytes, bytes);
+        assert_eq!(parsed.protected_header_bytes(), bytes);
         let mut expected = header();
         expected.kid = Some(vec![4]);
         expected.cwt_claims = Some(
@@ -298,7 +302,7 @@ fn type_disjoint_flat_claims_accept_both_orders_preserving_protected_bytes() {
             .extra
             .insert(COSE_CRIT.into(), Value::Array(vec![int(COSE_HEADER_ALG)]));
         expected.extra.insert(COSE_IV.into(), Value::Bytes(vec![5]));
-        assert_eq!(parsed.protected, expected);
+        assert_eq!(parsed.protected(), &expected);
         let tbs = parsed.to_be_signed_detached(b"payload", &[]).unwrap();
         let tbs = cbor::decode::<Value>(&tbs).unwrap().into_array().unwrap();
         assert_eq!(tbs[1], Value::Bytes(bytes));
@@ -377,7 +381,7 @@ fn duplicate_metadata_signer_cannot_fall_back_to_opaque_with_valid_cwt() {
     ));
     let control = signed(&cbor::encode(&Value::Map(h.clone())).unwrap());
     let control = decode_signed_corim(&control).unwrap();
-    assert!(control.protected.corim_meta.is_some());
+    assert!(control.protected().corim_meta.is_some());
     m.push(field);
     h.last_mut().unwrap().1 = Value::Bytes(cbor::encode(&Value::Map(m)).unwrap());
     let bytes = cbor::encode(&Value::Map(h)).unwrap();
@@ -530,8 +534,8 @@ fn malformed_metadata_remains_a_raw_extra_when_typed_metadata_is_absent() {
     assert_eq!(parsed, h);
     assert!(parsed.corim_meta.is_none());
     let envelope = decode_signed_corim(&signed(&bytes)).unwrap();
-    assert_eq!(envelope.protected, h);
-    assert_eq!(envelope.protected_header_bytes, bytes);
+    assert_eq!(envelope.protected(), &h);
+    assert_eq!(envelope.protected_header_bytes(), bytes);
 }
 
 #[test]
@@ -546,7 +550,7 @@ fn unprotected_duplicate_integer_and_text_labels_reject_on_encode_and_decode() {
             let bytes = cbor::encode(&Value::Tag(
                 TAG_SIGNED_CORIM,
                 Box::new(Value::Array(vec![
-                    Value::Bytes(envelope.protected_header_bytes),
+                    Value::Bytes(envelope.protected_header_bytes().to_vec()),
                     Value::Map(envelope.unprotected),
                     Value::Null,
                     Value::Bytes(envelope.signature),

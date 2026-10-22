@@ -546,15 +546,6 @@ pub fn corim_id_str(id: &CorimId) -> String {
     }
 }
 
-/// JSON-safe CoRIM ID: always properly quoted.
-pub fn corim_id_json(id: &CorimId) -> String {
-    match id {
-        CorimId::Text(t) => format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")),
-        CorimId::Uuid(u) => format!("\"{}\"", format_uuid(u)),
-        _ => "\"unknown\"".to_string(),
-    }
-}
-
 pub fn profile_str(p: &ProfileChoice) -> String {
     match p {
         ProfileChoice::Uri(u) => u.clone(),
@@ -568,15 +559,6 @@ pub fn tag_id_str(id: &TagIdChoice) -> String {
         TagIdChoice::Text(t) => format!("\"{}\"", t),
         TagIdChoice::Uuid(u) => format_uuid(u),
         _ => "(unknown)".to_string(),
-    }
-}
-
-/// JSON-safe tag ID: always properly quoted.
-pub fn tag_id_json(id: &TagIdChoice) -> String {
-    match id {
-        TagIdChoice::Text(t) => format!("\"{}\"", t.replace('\\', "\\\\").replace('"', "\\\"")),
-        TagIdChoice::Uuid(u) => format!("\"{}\"", format_uuid(u)),
-        _ => "\"unknown\"".to_string(),
     }
 }
 

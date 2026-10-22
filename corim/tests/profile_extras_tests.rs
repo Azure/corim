@@ -29,9 +29,11 @@ fn extras_only_mval_round_trips() {
         -83,
         Value::Array(vec![Value::Integer(7), Value::Bytes(vec![0xAA; 48])]),
     );
-    let mval = MeasurementValuesMap {
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let __corim_field_0 = extras;
+        let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+        __corim_value.extra_entries = __corim_field_0;
+        __corim_value
     };
 
     // Validate: extras-only map satisfies non-empty.
@@ -60,11 +62,17 @@ fn mixed_standard_and_extras_round_trip() {
             Value::Text("INTEL-SA-00002".into()),
         ]),
     );
-    let mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(7)),
-        name: Some("intel-tdx-module".into()),
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let __corim_field_0 = Some(SvnChoice::ExactValue(7));
+
+        let __corim_field_1 = Some("intel-tdx-module".into());
+
+        let __corim_field_2 = extras;
+        let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+        __corim_value.svn = __corim_field_0;
+        __corim_value.name = __corim_field_1;
+        __corim_value.extra_entries = __corim_field_2;
+        __corim_value
     };
 
     let bytes = cbor::encode(&mval).expect("encode failed");
@@ -135,9 +143,11 @@ fn extras_preserve_nested_tagged_values() {
     let mut extras = BTreeMap::new();
     // Intel `tee.isvsvn = -73` carrying a tagged-numeric-ge expression.
     extras.insert(-73, expression.clone());
-    let mval = MeasurementValuesMap {
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let __corim_field_0 = extras;
+        let mut __corim_value: MeasurementValuesMap = MeasurementValuesMap::default();
+        __corim_value.extra_entries = __corim_field_0;
+        __corim_value
     };
 
     let bytes = cbor::encode(&mval).expect("encode failed");
