@@ -75,6 +75,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
+      - name: Test resumable publishing without network or uploads
+        run: bash scripts/tests/publish-crate-tests.sh
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

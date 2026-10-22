@@ -103,6 +103,23 @@ Runbook:
    environment. Approve the deployment in the Actions UI to publish
    `corim-macros` first, then `corim`.
 
+The workflow packages and verifies both crates before authenticating. Publishing
+checks the sparse-index checksum for each exact version: an already-published
+version is skipped only when its archive checksum matches the local package.
+After an upload, bounded polling waits for that checksum to appear before the
+dependent crate is published. Registry errors, yanked versions and checksum
+mismatches fail explicitly.
+
+If only `corim-macros` was published, rerun the workflow on the same tag after
+indexing completes. Do not move the tag. If a different Cargo packaging version
+produces a different archive, the rerun fails safely; compare the artifacts and
+use the original packaging toolchain rather than bypassing the checksum check.
+The workflow never treats a failed upload as successful.
+
+Run the isolated publishing tests with
+`bash scripts/tests/publish-crate-tests.sh`. They replace Cargo and registry
+requests with local stubs; they do not upload crates or require credentials.
+
 The `corim-cli` crate is intentionally not published (`publish = false`).
 
 Trusted Publisher configuration on crates.io (one-time per crate, set at
