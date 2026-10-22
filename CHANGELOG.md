@@ -8,6 +8,39 @@ versions.
 
 ## [Unreleased]
 
+### Changed
+
+- **Explicit document-validation coverage.** `document::validate` handles
+  signed/unsigned inputs with one parser budget and a `ValidationContext`.
+  Read-only outcomes report time checks, registered-profile checks, unknown tag
+  content and document-level compatibility forms. Existing validation functions
+  retain their compatibility contracts. No API authenticates signatures.
+  CLI partial validation now exits **4**, including skipped clocks and unknown
+  profiles. Generation and `extract --validate` refuse partial output before
+  writing; baseline mismatch remains exit **3** even when coverage is partial.
+- **Protected-header ownership.** Decoded envelopes expose `protected()` and
+  `protected_header_bytes()` instead of independently mutable public fields.
+  `CoseSign1Corim::from_parts` derives the decoded header from original bytes;
+  signing builders remain the path for new protected headers.
+- **New-only lossless JSON.** Document JSON and CBOR-valued report fields now
+  share a strict typed-tree codec. It preserves integer ranges, every float bit,
+  byte-string identity, semantic tags and ordered map-entry pairs. Prose-keyed
+  and semantic JSON templates are no longer accepted; shipped templates have
+  been migrated. Ordinary report status/error/count metadata stays native JSON.
+  Signed conversion retains the full envelope, including original protected
+  bytes. Inspection still enforces embedded framing and resource limits.
+- **Wire-model evolution.** `MeasurementValuesMap`,
+  `ProtectedCorimHeaderMap` and `CwtClaims` are non-exhaustive. Construct them
+  through defaults/constructors/builders rather than external struct literals.
+  Exact numeric comparison is shared below timestamp and measurement domains.
+- **One baseline comparison interpretation.** Exact reservation and reported
+  differences use a single private prepared projection, preserving typed
+  identity, multiset, float-bit and ordered-series rules without a generic DSL.
+- **Reproducible release packaging.** Release gates use locked dependencies
+  and pinned Rust/Cargo; verified archives and checksums are retained before
+  authentication. Publication still requires exact archive-checksum agreement
+  and detects repackaging drift.
+
 ### Fixed
 
 - **Lossless protected-header comparison and reporting.** Text COSE labels
@@ -18,8 +51,8 @@ versions.
   `CoseLabel` (`Int` / `Text`) keys, and `CwtClaims::exp` / `nbf` now use
   `NumericDate` (`Int` / `Float`). Existing integer builder calls remain valid;
   direct field assignments and map access must use `.into()` or typed variants.
-  CLI JSON `header_extra` uses separate `int` and `text` objects, matching CWT
-  extension reporting and preventing same-looking labels from colliding.
+  CLI JSON header/CWT extensions use lossless map nodes, preventing same-looking
+  integer and text labels from colliding.
 - **Nested CBOR map keys caused exponential re-encoding work.** The encoder
   now writes the key bytes already cached for sorting instead of recursively
   encoding each key twice. This also protects baseline header and payload
@@ -29,8 +62,8 @@ versions.
   baselines, including CoTL and registered-profile checks. Invalid attached
   payloads, expired signed headers, detached envelopes and hash-only documents
   cannot report ordinary validation success. JSON failures are structured.
-  `--skip-expiry` remains available as explicit partial validation: successful
-  runs exit 0 with `valid: null` and `time_validated: false`; structural and
+  `--skip-expiry` remains available as explicit partial validation:
+  runs exit 4 with `valid: null` and `time_validated: false`; structural and
   profile failures still exit 2. Inspection commands retain their behavior.
   Empty documents exit 2; input and baseline filesystem failures exit 1, with
   JSON errors preserved. CoSWID-only and CoTL-only documents are supported;
@@ -139,8 +172,9 @@ versions.
   rejected. Appraisal, diagnostics, baseline reporting, CDDL and CLI templates
   support the fields. JSON uses explicit representations for byte strings,
   large integers and non-finite floats rather than losing their types.
-  **Source compatibility:** exhaustive `MeasurementValuesMap` literals must
-  add `r#bool`, `number`, `text`, and `bytes` (or use `..Default::default()`).
+  **Source compatibility:** `MeasurementValuesMap` is non-exhaustive; initialize
+  it with `Default::default()` and assign the desired fields, including
+  `r#bool`, `number`, `text`, and `bytes`.
   Move keys 16-19 out of `extra_entries` into the typed fields; extras collisions
   are rejected. Existing encodings are unchanged when the new fields are absent.
   This is targeted editor-draft support, not a complete migration from draft-11.

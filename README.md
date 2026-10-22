@@ -276,8 +276,8 @@ or execute the conditional endorsement. Signature verification, freshness,
 Platform binding, and production trust are outside this sample's scope.
 MEC-policy references are deliberately deferred: the token reports claim
 44243 as 0 (shared), but the cited endorsement profile does not define a
-CoMID mapping for that claim. Template `$comment` annotations are stripped
-during generation.
+CoMID mapping for that claim. The migrated template uses the lossless CBOR-tree
+format; legacy semantic-template comment annotations are not accepted.
 
 ### `validate -f json` — machine-readable report
 
@@ -287,8 +287,10 @@ protected header — the same fields the text renderer shows:
 
 ```jsonc
 {
+  "status": "complete",
   "valid": true,
   "time_validated": true,
+  "coverage": { "complete": true /* clock/profile/content details omitted */ },
   "signed": {
     "tag": 18,
     "protected": {
@@ -318,18 +320,60 @@ invalid attached payload. Use `--diagnose`, `--edn`, or `extract --header` for
 inspection. Unsigned CoRIMs have no `signed` object.
 
 CoSWID-only and CoTL-only documents are supported, as are CoMID documents.
-Library callers can use `decode_and_validate_document_at_with_limits` for
-unsigned complete-document validation; legacy validation APIs retain their
-CoMID prerequisite. Registered-profile checks remain a separate library step.
+Library callers should use `corim::document::validate` with a
+`ValidationContext`. It handles signed or unsigned documents, parser limits,
+clock policy and registered profiles in one operation, and returns read-only
+decoded data with explicit validation coverage:
+
+```rust
+use corim::document::{self, TimeCheck, ValidationContext};
+use corim::profile::ProfileRegistry;
+
+fn check(bytes: &[u8], now: i64) -> Result<(), corim::ValidationError> {
+    let registry = ProfileRegistry::new();
+    let context = ValidationContext::new(TimeCheck::At(now), &registry);
+    let outcome = document::validate(bytes, &context)?;
+    if !outcome.coverage().is_complete() {
+        // Decide whether the reported omissions are acceptable to this caller.
+        return Err(corim::ValidationError::Invalid("partial validation".into()));
+    }
+    Ok(())
+}
+```
+
+An empty registry does not validate a declared profile. Such a document is
+explicitly partial, not fully checked. Unknown tag content is also partial;
+unknown extension keys alone are not. Coverage records clock/profile checks,
+unexamined tag indexes and accepted document-level compatibility forms.
+`with_detached_payload` supplies separately transported signed payload bytes.
+Missing detached payloads and hash-only documents remain errors, not partial
+successes. `document::inspect` is the separate framing/resource-only path for
+transcoding; it preserves the raw tree and opaque byte strings.
+
+Legacy validation entry points retain their published behavior, including
+their CoMID prerequisite and separate profile-validation step. They do not
+provide the new coverage guarantee.
 
 `--skip-expiry` retains structural, header-consistency and profile checks but
-skips comparisons against the clock. Success exits `0` with `"valid": null`
-and `"time_validated": false`, and text output explicitly says temporal checks
-were skipped. It does not establish current validity. Failed checks report
+skips comparisons against the clock. Partial validation exits `4` with
+`"status": "partial"`, `"valid": null`, and `"time_validated": false`.
+Unregistered profiles or unexamined tag content also exit `4`. Reports include
+`coverage`; text output identifies the omitted checks. These outcomes do not
+establish current validity. Failed checks report
 `"valid": false`, `"time_validated": false`, and an `errors` array (exit `2`);
 input I/O errors exit `1`. Empty documents and present-null validity fields are
 invalid, including with `--skip-expiry`. In particular, JSON validation failures
 remain JSON.
+
+The protected state of a decoded signed envelope is read-only:
+`protected()` exposes the decoded map and `protected_header_bytes()` exposes
+the exact signed bytes. Use `CoseSign1Corim::from_parts` to derive a coherent
+decoded header from existing bytes, or a signing builder to create a new one.
+Editing a cloned header does not change an existing envelope or its signature.
+The growing `MeasurementValuesMap`, `ProtectedCorimHeaderMap` and `CwtClaims`
+structs are non-exhaustive. Use their constructors/builders or initialize a
+measurement map with `Default::default()` and assign its public fields; external
+exhaustive struct literals are not supported.
 
 ### `validate --baseline` — structural conformance check
 
@@ -408,10 +452,12 @@ reported as a value difference.
 corim-cli validate candidate.cbor --baseline golden.json
 ```
 
-- Exit `0` — structurally conformant (any value-only differences are
-  listed but do not fail).
+- Exit `0` — fully checked and structurally conformant (value-only differences
+  are listed but do not fail).
 - Exit `3` — a structural mismatch (missing, unexpected, or retyped
   field).
+- Exit `4` — conformant, but input or baseline validation is partial. A
+  structural mismatch still takes precedence and exits `3`.
 - `--format json` emits the full diff as
   `{ result, conformant, baseline_format, target_format, compared, summary, structural_mismatches, value_differences }`.
   Long values (certificate chains and the like) are elided in the text
