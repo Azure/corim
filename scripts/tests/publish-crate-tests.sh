@@ -4,18 +4,24 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/../.." && pwd)
-temporary=$(mktemp -d)
+temporary="$root/target/publish-crate-tests-$$-$RANDOM"
+mkdir -p "$temporary"
 cleanup() {
-    rm -f "$temporary/bin/cargo" "$temporary/bin/curl" "$temporary/bin/sleep" \
-        "$temporary/archive.crate" "$temporary/calls" "$temporary/requests" \
-        "$temporary/published" "$temporary/output"
-    rmdir "$temporary/bin" "$temporary"
+    rm -rf "$temporary"
 }
 trap cleanup EXIT
 mkdir "$temporary/bin"
 printf 'release package fixture\n' > "$temporary/archive.crate"
 EXPECTED_CHECKSUM=$(sha256sum "$temporary/archive.crate")
 export EXPECTED_CHECKSUM="${EXPECTED_CHECKSUM%% *}" FIXTURE="$temporary"
+export CARGO_TARGET_DIR="$temporary/target"
+mkdir -p "$CARGO_TARGET_DIR/package"
+
+# Keep the baseline script's response-file allocation inside this fixture.
+cat > "$temporary/bin/mktemp" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "$FIXTURE/response"
+MOCK
 
 cat > "$temporary/bin/cargo" <<'MOCK'
 #!/usr/bin/env bash
@@ -29,6 +35,19 @@ case "$CASE" in
     publish-failure)
         echo "simulated publish failure" >&2
         exit 42
+        ;;
+esac
+if [[ "$*" != 'publish --locked --all-features -p corim-macros' ]]; then
+    echo "unexpected Cargo arguments: $*" >&2
+    exit 1
+fi
+case "$CASE" in
+    repackaged-mismatch)
+        printf 'different repackaged bytes\n' > "$CARGO_TARGET_DIR/package/corim-macros-0.2.1.crate"
+        ;;
+    repackaged-missing) ;;
+    *)
+        cp "$FIXTURE/archive.crate" "$CARGO_TARGET_DIR/package/corim-macros-0.2.1.crate"
         ;;
 esac
 touch "$FIXTURE/published"
@@ -100,6 +119,9 @@ case "$CASE" in
         ;;
     publish-failure) version=0.2.0 ;;
     post-upload-invalid-index) version=0.2.0 ;;
+    repackaged-mismatch|repackaged-missing)
+        if [[ ! -f "$FIXTURE/published" ]]; then version=0.2.0; fi
+        ;;
 esac
 printf '{"vers":"%s","cksum":"%s","yanked":%s}\n' "$version" "$checksum" "$yanked" > "$output"
 printf 200
@@ -109,7 +131,7 @@ cat > "$temporary/bin/sleep" <<'MOCK'
 #!/usr/bin/env bash
 exit 0
 MOCK
-chmod +x "$temporary/bin/cargo" "$temporary/bin/curl" "$temporary/bin/sleep"
+chmod +x "$temporary/bin/"*
 export PATH="$temporary/bin:$PATH"
 
 run_case() {
@@ -120,6 +142,7 @@ run_case() {
     : > "$temporary/calls"
     : > "$temporary/requests"
     rm -f "$temporary/published"
+    rm -f "$CARGO_TARGET_DIR/package/corim-macros-0.2.1.crate"
     bash "$root/scripts/publish-crate.sh" corim-macros 0.2.1 "$archive" \
         > "$temporary/output" 2>&1 || status=$?
     if [[ "$expected_status" == success && "$status" != 0 ]] \
@@ -157,6 +180,8 @@ run_case post-upload-invalid-index failure 1 'string vers' || failures=$((failur
 run_case yanked failure 0 'yanked' || failures=$((failures + 1))
 run_case publish-failure failure 1 'simulated publish failure' || failures=$((failures + 1))
 run_case missing-archive failure 0 'missing archive' || failures=$((failures + 1))
+run_case repackaged-mismatch failure 1 'repackaged archive checksum mismatch' || failures=$((failures + 1))
+run_case repackaged-missing failure 1 'missing repackaged archive' || failures=$((failures + 1))
 if ((failures)); then
     printf '%s publishing regressions failed\n' "$failures" >&2
     exit 1
