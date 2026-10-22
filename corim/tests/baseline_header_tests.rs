@@ -15,6 +15,55 @@ fn header() -> ProtectedCorimHeaderMapBuilder {
     ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).content_type("application/rim+cbor")
 }
 
+fn decoded_header_with(
+    extension: Option<Value>,
+    expiration: Option<Value>,
+) -> ProtectedCorimHeaderMap {
+    use corim::types::signed::{COSE_HEADER_CWT_CLAIMS, CWT_CLAIM_EXP};
+    let header = header().cwt_claims(CwtClaims::new("issuer")).build();
+    let Value::Map(mut fields) = corim::cbor::value::to_value(&header).unwrap() else {
+        panic!("header map");
+    };
+    if let Some(extension) = extension {
+        fields.push((Value::Text("vendor".into()), extension));
+    }
+    if let Some(expiration) = expiration {
+        let (_, Value::Map(claims)) = fields
+            .iter_mut()
+            .find(|(key, _)| *key == Value::Integer(COSE_HEADER_CWT_CLAIMS.into()))
+            .unwrap()
+        else {
+            panic!("claims map");
+        };
+        claims.push((Value::Integer(CWT_CLAIM_EXP.into()), expiration));
+    }
+    corim::cbor::decode_exact(&corim::cbor::encode(&Value::Map(fields)).unwrap()).unwrap()
+}
+
+#[test]
+fn text_header_extension_changes_are_not_lost() {
+    let baseline = decoded_header_with(Some(Value::Integer(1)), None);
+    let input = decoded_header_with(Some(Value::Text("changed".into())), None);
+    let report = compare_headers(&input, &baseline);
+    assert!(!report.is_conformant(), "{report:?}");
+}
+
+#[test]
+fn fractional_cwt_expiration_changes_are_not_lost() {
+    let baseline = decoded_header_with(None, Some(Value::Float(2_000_000_000.25)));
+    let input = decoded_header_with(None, Some(Value::Float(2_000_000_000.75)));
+    let report = compare_headers(&input, &baseline);
+    assert_eq!(report.value_differences.len(), 1, "{report:?}");
+    assert_eq!(
+        report.value_differences[0].baseline,
+        Value::Float(2_000_000_000.25)
+    );
+    assert_eq!(
+        report.value_differences[0].input,
+        Value::Float(2_000_000_000.75)
+    );
+}
+
 fn compare_headers(
     input: &ProtectedCorimHeaderMap,
     baseline: &ProtectedCorimHeaderMap,
