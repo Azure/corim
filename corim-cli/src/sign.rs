@@ -57,8 +57,8 @@ pub struct ExtractArgs {
     #[arg(long, requires = "header")]
     json: bool,
 
-    /// Require complete validation before writing. Partial validation exits 4
-    /// without output. Ignored with `--header`.
+    /// Require complete validation of an unsigned payload before writing.
+    /// Partial validation exits 4 without output. Ignored with `--header`.
     #[arg(long)]
     validate: bool,
 }
@@ -138,6 +138,11 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
         let document =
             crate::validation::document(&payload, Some(crate::validation::now()?), &registry)
                 .map_err(|error| format!("extracted CoRIM failed validation: {error}"))?;
+        if document.signed.is_some() {
+            return Err(ExtractError::Failure(
+                "extracted payload must be an unsigned CoRIM, not a signed envelope".into(),
+            ));
+        }
         if !document.coverage.is_complete() {
             return Err(ExtractError::Partial(format!(
                 "extracted CoRIM validation is partial: {}",
