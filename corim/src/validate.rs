@@ -421,6 +421,63 @@ pub(crate) fn validate_parsed_corim(
     now_epoch_secs: Option<i64>,
     budget: &mut cbor::DecodeBudget,
 ) -> Result<ValidatedCorim, ValidationError> {
+    let prepared = prepare_parsed_corim(value, budget)?;
+    validate_prepared_corim(prepared, now_epoch_secs)
+}
+
+type ParsedTagBody = Option<Result<cbor::value::Value, crate::DecodeError>>;
+
+fn parse_tag_bodies(
+    map: &cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<Vec<ParsedTagBody>, crate::DecodeError> {
+    use crate::types::tags::{CORIM_KEY_TAGS, TAG_COMID, TAG_COSWID, TAG_COTL};
+    use cbor::value::Value;
+    let Value::Map(fields) = map else {
+        return Ok(Vec::new());
+    };
+    let Some((_, Value::Array(tags))) = fields
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut bodies = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let bytes = match tag {
+            Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner) => match inner.as_ref() {
+                Value::Bytes(bytes) => Some(bytes),
+                _ => None,
+            },
+            Value::Bytes(bytes) => Some(bytes),
+            _ => None,
+        };
+        let parsed = if let Some(bytes) = bytes {
+            let parsed = budget.decode_value_exact(bytes);
+            budget.check()?;
+            match parsed {
+                Err(error @ crate::DecodeError::TrailingData { .. }) => return Err(error),
+                Ok(ref value) => cbor::map_keys::check(value)?,
+                _ => {}
+            }
+            Some(parsed)
+        } else {
+            None
+        };
+        bodies.push(parsed);
+    }
+    Ok(bodies)
+}
+
+pub(crate) struct PreparedCorim {
+    map: cbor::value::Value,
+    bodies: Vec<ParsedTagBody>,
+}
+
+pub(crate) fn prepare_parsed_corim(
+    value: cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<PreparedCorim, ValidationError> {
     let value = crate::compat::peel_value(value);
     let map = match value {
         cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
@@ -436,6 +493,14 @@ pub(crate) fn validate_parsed_corim(
     };
     cbor::map_keys::check(&map)?;
     let bodies = parse_tag_bodies(&map, budget)?;
+    Ok(PreparedCorim { map, bodies })
+}
+
+pub(crate) fn validate_prepared_corim(
+    prepared: PreparedCorim,
+    now_epoch_secs: Option<i64>,
+) -> Result<ValidatedCorim, ValidationError> {
+    let PreparedCorim { map, bodies } = prepared;
     check_validity_shape(&map, CORIM_KEY_RIM_VALIDITY, "rim-validity")?;
     let corim: CorimMap =
         cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
@@ -518,54 +583,10 @@ pub(crate) fn validate_parsed_corim(
         }
     }
 
-    type ParsedTagBody = Option<Result<cbor::value::Value, crate::DecodeError>>;
-
     fn required_tag_body(
         body: ParsedTagBody,
     ) -> Result<Result<cbor::value::Value, crate::DecodeError>, crate::DecodeError> {
         body.ok_or_else(|| crate::DecodeError::InvalidStructure("missing parsed tag body".into()))
-    }
-
-    fn parse_tag_bodies(
-        map: &cbor::value::Value,
-        budget: &mut cbor::DecodeBudget,
-    ) -> Result<Vec<ParsedTagBody>, crate::DecodeError> {
-        use crate::types::tags::{CORIM_KEY_TAGS, TAG_COMID, TAG_COSWID, TAG_COTL};
-        use cbor::value::Value;
-        let Value::Map(fields) = map else {
-            return Ok(Vec::new());
-        };
-        let Some((_, Value::Array(tags))) = fields
-            .iter()
-            .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
-        else {
-            return Ok(Vec::new());
-        };
-        let mut bodies = Vec::with_capacity(tags.len());
-        for tag in tags {
-            let bytes = match tag {
-                Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner) => match inner.as_ref() {
-                    Value::Bytes(bytes) => Some(bytes),
-                    _ => None,
-                },
-                Value::Bytes(bytes) => Some(bytes),
-                _ => None,
-            };
-            let parsed = if let Some(bytes) = bytes {
-                let parsed = budget.decode_value_exact(bytes);
-                budget.check()?;
-                match parsed {
-                    Err(error @ crate::DecodeError::TrailingData { .. }) => return Err(error),
-                    Ok(ref value) => cbor::map_keys::check(value)?,
-                    _ => {}
-                }
-                Some(parsed)
-            } else {
-                None
-            };
-            bodies.push(parsed);
-        }
-        Ok(bodies)
     }
 
     Ok(ValidatedCorim {

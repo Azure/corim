@@ -184,17 +184,22 @@ fn check_expired_header_failure(failure: Failure) {
             &ValidationContext::new(TimeCheck::At(100), &registry).with_limits(limits),
         )
         .unwrap_err();
-        let expected = match (&failure, &error) {
-            (Failure::Trailing, ValidationError::Decode(DecodeError::TrailingData { .. }))
-            | (Failure::Duplicate, ValidationError::Decode(DecodeError::DuplicateKey { .. }))
-            | (
+        let expected = matches!(
+            (&failure, &error),
+            (
+                Failure::Trailing,
+                ValidationError::Decode(DecodeError::TrailingData { .. })
+            ) | (
+                Failure::Duplicate,
+                ValidationError::Decode(DecodeError::DuplicateKey { .. })
+            ) | (
                 Failure::Values,
                 ValidationError::Decode(DecodeError::LimitExceeded {
-                    resource: "values", ..
+                    resource: "values",
+                    ..
                 }),
-            ) => true,
-            _ => false,
-        };
+            )
+        );
         assert!(expected, "{boundary:?} {failure:?}: {error:?}");
     }
 }
@@ -212,6 +217,54 @@ fn expired_headers_do_not_hide_embedded_duplicate_keys() {
 #[test]
 fn expired_headers_do_not_hide_embedded_resource_failures() {
     check_expired_header_failure(Failure::Values);
+}
+
+#[test]
+fn metadata_payload_and_tag_trees_are_charged_exactly_once() {
+    let mut root = signed(true);
+    let mut count = nodes(&root);
+    let slots = parts(&mut root);
+    let mut header: Value = cbor::decode_exact(bytes(&mut slots[0])).unwrap();
+    count += nodes(&header);
+    let (_, metadata) = map(&mut header)
+        .iter_mut()
+        .find(|(key, _)| *key == Value::Integer(COSE_HEADER_CORIM_META.into()))
+        .unwrap();
+    count += nodes(&cbor::decode_exact(bytes(metadata)).unwrap());
+    let payload_bytes = bytes(&mut slots[2]);
+    let mut payload: Value = cbor::decode_exact(payload_bytes).unwrap();
+    count += nodes(&payload);
+    let (_, Value::Array(tags)) = map(&mut payload)
+        .iter_mut()
+        .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
+        .unwrap()
+    else {
+        panic!("tags");
+    };
+    let Value::Tag(_, body) = &mut tags[0] else {
+        panic!("CoMID");
+    };
+    count += nodes(&cbor::decode_exact(bytes(body)).unwrap());
+    let registry = ProfileRegistry::new();
+    let encoded = cbor::encode(&root).unwrap();
+    let mut limits = DecodeLimits::default();
+    limits.max_values = count;
+    assert!(document::validate(
+        &encoded,
+        &ValidationContext::new(TimeCheck::At(0), &registry).with_limits(limits),
+    )
+    .is_ok());
+    limits.max_values -= 1;
+    assert!(matches!(
+        document::validate(
+            &encoded,
+            &ValidationContext::new(TimeCheck::At(0), &registry).with_limits(limits),
+        ),
+        Err(ValidationError::Decode(DecodeError::LimitExceeded {
+            resource: "values",
+            ..
+        }))
+    ));
 }
 
 #[test]
