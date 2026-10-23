@@ -8,6 +8,39 @@ versions.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-23
+
+**Crates:** `corim` and `corim-macros` v0.2.1. `corim-cli` follows the
+workspace version but is not published. Consumer MSRV remains Rust 1.85.
+
+### Migration notice
+
+**This release intentionally includes source-breaking changes despite its patch
+version.** Applications upgrading from 0.2.0 must review the following changes:
+
+- Handle the `Result` returned by `baseline::compare`, `compare_headers`, and
+  `match_reference_values_with_profile`. Update custom `Profile` validation
+  hooks to return diagnostic results.
+- Read decoded protected headers through `protected()` and original bytes
+  through `protected_header_bytes()`. Use `CoseSign1Corim::from_parts` or the
+  signing builder instead of constructing or editing independent header fields.
+- Construct `MeasurementValuesMap`, `ProtectedCorimHeaderMap`, and `CwtClaims`
+  through defaults, constructors, or builders, then assign fields; external
+  struct literals are no longer supported.
+- Use `CoseLabel` keys for protected-header extensions and `NumericDate` for
+  CWT expiration/not-before fields. Existing integer builder calls still work.
+- Handle CLI exit **4** for incomplete validation; baseline mismatch retains
+  exit **3** precedence. Partial generation and validated extraction do not
+  write output.
+- Library JSON and CBOR-valued report fields now use the typed lossless codec.
+  Readable, commented CLI templates remain the default; use
+  `convert --lossless` explicitly for raw interchange.
+- URI fields now encode with CBOR tag 32. Legacy bare-text URIs still decode,
+  and original signed protected bytes are preserved.
+
+The separate 0.1.4 maintenance release preserves the existing 0.1 public types
+and normal wire output; it does not adopt these source/API changes.
+
 ### Changed
 
 - **Explicit document-validation coverage.** `document::validate` handles
