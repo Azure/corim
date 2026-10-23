@@ -152,6 +152,88 @@ fn validated_extraction_refuses_partial_payloads_before_writing() {
 }
 
 #[test]
+fn validated_extraction_rejects_nested_signed_payloads_without_writing() {
+    use corim::document::{self, TimeCheck, ValidationContext};
+    use corim::profile::ProfileRegistry;
+    use corim::types::signed::{CoseAlgorithm, CwtClaims, SignedCorimBuilder};
+    let wrap = |payload, issuer: &str| {
+        SignedCorimBuilder::new(CoseAlgorithm::Es256, payload)
+            .set_cwt_claims(CwtClaims::new(issuer))
+            .build_with_signature(vec![1; 64])
+            .unwrap()
+    };
+    for partial in [false, true] {
+        let mut payload = sample();
+        if partial {
+            payload.value.profile = Some(ProfileChoice::Uri("tag:example.com,2026:unknown".into()));
+        }
+        let inner = wrap(cbor::encode(&payload).unwrap(), "inner");
+        let registry = ProfileRegistry::new();
+        let checked =
+            document::validate(&inner, &ValidationContext::new(TimeCheck::At(0), &registry))
+                .unwrap();
+        assert!(checked.envelope().is_some());
+        assert_eq!(checked.coverage().is_complete(), !partial);
+        let outer = wrap(inner.clone(), "outer");
+        for destination in ["stdout", "missing", "existing"] {
+            let input = path("nested-signed.cbor");
+            let output = path("nested-refused.cbor");
+            let sentinel = b"existing output must survive";
+            std::fs::write(&input, &outer).unwrap();
+            if destination == "existing" {
+                std::fs::write(&output, sentinel).unwrap();
+            }
+            let mut command = Command::new(env!("CARGO_BIN_EXE_corim-cli"));
+            command
+                .arg("extract")
+                .arg(&input)
+                .arg("--validate")
+                .arg("-o");
+            if destination == "stdout" {
+                command.arg("-");
+            } else {
+                command.arg(&output);
+            }
+            let result = command.output().unwrap();
+            std::fs::remove_file(input).unwrap();
+            let contents = if output.exists() {
+                let contents = std::fs::read(&output).unwrap();
+                std::fs::remove_file(output).unwrap();
+                Some(contents)
+            } else {
+                None
+            };
+            assert_eq!(
+                result.status.code(),
+                Some(1),
+                "{destination}, partial={partial}: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+            assert!(
+                result.stdout.is_empty(),
+                "nested payload must not leak to stdout"
+            );
+            assert!(String::from_utf8_lossy(&result.stderr).contains("unsigned CoRIM"));
+            assert_eq!(
+                contents,
+                (destination == "existing").then(|| sentinel.to_vec())
+            );
+        }
+        // Extraction without the validation flag remains byte-preserving.
+        let input = path("unvalidated-nested.cbor");
+        std::fs::write(&input, outer).unwrap();
+        let result = Command::new(env!("CARGO_BIN_EXE_corim-cli"))
+            .arg("extract")
+            .arg(&input)
+            .output()
+            .unwrap();
+        std::fs::remove_file(input).unwrap();
+        assert!(result.status.success());
+        assert_eq!(result.stdout, inner);
+    }
+}
+
+#[test]
 fn baseline_mismatch_takes_precedence_over_partial_coverage() {
     let mut baseline = sample();
     baseline.value.profile = Some(ProfileChoice::Uri("tag:example.com,2026:unknown".into()));
