@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD, Engine};
 use corim::cbor::value::Value;
 use corim::types::tags::*;
 use serde_json::{Map, Value as Json};
+use std::collections::BTreeSet;
 
 use super::key_maps as keys;
 
@@ -143,15 +144,25 @@ pub(super) fn json_to_value(value: &Json) -> Result<Value, String> {
                 }
             }
             let mut entries = Vec::new();
+            let mut integers = BTreeSet::new();
+            let mut texts = BTreeSet::new();
             for (key, value) in map {
-                let key = keys::string_to_int_key(key)
+                let integer = keys::string_to_int_key(key)
                     .map(i128::from)
-                    .or_else(|| key.parse::<i128>().ok())
-                    .map(Value::Integer)
-                    .unwrap_or_else(|| Value::Text(key.clone()));
-                if entries.iter().any(|(previous, _)| previous == &key) {
-                    return Err("conflicting readable JSON keys after integer conversion".into());
-                }
+                    .or_else(|| key.parse::<i128>().ok());
+                let key = if let Some(integer) = integer {
+                    if !integers.insert(integer) {
+                        return Err(
+                            "conflicting readable JSON keys after integer conversion".into()
+                        );
+                    }
+                    Value::Integer(integer)
+                } else {
+                    if !texts.insert(key.as_str()) {
+                        return Err("conflicting readable JSON text keys".into());
+                    }
+                    Value::Text(key.clone())
+                };
                 entries.push((key, json_to_value(value)?));
             }
             Value::Map(entries)
