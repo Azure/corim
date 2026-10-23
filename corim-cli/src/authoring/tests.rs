@@ -60,6 +60,86 @@ fn six_readable_templates_roundtrip_with_comments_and_aliases() {
 }
 
 #[test]
+fn readable_large_maps_scale_with_distinct_keys() {
+    use std::process::{Command, Stdio};
+    use std::time::{Duration, Instant};
+    const CHILD: &str = "CORIM_TEST_READABLE_MAP_SCALE_CHILD";
+    const TEST: &str = "authoring::tests::readable_large_maps_scale_with_distinct_keys";
+    if std::env::var_os(CHILD).is_some() {
+        let count = 100_000;
+        let mut input = serde_json::Map::new();
+        for index in 0..count {
+            input.insert((1_000_000 + index).to_string(), Value::Bool(true));
+        }
+        let Cbor::Map(entries) = value_conv::json_to_value(&Value::Object(input)).unwrap() else {
+            panic!("map");
+        };
+        assert_eq!(entries.len(), count);
+        assert_eq!(
+            entries.first(),
+            Some(&(Cbor::Integer(1_000_000), Cbor::Bool(true)))
+        );
+        assert_eq!(
+            entries.last(),
+            Some(&(Cbor::Integer(1_099_999), Cbor::Bool(true)))
+        );
+        return;
+    }
+    // Bound the regression itself: a future quadratic implementation must not
+    // consume minutes of CPU before the test can report failure.
+    let mut child = Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", TEST, "--nocapture"])
+        .env(CHILD, "1")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            let output = child.wait_with_output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        if Instant::now() >= deadline {
+            if let Err(error) = child.kill() {
+                eprintln!("stopping map regression: {error}");
+            }
+            let _ = child.wait_with_output().unwrap();
+            panic!("100,000 distinct readable keys exceeded the ten-second budget");
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+#[test]
+fn normalized_readable_key_aliases_reject_without_reordering_distinct_keys() {
+    let number = key_maps::string_to_int_key("entity-name").unwrap();
+    let mut aliases = serde_json::Map::new();
+    aliases.insert(number.to_string(), json!("numeric"));
+    aliases.insert("entity-name".into(), json!("alias"));
+    assert!(value_conv::json_to_value(&Value::Object(aliases)).is_err());
+    assert!(value_conv::json_to_value(&json!({"0": true, "00": false})).is_err());
+    let mut distinct = serde_json::Map::new();
+    distinct.insert("z".into(), json!(true));
+    distinct.insert("-1".into(), json!(false));
+    distinct.insert("a".into(), json!(true));
+    assert_eq!(
+        value_conv::json_to_value(&Value::Object(distinct)).unwrap(),
+        Cbor::Map(vec![
+            (Cbor::Text("z".into()), Cbor::Bool(true)),
+            (Cbor::Integer(-1), Cbor::Bool(false)),
+            (Cbor::Text("a".into()), Cbor::Bool(true)),
+        ])
+    );
+}
+
+#[test]
 fn comments_are_only_authoring_annotations() {
     let original = template();
     let mut annotated = original.clone();
