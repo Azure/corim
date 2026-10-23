@@ -150,6 +150,13 @@ impl Default for DecodeBudget {
 }
 
 impl DecodeBudget {
+    pub(crate) fn inspect_document_value(&mut self, bytes: &[u8]) -> Result<Value, DecodeError> {
+        self.inspect_framing = true;
+        let value = self.decode_value_exact(bytes)?;
+        self.inspect_value(&value, ScanContext::Document, 0)?;
+        Ok(value)
+    }
+
     pub(crate) fn inspect_document(&mut self, bytes: &[u8]) -> Result<(), DecodeError> {
         self.inspect_bytes(bytes, ScanContext::Document, 0)
     }

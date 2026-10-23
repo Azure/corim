@@ -64,9 +64,10 @@ fn registry_re_register_replaces() {
 fn default_match_measurement_returns_none() {
     let id = ProfileChoice::Uri("urn:example:default".into());
     let profile = NullProfile { id };
-    let mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(1)),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.svn = Some(SvnChoice::ExactValue(1));
+        values
     };
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Uint(0)),
@@ -97,9 +98,10 @@ fn default_profile_validators_accept_core_structures() {
         corim::types::environment::EnvironmentMap::for_class("ACME", "Widget"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -151,17 +153,19 @@ fn custom_profile_can_override_match() {
     };
     let meas = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     };
     let other = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(99)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(99));
+            values
         },
         authorized_by: None,
     };

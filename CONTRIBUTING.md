@@ -103,9 +103,39 @@ Runbook:
    environment. Approve the deployment in the Actions UI to publish
    `corim-macros` first, then `corim`.
 
-The workflow packages and verifies both crates before authenticating. Publishing
+The workflow pins the public Rust/Cargo **1.99.0** release (not the rolling `stable`
+alias or a vendor build) and uses `--locked` for every release gate.
+Cargo 1.99.0 supports stable
+[`cargo package --workspace`](https://doc.rust-lang.org/1.99.0/cargo/commands/cargo-package.html#option-cargo-package---workspace),
+so both crates can be verified together before their new versions exist in the
+registry. This is the release toolchain pin, not a change to the library MSRV.
+The library archive's generated lockfile includes the workspace macro archive's
+checksum. Publishing the macro first and waiting for that exact checksum in the
+index ensures per-crate repackaging resolves the same dependency. Independently
+packaging the library against an older published macro at the same version is
+not an equivalent reproduction check.
+
+After packaging, the workflow copies both verified `.crate` archives and a
+`SHA256SUMS` manifest into `target/release-artifacts/`. A SHA-pinned artifact action
+uploads `verified-crates-vX.Y.Z` **before authentication or publication**; upload
+failure blocks publication. These artifacts remain downloadable from the workflow
+run even if publishing subsequently fails, with a 90-day retention period.
+Download and retain them longer if needed; check the extracted files with
+`sha256sum --check SHA256SUMS`.
+
+Publishing
 checks the sparse-index checksum for each exact version: an already-published
 version is skipped only when its archive checksum matches the local package.
+For an absent version, native `cargo publish --locked --all-features --dry-run`
+first repackages and verifies the crate without uploading. Its archive must match
+the saved verified checksum before an actual upload is attempted; dry-run
+failures or drift stop publication. Matching existing versions skip both dry-run
+and upload. Actual publication uses the same `--locked --all-features` options,
+and its repackaged archive is checked again immediately afterward. This uses
+Cargo's uploader, not a custom uploader; it is not atomic against changes between
+dry-run and actual publication. Any later drift still fails the release and
+blocks the dependent crate. The registry checksum must independently match those
+same verified bytes.
 After an upload, bounded polling waits for that checksum to appear before the
 dependent crate is published. Registry errors, yanked versions and checksum
 mismatches fail explicitly.
@@ -114,11 +144,26 @@ If only `corim-macros` was published, rerun the workflow on the same tag after
 indexing completes. Do not move the tag. If a different Cargo packaging version
 produces a different archive, the rerun fails safely; compare the artifacts and
 use the original packaging toolchain rather than bypassing the checksum check.
-The workflow never treats a failed upload as successful.
+The workflow never treats a failed upload as successful. A toolchain upgrade must
+be reviewed explicitly; pinning the toolchain does not guarantee identical archive
+bytes across Cargo versions, changed lockfiles or changed source revisions.
 
 Run the isolated publishing tests with
-`bash scripts/tests/publish-crate-tests.sh`. They replace Cargo and registry
-requests with local stubs; they do not upload crates or require credentials.
+`bash scripts/tests/publish-crate-tests.sh` and the workflow packaging tests with
+`bash scripts/tests/release-packaging-tests.sh`. They replace Cargo and registry
+requests with local stubs; they do not contact registries, upload crates or require
+credentials. To compare real packaging in separate build directories without
+publishing (only read-only dependency resolution accesses the registry):
+
+```bash
+CARGO_TARGET_DIR=target/repro-a cargo +1.99.0 package --workspace --exclude corim-cli --all-features --locked
+CARGO_TARGET_DIR=target/repro-b cargo +1.99.0 package --workspace --exclude corim-cli --all-features --locked
+cmp target/repro-a/package/corim-macros-X.Y.Z.crate target/repro-b/package/corim-macros-X.Y.Z.crate
+cmp target/repro-a/package/corim-X.Y.Z.crate target/repro-b/package/corim-X.Y.Z.crate
+```
+
+Replace `X.Y.Z` with the release version. Use the same clean source revision and
+lockfile for both runs; no `--allow-dirty` or checksum bypass is part of this check.
 
 The `corim-cli` crate is intentionally not published (`publish = false`).
 

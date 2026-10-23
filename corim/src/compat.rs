@@ -6,8 +6,9 @@
 //! This module contains relaxations applied **before** strict decoding so
 //! that real-world CoRIM files that were produced against early drafts or
 //! the TCG Endorsement spec can still be parsed. None of these helpers
-//! affect encoding — encoding always emits draft-ietf-rats-corim-11
-//! wire format.
+//! affect builder encoding — builders emit draft-ietf-rats-corim-11 wire format.
+//! Lossless transcoding can retain existing producer encodings; it must not
+//! normalize authenticated byte strings.
 //!
 //! See the README "Decode interop relaxations" section for the complete
 //! list of relaxations and their justifications.
@@ -306,14 +307,18 @@ pub(crate) fn decode_comid_with_budget(
     bytes: &[u8],
     budget: &mut cbor::DecodeBudget,
 ) -> Result<crate::types::comid::ComidTag, DecodeError> {
-    use crate::types::tags::TAG_COMID;
-
     // Decode the bytes as a generic CBOR Value so we can inspect the wire
     // shape without committing to a specific schema.
     let v = budget.decode_value_exact(bytes).map_err(|e| match e {
         e @ (DecodeError::LimitExceeded { .. } | DecodeError::TrailingData { .. }) => e,
         other => DecodeError::Deserialization(format!("decode_comid_from_tcg_bstr: {other}")),
     })?;
+
+    decode_parsed_comid(v)
+}
+
+pub(crate) fn decode_parsed_comid(v: Value) -> Result<crate::types::comid::ComidTag, DecodeError> {
+    use crate::types::tags::TAG_COMID;
 
     // Two accepted shapes:
     //   1. Tag(506, Map(...)) — TCG-style with inner #6.506 tag wrapper.

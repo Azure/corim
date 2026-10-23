@@ -76,6 +76,7 @@ pub const CORIM_CONTENT_TYPE: &str = "application/rim+cbor";
 /// }
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ProtectedCorimHeaderMap {
     /// COSE algorithm identifier (key 1).
     pub alg: CoseAlgorithm,
@@ -423,6 +424,16 @@ impl ProtectedCorimHeaderMap {
         nested_error: &mut Option<crate::DecodeError>,
         strict_metadata: bool,
     ) -> Result<Self, E> {
+        Self::from_value_with_metadata(val, budget, nested_error, strict_metadata, None)
+    }
+
+    pub(super) fn from_value_with_metadata<E: serde::de::Error>(
+        val: Value,
+        budget: &mut cbor::DecodeBudget,
+        nested_error: &mut Option<crate::DecodeError>,
+        strict_metadata: bool,
+        mut prepared_metadata: Option<Value>,
+    ) -> Result<Self, E> {
         cbor::map_keys::check_header(&val).map_err(serde::de::Error::custom)?;
         let map = match val {
             Value::Map(m) => m,
@@ -536,7 +547,11 @@ impl ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match Self::decode_metadata(&b, budget, strict_metadata) {
+                            let decoded = match prepared_metadata.take() {
+                                Some(value) => Self::metadata_from_value(value, strict_metadata),
+                                None => Self::decode_metadata(&b, budget, strict_metadata),
+                            };
+                            match decoded {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
                                 }
@@ -670,13 +685,14 @@ impl ProtectedCorimHeaderMap {
         budget: &mut cbor::DecodeBudget,
         strict: bool,
     ) -> Result<CorimMetaMap, crate::DecodeError> {
-        if !strict {
-            return budget.decode_schema_exact(bytes);
-        }
-        use crate::types::tags::{META_KEY_SIGNATURE_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
         let value = budget.decode_value_exact(bytes)?;
+        Self::metadata_from_value(value, strict)
+    }
+
+    fn metadata_from_value(value: Value, strict: bool) -> Result<CorimMetaMap, crate::DecodeError> {
+        use crate::types::tags::{META_KEY_SIGNATURE_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
         cbor::map_keys::check(&value)?;
-        if let Value::Map(fields) = &value {
+        if let (true, Value::Map(fields)) = (strict, &value) {
             if let Some((_, validity)) = fields
                 .iter()
                 .find(|(key, _)| *key == Value::Integer(META_KEY_SIGNATURE_VALIDITY.into()))

@@ -21,9 +21,10 @@ use corim::validate::{match_reference_values_with_profile, EvidenceClaim};
 fn measurement_with_mkey(mkey: &str, digest_val: &[u8]) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new_text("sha-256", digest_val.to_vec())]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new_text("sha-256", digest_val.to_vec())]);
+            values
         },
         authorized_by: None,
     }
@@ -32,10 +33,11 @@ fn measurement_with_mkey(mkey: &str, digest_val: &[u8]) -> MeasurementMap {
 fn software_component_measurement(name: &str, digest_val: &[u8], signer: &[u8]) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(name.into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new_text("sha-256", digest_val.to_vec())]),
-            cryptokeys: Some(vec![CryptoKey::Bytes(signer.to_vec())]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new_text("sha-256", digest_val.to_vec())]);
+            values.cryptokeys = Some(vec![CryptoKey::Bytes(signer.to_vec())]);
+            values
         },
         authorized_by: None,
     }
@@ -44,9 +46,10 @@ fn software_component_measurement(name: &str, digest_val: &[u8], signer: &[u8]) 
 fn rotpk_measurement(mkey: &str, key_bytes: &[u8]) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            cryptokeys: Some(vec![CryptoKey::Bytes(key_bytes.to_vec())]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.cryptokeys = Some(vec![CryptoKey::Bytes(key_bytes.to_vec())]);
+            values
         },
         authorized_by: None,
     }
@@ -55,9 +58,10 @@ fn rotpk_measurement(mkey: &str, key_bytes: &[u8]) -> MeasurementMap {
 fn raw_value_measurement(mkey: &str, value: &[u8]) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            raw_value: Some(RawValueChoice::Bytes(value.to_vec())),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.raw_value = Some(RawValueChoice::Bytes(value.to_vec()));
+            values
         },
         authorized_by: None,
     }
@@ -66,12 +70,13 @@ fn raw_value_measurement(mkey: &str, value: &[u8]) -> MeasurementMap {
 fn masked_raw_value_measurement(mkey: &str, value: &[u8], mask: &[u8]) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            raw_value: Some(RawValueChoice::Masked {
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.raw_value = Some(RawValueChoice::Masked {
                 value: value.to_vec(),
                 mask: mask.to_vec(),
-            }),
-            ..MeasurementValuesMap::default()
+            });
+            values
         },
         authorized_by: None,
     }
@@ -827,10 +832,11 @@ fn platform_match_rejects_software_component_digest_with_integer_alg() {
     let profile = CcaPlatformProfile::new();
     let reference = MeasurementMap {
         mkey: Some(MeasuredElement::Text("cca.software-component".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0x11; 32])]),
-            cryptokeys: Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0x11; 32])]);
+            values.cryptokeys = Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]);
+            values
         },
         authorized_by: None,
     };

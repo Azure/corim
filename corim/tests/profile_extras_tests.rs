@@ -29,9 +29,10 @@ fn extras_only_mval_round_trips() {
         -83,
         Value::Array(vec![Value::Integer(7), Value::Bytes(vec![0xAA; 48])]),
     );
-    let mval = MeasurementValuesMap {
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.extra_entries = extras;
+        values
     };
 
     // Validate: extras-only map satisfies non-empty.
@@ -60,11 +61,12 @@ fn mixed_standard_and_extras_round_trip() {
             Value::Text("INTEL-SA-00002".into()),
         ]),
     );
-    let mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(7)),
-        name: Some("intel-tdx-module".into()),
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.svn = Some(SvnChoice::ExactValue(7));
+        values.name = Some("intel-tdx-module".into());
+        values.extra_entries = extras;
+        values
     };
 
     let bytes = cbor::encode(&mval).expect("encode failed");
@@ -135,9 +137,10 @@ fn extras_preserve_nested_tagged_values() {
     let mut extras = BTreeMap::new();
     // Intel `tee.isvsvn = -73` carrying a tagged-numeric-ge expression.
     extras.insert(-73, expression.clone());
-    let mval = MeasurementValuesMap {
-        extra_entries: extras,
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.extra_entries = extras;
+        values
     };
 
     let bytes = cbor::encode(&mval).expect("encode failed");

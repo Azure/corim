@@ -71,7 +71,7 @@ pub fn check_document_framing(
 /// Result of decoding and validating a CoRIM document.
 ///
 /// Contains the decoded `CorimMap` and all extracted/validated tags.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedCorim {
     /// The decoded top-level CoRIM map.
     pub corim: CorimMap,
@@ -412,8 +412,73 @@ pub(crate) fn decode_and_validate_budget_with_time(
     budget: &mut cbor::DecodeBudget,
 ) -> Result<ValidatedCorim, ValidationError> {
     budget.check_input(bytes)?;
-    // Peel in the already-budgeted tree: wrappers count toward depth/work.
-    let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
+    let value = budget.decode_value_exact(bytes)?;
+    validate_parsed_corim(value, now_epoch_secs, budget)
+}
+
+pub(crate) fn validate_parsed_corim(
+    value: cbor::value::Value,
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    let prepared = prepare_parsed_corim(value, budget)?;
+    validate_prepared_corim(prepared, now_epoch_secs)
+}
+
+type ParsedTagBody = Option<Result<cbor::value::Value, crate::DecodeError>>;
+
+fn parse_tag_bodies(
+    map: &cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<Vec<ParsedTagBody>, crate::DecodeError> {
+    use crate::types::tags::{CORIM_KEY_TAGS, TAG_COMID, TAG_COSWID, TAG_COTL};
+    use cbor::value::Value;
+    let Value::Map(fields) = map else {
+        return Ok(Vec::new());
+    };
+    let Some((_, Value::Array(tags))) = fields
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut bodies = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let bytes = match tag {
+            Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner) => match inner.as_ref() {
+                Value::Bytes(bytes) => Some(bytes),
+                _ => None,
+            },
+            Value::Bytes(bytes) => Some(bytes),
+            _ => None,
+        };
+        let parsed = if let Some(bytes) = bytes {
+            let parsed = budget.decode_value_exact(bytes);
+            budget.check()?;
+            match parsed {
+                Err(error @ crate::DecodeError::TrailingData { .. }) => return Err(error),
+                Ok(ref value) => cbor::map_keys::check(value)?,
+                _ => {}
+            }
+            Some(parsed)
+        } else {
+            None
+        };
+        bodies.push(parsed);
+    }
+    Ok(bodies)
+}
+
+pub(crate) struct PreparedCorim {
+    map: cbor::value::Value,
+    bodies: Vec<ParsedTagBody>,
+}
+
+pub(crate) fn prepare_parsed_corim(
+    value: cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<PreparedCorim, ValidationError> {
+    let value = crate::compat::peel_value(value);
     let map = match value {
         cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
         map @ cbor::value::Value::Map(_) => map,
@@ -427,6 +492,15 @@ pub(crate) fn decode_and_validate_budget_with_time(
         _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
     };
     cbor::map_keys::check(&map)?;
+    let bodies = parse_tag_bodies(&map, budget)?;
+    Ok(PreparedCorim { map, bodies })
+}
+
+pub(crate) fn validate_prepared_corim(
+    prepared: PreparedCorim,
+    now_epoch_secs: Option<i64>,
+) -> Result<ValidatedCorim, ValidationError> {
+    let PreparedCorim { map, bodies } = prepared;
     check_validity_shape(&map, CORIM_KEY_RIM_VALIDITY, "rim-validity")?;
     let corim: CorimMap =
         cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
@@ -458,25 +532,29 @@ pub(crate) fn decode_and_validate_budget_with_time(
     let mut cotls = Vec::new();
     let mut coswids = Vec::new();
     let mut coswid_opaque_count = 0usize;
-    for tag in &corim.tags {
+    for (tag, body) in corim.tags.iter().zip(bodies) {
         match tag {
-            ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = budget.decode_schema_exact(comid_bytes)?;
+            ConciseTagChoice::Comid(_) => {
+                let value = required_tag_body(body)??;
+                let comid: ComidTag =
+                    cbor::from_parsed_value(value).map_err(crate::DecodeError::Deserialization)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
-            ConciseTagChoice::Cotl(cotl_bytes) => {
-                let map = budget.decode_value_exact(cotl_bytes)?;
-                cbor::map_keys::check(&map)?;
+            ConciseTagChoice::Cotl(_) => {
+                let map = required_tag_body(body)??;
                 check_validity_shape(&map, COTL_KEY_VALIDITY, "tl-validity")?;
                 let cotl: ConciseTlTag =
                     cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
-            ConciseTagChoice::Coswid(coswid_bytes) => {
+            ConciseTagChoice::Coswid(_) => {
                 // Try structured decode; fall back to opaque count
-                match budget.decode_schema_exact::<ConciseSwidTag>(coswid_bytes) {
+                match required_tag_body(body)?.and_then(|value| {
+                    cbor::from_parsed_value::<ConciseSwidTag>(value)
+                        .map_err(crate::DecodeError::Deserialization)
+                }) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
@@ -487,14 +565,14 @@ pub(crate) fn decode_and_validate_budget_with_time(
                     Err(_) => coswid_opaque_count += 1,
                 }
             }
-            ConciseTagChoice::BareBstr(bytes) => {
+            ConciseTagChoice::BareBstr(_) => {
                 // TCG-style interop: producers (e.g. NVIDIA) emit `tags[]`
                 // entries as bare `bstr` whose contents are either a
                 // `#6.506`-wrapped CoMID or a bare CoMID map. Use the
                 // tag-tolerant compat decoder; failure here is fatal because
                 // we have no other interpretation for a bare bstr in this
                 // position.
-                let comid = crate::compat::decode_comid_with_budget(bytes, budget)
+                let comid = crate::compat::decode_parsed_comid(required_tag_body(body)??)
                     .map_err(ValidationError::Decode)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
@@ -503,6 +581,12 @@ pub(crate) fn decode_and_validate_budget_with_time(
                 // Unknown tag types: forward-compat, skip silently
             }
         }
+    }
+
+    fn required_tag_body(
+        body: ParsedTagBody,
+    ) -> Result<Result<cbor::value::Value, crate::DecodeError>, crate::DecodeError> {
+        body.ok_or_else(|| crate::DecodeError::InvalidStructure("missing parsed tag body".into()))
     }
 
     Ok(ValidatedCorim {

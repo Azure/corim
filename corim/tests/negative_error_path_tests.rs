@@ -280,9 +280,10 @@ fn env_match_instance_mismatch() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -295,9 +296,10 @@ fn env_match_instance_mismatch() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -316,9 +318,10 @@ fn env_match_group_mismatch() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -331,9 +334,10 @@ fn env_match_group_mismatch() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -358,9 +362,10 @@ fn class_match_class_id_mismatch() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -379,9 +384,10 @@ fn class_match_class_id_mismatch() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -406,9 +412,10 @@ fn class_match_layer_mismatch() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -427,9 +434,10 @@ fn class_match_layer_mismatch() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -454,9 +462,10 @@ fn class_match_index_mismatch() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -475,9 +484,10 @@ fn class_match_index_mismatch() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -496,9 +506,10 @@ fn class_match_target_missing_class() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -511,9 +522,10 @@ fn class_match_target_missing_class() {
         },
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                name: Some("x".into()),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.name = Some("x".into());
+                values
             },
             authorized_by: None,
         }],
@@ -533,9 +545,10 @@ fn validate_corim_not_yet_valid() {
             EnvironmentMap::for_class("V", "M"),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -645,17 +658,19 @@ fn ces_triple_invalid_condition_env() {
         vec![ConditionalSeriesRecord::new(
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    name: Some("x".into()),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("x".into());
+                    values
                 },
                 authorized_by: None,
             }],
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    name: Some("y".into()),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("y".into());
+                    values
                 },
                 authorized_by: None,
             }],
@@ -702,9 +717,10 @@ fn validate_coswid_decode_failure_opaque() {
             EnvironmentMap::for_class("V", "M"),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -741,17 +757,19 @@ fn validate_series_inconsistent_mkeys() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Uint(1)),
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..Default::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        name: Some("a".into()),
-                        ..Default::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.name = Some("a".into());
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -759,17 +777,19 @@ fn validate_series_inconsistent_mkeys() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Uint(99)), // different mkey
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(2)),
-                        ..Default::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(2));
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        name: Some("b".into()),
-                        ..Default::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.name = Some("b".into());
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -780,9 +800,10 @@ fn validate_series_inconsistent_mkeys() {
         environment: env,
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Uint(1)),
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],

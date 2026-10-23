@@ -227,13 +227,13 @@ impl SignedCorimBuilder {
         let protected_bytes = self.build_protected_bytes()?;
         let protected = self.build_protected_header()?;
 
-        let signed = CoseSign1Corim {
-            protected_header_bytes: protected_bytes,
+        let signed = CoseSign1Corim::from_decoded_parts(
+            protected_bytes,
             protected,
-            unprotected: self.unprotected,
-            payload: Some(self.payload),
+            self.unprotected,
+            Some(self.payload),
             signature,
-        };
+        );
 
         encode_signed_corim(&signed)
     }
@@ -256,13 +256,13 @@ impl SignedCorimBuilder {
         let protected_bytes = self.build_protected_bytes()?;
         let protected = self.build_protected_header()?;
 
-        let signed = CoseSign1Corim {
-            protected_header_bytes: protected_bytes,
+        let signed = CoseSign1Corim::from_decoded_parts(
+            protected_bytes,
             protected,
-            unprotected: self.unprotected,
-            payload: None,
+            self.unprotected,
+            None,
             signature,
-        };
+        );
 
         encode_signed_corim(&signed)
     }

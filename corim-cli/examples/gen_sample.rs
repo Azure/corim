@@ -32,21 +32,23 @@ fn main() {
 
     let ref_meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![
                 Digest::new(7, vec![0xAA; 48]), // SHA-384
                 Digest::new(2, vec![0xBB; 32]), // SHA-256
-            ]),
-            ..MeasurementValuesMap::default()
+            ]);
+            values
         },
         authorized_by: None,
     };
 
     let endorsed_meas = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::MinValue(3)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(3));
+            values
         },
         authorized_by: None,
     };
@@ -61,17 +63,19 @@ fn main() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
-                    mval: MeasurementValuesMap {
-                        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(5)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(5));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -79,17 +83,19 @@ fn main() {
             ConditionalSeriesRecord::new(
                 vec![MeasurementMap {
                     mkey: Some(MeasuredElement::Text("firmware".into())),
-                    mval: MeasurementValuesMap {
-                        digests: Some(vec![Digest::new(7, vec![0xCC; 48])]),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.digests = Some(vec![Digest::new(7, vec![0xCC; 48])]);
+                        values
                     },
                     authorized_by: None,
                 }],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(4)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(4));
+                        values
                     },
                     authorized_by: None,
                 }],

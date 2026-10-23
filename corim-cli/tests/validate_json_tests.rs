@@ -41,9 +41,10 @@ fn sample_unsigned_corim() -> Vec<u8> {
     };
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::MinValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::MinValue(1));
+            values
         },
         authorized_by: None,
     };
@@ -97,6 +98,24 @@ fn validate_json(bytes: &[u8], ext: &str) -> serde_json::Value {
     );
     serde_json::from_str(&stdout)
         .unwrap_or_else(|e| panic!("output is not valid JSON: {e}\n{stdout}"))
+}
+
+fn decoded_json(value: &serde_json::Value) -> corim::cbor::value::Value {
+    corim::json::json_to_value(value).unwrap()
+}
+
+fn map_entry(
+    value: &serde_json::Value,
+    key: corim::cbor::value::Value,
+) -> corim::cbor::value::Value {
+    let corim::cbor::value::Value::Map(entries) = decoded_json(value) else {
+        panic!("lossless map");
+    };
+    entries
+        .into_iter()
+        .find(|(candidate, _)| *candidate == key)
+        .unwrap()
+        .1
 }
 
 fn validate_json_status(bytes: &[u8], ext: &str) -> (std::process::ExitStatus, serde_json::Value) {
@@ -256,7 +275,13 @@ fn tag_only_documents_validate_all_tags_in_both_time_modes() {
                     let valid = if skip { valid_without_clock } else { valid_now };
                     assert_eq!(
                         output.status.code(),
-                        Some(if valid { 0 } else { 2 }),
+                        Some(if !valid {
+                            2
+                        } else if skip {
+                            4
+                        } else {
+                            0
+                        }),
                         "signed={signed} skip={skip}: {}{}",
                         String::from_utf8_lossy(&output.stdout),
                         String::from_utf8_lossy(&output.stderr)
@@ -370,7 +395,13 @@ fn validity_nulls_are_rejected_without_changing_tolerant_inspection() {
                     let output = validate_with_flags(&bytes, &flags);
                     assert_eq!(
                         output.status.code(),
-                        Some(if null { 2 } else { 0 }),
+                        Some(if null {
+                            2
+                        } else if skip {
+                            4
+                        } else {
+                            0
+                        }),
                         "{location}, skip={skip}: {}",
                         String::from_utf8_lossy(&output.stdout)
                     );
@@ -482,7 +513,7 @@ fn skip_expiry_reports_partial_validation_without_hiding_structure_errors() {
         .build_with_signature(vec![1; 64])
         .unwrap();
         let output = validate_with_flags(&bytes, &["--format", "json", "--skip-expiry"]);
-        assert_eq!(output.status.code(), Some(if malformed { 2 } else { 0 }));
+        assert_eq!(output.status.code(), Some(if malformed { 2 } else { 4 }));
         let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(report["time_validated"], false);
         if malformed {
@@ -492,7 +523,7 @@ fn skip_expiry_reports_partial_validation_without_hiding_structure_errors() {
         }
     }
     let output = validate_with_flags(&sample_unsigned_corim(), &["--skip-expiry"]);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(4));
     assert!(String::from_utf8(output.stdout)
         .unwrap()
         .contains("temporal checks skipped"));
@@ -527,8 +558,9 @@ fn skip_expiry_skips_rim_and_cotl_clocks_but_not_profile_or_header_rules() {
     let bytes = cbor::encode(&corim).unwrap();
     assert_eq!(validate_with_flags(&bytes, &[]).status.code(), Some(2));
     let output = validate_with_flags(&bytes, &["--skip-expiry", "-f", "json"]);
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(4),
         "{}",
         String::from_utf8_lossy(&output.stdout)
     );
@@ -657,82 +689,136 @@ fn baseline_rejects_uncompared_tags_on_either_side() {
 }
 
 #[test]
-fn json_baselines_reject_invalid_present_timestamps_before_conversion() {
-    use serde_json::{json, Value};
-    let template = json!({"corim-id":"json-corim","comids":[{"tag-identity":{"id":"json-comid"},"triples":{"reference-triples":[[{"class":{"vendor":"TestVendor","model":"TestModel"}},[{"key":"firmware","value":{"svn":{"type":"min-svn","value":1}}}]]]}}]});
+fn lossless_json_baselines_reject_invalid_validity_fields() {
+    use corim::cbor::{self, value::Value};
+    use corim::types::tags::{
+        CORIM_KEY_RIM_VALIDITY, CORIM_KEY_TAGS, COTL_KEY_VALIDITY, TAG_COTL, TAG_EPOCH_TIME,
+        VALIDITY_KEY_NOT_AFTER, VALIDITY_KEY_NOT_BEFORE,
+    };
     for cotl in [false, true] {
-        for (before, after) in [("not-before", "not-after"), ("0", "1")] {
-            for (value, valid) in [
-                (None, true),
-                (Some(json!(0)), true),
-                (Some(json!({"__cbor_tag":1,"__cbor_value":0})), true),
-                (Some(Value::Null), false),
-                (Some(json!("invalid")), false),
-                (Some(json!(u64::MAX)), false),
-                (Some(json!(0.5)), false),
-                (Some(json!(true)), false),
-                (Some(json!({"__cbor_tag":1,"__cbor_value":null})), false),
-            ] {
-                let mut baseline = template.clone();
-                let mut validity = serde_json::Map::new();
-                validity.insert(after.into(), json!(i64::MAX));
-                if let Some(value) = value {
-                    validity.insert(before.into(), value);
-                }
-                if cotl {
-                    baseline["cotls"] = json!([{"tag-identity":{"id":"list"},"tags-list":[{"id":"member"}],"tl-validity":validity}]);
-                } else {
-                    baseline["rim-validity"] = validity.into();
-                }
-                let path = unique_temp("json_validity_baseline", "json");
-                let generated = unique_temp("json_validity_generated", "cbor");
-                std::fs::write(&path, serde_json::to_vec(&baseline).unwrap()).unwrap();
-                for skip in [false, true] {
-                    let mut flags = vec!["--baseline", path.to_str().unwrap(), "--format", "json"];
-                    if skip {
-                        flags.push("--skip-expiry");
-                    }
-                    let output = validate_with_flags(&sample_unsigned_corim(), &flags);
-                    let report: Value = serde_json::from_slice(&output.stdout).unwrap();
-                    assert_eq!(
-                        output.status.code(),
-                        Some(if valid && !cotl { 0 } else { 2 }),
-                        "cotl={cotl}, skip={skip}, baseline={baseline}: {report}"
-                    );
-                    if !valid {
-                        assert_eq!(report["valid"], false);
-                        let message = report["errors"][0].as_str().unwrap();
-                        assert!(
-                            !message.contains("unsupported"),
-                            "invalid timestamp escaped conversion: {message}"
-                        );
-                    } else if cotl {
-                        assert!(report["errors"][0]
-                            .as_str()
-                            .unwrap()
-                            .contains("unsupported"));
-                    }
-                }
-                let output = Command::new(bin())
-                    .args([
-                        "generate",
-                        path.to_str().unwrap(),
-                        "-o",
-                        generated.to_str().unwrap(),
-                    ])
-                    .output()
-                    .unwrap();
-                assert_eq!(
-                    output.status.success(),
-                    valid,
-                    "baseline={baseline}: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-                if valid {
-                    std::fs::remove_file(generated).unwrap();
-                }
-                std::fs::remove_file(path).unwrap();
+        for (value, valid) in [
+            (None, true),
+            (Some(Value::Integer(0)), true),
+            (
+                Some(Value::Tag(TAG_EPOCH_TIME, Box::new(Value::Integer(0)))),
+                true,
+            ),
+            (Some(Value::Null), false),
+            (Some(Value::Text("invalid".into())), false),
+            (Some(Value::Integer(u64::MAX.into())), false),
+            (Some(Value::Float(0.5)), false),
+            (Some(Value::Bool(true)), false),
+            (
+                Some(Value::Tag(TAG_EPOCH_TIME, Box::new(Value::Null))),
+                false,
+            ),
+        ] {
+            let mut baseline: Value = cbor::decode_exact(&sample_unsigned_corim()).unwrap();
+            let Value::Tag(_, root) = &mut baseline else {
+                panic!("CoRIM tag");
+            };
+            let Value::Map(fields) = root.as_mut() else {
+                panic!("CoRIM map");
+            };
+            let mut validity = vec![(
+                Value::Integer(VALIDITY_KEY_NOT_AFTER.into()),
+                Value::Integer(i64::MAX.into()),
+            )];
+            if let Some(value) = value {
+                validity.push((Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()), value));
             }
+            let validity = Value::Map(validity);
+            if cotl {
+                let tl = corim::types::ConciseTlTag {
+                    tag_identity: corim::types::TagIdentity {
+                        tag_id: TagIdChoice::Text("list".into()),
+                        tag_version: None,
+                    },
+                    tags_list: vec![corim::types::TagIdentity {
+                        tag_id: TagIdChoice::Text("member".into()),
+                        tag_version: None,
+                    }],
+                    tl_validity: corim::types::ValidityMap {
+                        not_before: None,
+                        not_after: i64::MAX.into(),
+                    },
+                };
+                let Value::Map(mut tl) = cbor::value::to_value(&tl).unwrap() else {
+                    panic!("CoTL");
+                };
+                tl.iter_mut()
+                    .find(|(key, _)| *key == Value::Integer(COTL_KEY_VALIDITY.into()))
+                    .unwrap()
+                    .1 = validity;
+                let (_, Value::Array(tags)) = fields
+                    .iter_mut()
+                    .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
+                    .unwrap()
+                else {
+                    panic!("tags");
+                };
+                tags.push(Value::Tag(
+                    TAG_COTL,
+                    Box::new(Value::Bytes(cbor::encode(&Value::Map(tl)).unwrap())),
+                ));
+            } else {
+                fields.push((Value::Integer(CORIM_KEY_RIM_VALIDITY.into()), validity));
+            }
+            let baseline = corim::json::value_to_json(&baseline).unwrap();
+            let path = unique_temp("json_validity_baseline", "json");
+            let generated = unique_temp("json_validity_generated", "cbor");
+            std::fs::write(&path, serde_json::to_vec(&baseline).unwrap()).unwrap();
+            for skip in [false, true] {
+                let mut flags = vec!["--baseline", path.to_str().unwrap(), "--format", "json"];
+                if skip {
+                    flags.push("--skip-expiry");
+                }
+                let output = validate_with_flags(&sample_unsigned_corim(), &flags);
+                let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+                assert_eq!(
+                    output.status.code(),
+                    Some(if !valid || cotl {
+                        2
+                    } else if skip {
+                        4
+                    } else {
+                        0
+                    }),
+                    "cotl={cotl}, skip={skip}, baseline={baseline}: {report}"
+                );
+                if !valid {
+                    assert_eq!(report["valid"], false);
+                    let message = report["errors"][0].as_str().unwrap();
+                    assert!(
+                        !message.contains("unsupported"),
+                        "invalid timestamp escaped conversion: {message}"
+                    );
+                } else if cotl {
+                    assert!(report["errors"][0]
+                        .as_str()
+                        .unwrap()
+                        .contains("unsupported"));
+                }
+            }
+            let output = Command::new(bin())
+                .args([
+                    "generate",
+                    path.to_str().unwrap(),
+                    "-o",
+                    generated.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert_eq!(
+                output.status.success(),
+                valid,
+                "baseline={baseline}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if valid {
+                std::fs::remove_file(generated).unwrap();
+            }
+            std::fs::remove_file(path).unwrap();
         }
     }
 }
@@ -798,9 +884,18 @@ fn signed_header_json_and_baselines_preserve_labels_and_fractional_times() {
     let baseline = make(2_000_000_000.25, Value::Integer(1));
     let report = validate_json(&baseline, "cose");
     let protected = &report["signed"]["protected"];
-    assert_eq!(protected["exp"], 2_000_000_000.25);
-    assert_eq!(protected["header_extra"]["int"]["10001"], 1);
-    assert_eq!(protected["header_extra"]["text"]["10001"], 1);
+    assert_eq!(
+        decoded_json(&protected["exp"]),
+        Value::Float(2_000_000_000.25)
+    );
+    assert_eq!(
+        map_entry(&protected["header_extra"], Value::Integer(10001)),
+        Value::Integer(1)
+    );
+    assert_eq!(
+        map_entry(&protected["header_extra"], Value::Text("10001".into())),
+        Value::Integer(1)
+    );
     let path = unique_temp("lossless_header", "cose");
     std::fs::write(&path, &baseline).unwrap();
     for (candidate, expected_exit, expected_result) in [
@@ -835,8 +930,8 @@ fn baselines_use_same_time_and_structural_policy_as_input() {
         not_before: None,
         not_after: 1.into(),
     });
-    let json = br#"{"corim-id":"json-corim","rim-validity":{"not-after":1},"comids":[{"tag-identity":{"id":"json-comid"},"triples":{"reference-triples":[[{"class":{"vendor":"TestVendor","model":"TestModel"}},[{"key":"firmware","value":{"svn":{"type":"min-svn","value":1}}}]]]}}]}"#;
-    for bytes in [cbor::encode(&baseline).unwrap(), json.to_vec()] {
+    let json = corim::json::to_json(&baseline).unwrap().into_bytes();
+    for bytes in [cbor::encode(&baseline).unwrap(), json] {
         let path = unique_temp("expired_baseline", "data");
         std::fs::write(&path, bytes).unwrap();
         let output = validate_with_flags(
@@ -856,8 +951,9 @@ fn baselines_use_same_time_and_structural_policy_as_input() {
                 "json",
             ],
         );
-        assert!(
-            output.status.success(),
+        assert_eq!(
+            output.status.code(),
+            Some(4),
             "{}",
             String::from_utf8_lossy(&output.stdout)
         );
@@ -914,10 +1010,11 @@ fn cca_platform_environment() -> EnvironmentMap {
 fn cca_software_component() -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("cca.software-component".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]),
-            cryptokeys: Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new_text("sha-256", vec![0x11; 32])]);
+            values.cryptokeys = Some(vec![CryptoKey::Bytes(vec![0xAA; 32])]);
+            values
         },
         authorized_by: None,
     }
@@ -926,12 +1023,13 @@ fn cca_software_component() -> MeasurementMap {
 fn cca_platform_config() -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("cca.platform-config".into())),
-        mval: MeasurementValuesMap {
-            raw_value: Some(RawValueChoice::Masked {
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.raw_value = Some(RawValueChoice::Masked {
                 value: vec![0xA0, 0x05],
                 mask: vec![0xF0, 0x00],
-            }),
-            ..MeasurementValuesMap::default()
+            });
+            values
         },
         authorized_by: None,
     }
@@ -1054,8 +1152,13 @@ fn validate_accepts_cca_platform_profile_reference_triples() {
 
     assert_eq!(v["valid"], true);
     assert_eq!(
-        v["profile"],
-        "tag:arm.com,2025:endorsements/cca_platform#1.0.0"
+        decoded_json(&v["profile"]),
+        corim::cbor::value::Value::Tag(
+            corim::types::tags::TAG_URI,
+            Box::new(corim::cbor::value::Value::Text(
+                "tag:arm.com,2025:endorsements/cca_platform#1.0.0".into()
+            ),)
+        )
     );
 }
 
@@ -1175,13 +1278,20 @@ fn extra_cwt_claims_are_reported() {
 
     let v = validate_json(&signed, "cose");
     let extra = &v["signed"]["protected"]["cwt_claims_extra"];
-    assert_eq!(extra["text"]["svn"], 7, "text-keyed claim must survive");
-    assert_eq!(extra["int"]["6"]["__cbor_tag"], 1);
-    assert_eq!(extra["int"]["6"]["__cbor_value"], 1788524559i64);
+    assert_eq!(
+        map_entry(extra, Value::Text("svn".into())),
+        Value::Integer(7)
+    );
+    assert_eq!(
+        map_entry(extra, Value::Integer(6)),
+        Value::Tag(
+            corim::types::tags::TAG_EPOCH_TIME,
+            Box::new(Value::Integer(1788524559))
+        )
+    );
 }
 
-/// JSON object keys are strings, so integer and text claim keys live in
-/// separate namespaces and cannot collapse onto one entry.
+/// Integer and text claim labels retain distinct CBOR types.
 #[test]
 fn int_and_text_claim_keys_do_not_collide() {
     use corim::cbor::value::Value;
@@ -1202,14 +1312,18 @@ fn int_and_text_claim_keys_do_not_collide() {
 
     let v = validate_json(&signed, "cose");
     let extra = &v["signed"]["protected"]["cwt_claims_extra"];
-    assert_eq!(extra["int"]["6"], "as-int");
-    assert_eq!(extra["text"]["6"], "as-text");
+    assert_eq!(
+        map_entry(extra, Value::Integer(6)),
+        Value::Text("as-int".into())
+    );
+    assert_eq!(
+        map_entry(extra, Value::Text("6".into())),
+        Value::Text("as-text".into())
+    );
 }
 
-/// Byte values use base64, matching `corim::json` and the convert/generate
-/// templates rather than introducing a second encoding.
 #[test]
-fn claim_byte_values_use_base64() {
+fn claim_byte_values_retain_their_byte_string_type() {
     use corim::cbor::value::Value;
     use corim::types::signed::ClaimKey;
 
@@ -1226,8 +1340,11 @@ fn claim_byte_values_use_base64() {
 
     let v = validate_json(&signed, "cose");
     assert_eq!(
-        v["signed"]["protected"]["cwt_claims_extra"]["text"]["blob"],
-        "3q2+7w=="
+        map_entry(
+            &v["signed"]["protected"]["cwt_claims_extra"],
+            Value::Text("blob".into())
+        ),
+        Value::Bytes(vec![0xde, 0xad, 0xbe, 0xef]),
     );
 }
 
@@ -1267,10 +1384,8 @@ fn text_claim_values_are_escaped_in_the_text_report() {
     assert!(claim_lines[0].contains(r#"\""#), "{}", claim_lines[0]);
 }
 
-/// A CBOR map keyed by a non-text, non-integer value must not bake JSON
-/// quotes into the object key.
 #[test]
-fn byte_map_keys_do_not_keep_json_quotes() {
+fn byte_map_keys_retain_their_cbor_type() {
     use corim::cbor::value::Value;
     use corim::types::signed::ClaimKey;
 
@@ -1285,20 +1400,20 @@ fn byte_map_keys_do_not_keep_json_quotes() {
         .unwrap();
 
     let v = validate_json(&signed, "cose");
-    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
-    let keys: Vec<&String> = m.as_object().unwrap().keys().collect();
-    assert_eq!(keys.len(), 1);
+    let m = map_entry(
+        &v["signed"]["protected"]["cwt_claims_extra"],
+        Value::Text("m".into()),
+    );
     assert_eq!(
-        keys[0], "3q0=",
-        "key must be the bare base64, got {:?}",
-        keys[0]
+        m,
+        Value::Map(vec![(Value::Bytes(vec![0xde, 0xad]), Value::Integer(1))])
     );
 }
 
 /// Distinct CBOR map keys that stringify alike (integer `1` vs text `"1"`)
 /// must not collapse into one JSON object key and lose an entry.
 #[test]
-fn colliding_map_keys_fall_back_to_entry_array() {
+fn integer_and_text_map_keys_preserve_distinct_entries() {
     use corim::cbor::value::Value;
     use corim::types::signed::ClaimKey;
 
@@ -1316,21 +1431,21 @@ fn colliding_map_keys_fall_back_to_entry_array() {
         .unwrap();
 
     let v = validate_json(&signed, "cose");
-    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
-    let entries = m.as_array().expect("colliding keys render as an array");
-    assert_eq!(entries.len(), 2, "no entry may be dropped: {m}");
-    // The key's CBOR type survives: a number stays a number, text stays text.
-    assert!(entries
-        .iter()
-        .any(|e| e["key"] == 1 && e["value"] == "as-int"));
-    assert!(entries
-        .iter()
-        .any(|e| e["key"] == "1" && e["value"] == "as-text"));
+    let m = map_entry(
+        &v["signed"]["protected"]["cwt_claims_extra"],
+        Value::Text("m".into()),
+    );
+    assert_eq!(
+        m,
+        Value::Map(vec![
+            (Value::Integer(1), Value::Text("as-int".into())),
+            (Value::Text("1".into()), Value::Text("as-text".into())),
+        ])
+    );
 }
 
-/// Non-colliding maps keep the friendlier object form.
 #[test]
-fn distinct_map_keys_stay_an_object() {
+fn ordinary_extension_maps_use_the_same_lossless_contract() {
     use corim::cbor::value::Value;
     use corim::types::signed::ClaimKey;
 
@@ -1348,7 +1463,15 @@ fn distinct_map_keys_stay_an_object() {
         .unwrap();
 
     let v = validate_json(&signed, "cose");
-    let m = &v["signed"]["protected"]["cwt_claims_extra"]["text"]["m"];
-    assert_eq!(m["a"], 1);
-    assert_eq!(m["b"], 2);
+    let m = map_entry(
+        &v["signed"]["protected"]["cwt_claims_extra"],
+        Value::Text("m".into()),
+    );
+    assert_eq!(
+        m,
+        Value::Map(vec![
+            (Value::Text("a".into()), Value::Integer(1)),
+            (Value::Text("b".into()), Value::Integer(2)),
+        ])
+    );
 }

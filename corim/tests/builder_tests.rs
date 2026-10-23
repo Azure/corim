@@ -18,9 +18,10 @@ fn one_reference_triple() -> ReferenceTriple {
         EnvironmentMap::for_class("V", "M"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -112,9 +113,10 @@ fn comid_builder_conditional_endorsement_accepts_empty_endorsements() {
                 EnvironmentMap::for_class("V", "M"),
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..Default::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -130,9 +132,10 @@ fn comid_builder_conditional_endorsement_series() {
     let env = EnvironmentMap::for_class("V", "M");
     let meas = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -189,9 +192,10 @@ fn corim_builder_add_coswid_invalid_fails() {
 fn one_measurement(svn: u64) -> MeasurementMap {
     MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(svn)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(svn));
+            values
         },
         authorized_by: None,
     }
@@ -343,9 +347,10 @@ fn comid_builder_strict_links_accepts_anchored_endorsed_and_cet() {
 fn meas_with_mkey(mkey: &str, svn: u64) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(svn)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(svn));
+            values
         },
         authorized_by: None,
     }

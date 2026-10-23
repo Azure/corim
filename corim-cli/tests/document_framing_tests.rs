@@ -57,9 +57,10 @@ fn unsigned() -> Vec<u8> {
             vec![MeasurementMap {
                 mkey: None,
                 authorized_by: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
             }],
         ))

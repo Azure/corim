@@ -34,17 +34,20 @@ fn matcher_wire_shapes_and_round_trips() {
     round_trip(BytesMatcher::Exact(vec![]));
     round_trip(BytesMatcher::Set(vec![vec![0], vec![255]]));
     for map in [
-        MeasurementValuesMap {
-            number: Some(NumberMatcher::Exact(Number::Int(3))),
-            ..Default::default()
+        {
+            let mut values = MeasurementValuesMap::default();
+            values.number = Some(NumberMatcher::Exact(Number::Int(3)));
+            values
         },
-        MeasurementValuesMap {
-            text: Some(TextMatcher::Exact("hi".into())),
-            ..Default::default()
+        {
+            let mut values = MeasurementValuesMap::default();
+            values.text = Some(TextMatcher::Exact("hi".into()));
+            values
         },
-        MeasurementValuesMap {
-            bytes: Some(BytesMatcher::Exact(vec![1, 2])),
-            ..Default::default()
+        {
+            let mut values = MeasurementValuesMap::default();
+            values.bytes = Some(BytesMatcher::Exact(vec![1, 2]));
+            values
         },
     ] {
         assert!(map.valid().is_ok());
@@ -197,22 +200,24 @@ fn core_appraisal_enforces_matcher_fields() {
     let condition = MeasurementMap {
         mkey: None,
         authorized_by: None,
-        mval: MeasurementValuesMap {
-            number: Some(NumberMatcher::Range {
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.number = Some(NumberMatcher::Range {
                 min: Some(Number::Int(1)),
                 max: Some(Number::Int(3)),
-            }),
-            text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
-            bytes: Some(BytesMatcher::Exact(vec![0, 255])),
-            ..Default::default()
+            });
+            values.text = Some(TextMatcher::Set(vec!["a".into(), "b".into()]));
+            values.bytes = Some(BytesMatcher::Exact(vec![0, 255]));
+            values
         },
     };
     let observed = MeasurementMap {
-        mval: MeasurementValuesMap {
-            number: Some(NumberMatcher::Exact(Number::Float(2.5))),
-            text: Some(TextMatcher::Exact("b".into())),
-            bytes: condition.mval.bytes.clone(),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.number = Some(NumberMatcher::Exact(Number::Float(2.5)));
+            values.text = Some(TextMatcher::Exact("b".into()));
+            values.bytes = condition.mval.bytes.clone();
+            values
         },
         ..condition.clone()
     };
@@ -232,9 +237,10 @@ fn core_appraisal_enforces_matcher_fields() {
 fn boolean_measurement_is_exact_and_false_is_present() {
     use corim::types::{tags::MVAL_KEY_BOOL, MeasurementMap};
     for expected in [false, true] {
-        let map = MeasurementValuesMap {
-            r#bool: Some(expected),
-            ..Default::default()
+        let map = {
+            let mut values = MeasurementValuesMap::default();
+            values.r#bool = Some(expected);
+            values
         };
         assert!(map.valid().is_ok());
         round_trip(map.clone());
@@ -252,9 +258,10 @@ fn boolean_measurement_is_exact_and_false_is_present() {
         };
         for observed in [None, Some(false), Some(true)] {
             let observation = MeasurementMap {
-                mval: MeasurementValuesMap {
-                    r#bool: observed,
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.r#bool = observed;
+                    values
                 },
                 ..condition.clone()
             };
@@ -295,12 +302,13 @@ fn matcher_json_round_trip_preserves_types_and_nonfinite_numbers() {
             max: Some(Number::Float(f64::INFINITY)),
         },
     ] {
-        let original = MeasurementValuesMap {
-            r#bool: Some(false),
-            number: Some(number),
-            text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
-            bytes: Some(BytesMatcher::Set(vec![vec![], vec![0, 255]])),
-            ..Default::default()
+        let original = {
+            let mut values = MeasurementValuesMap::default();
+            values.r#bool = Some(false);
+            values.number = Some(number);
+            values.text = Some(TextMatcher::Set(vec!["a".into(), "b".into()]));
+            values.bytes = Some(BytesMatcher::Set(vec![vec![], vec![0, 255]]));
+            values
         };
         let json = corim::json::to_json(&original).unwrap();
         let decoded: MeasurementValuesMap = corim::json::from_json(&json).unwrap();
@@ -369,9 +377,10 @@ fn present_null_matcher_fields_are_rejected_in_embedded_documents() {
         MVAL_KEY_TEXT,
         MVAL_KEY_BYTES,
     ] {
-        let control = MeasurementValuesMap {
-            svn: Some(corim::types::SvnChoice::ExactValue(1)),
-            ..Default::default()
+        let control = {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(corim::types::SvnChoice::ExactValue(1));
+            values
         };
         let mut corim = corim_with_matchers(control.clone());
         let direct = Value::Map(vec![
@@ -410,12 +419,13 @@ fn present_null_matcher_fields_are_rejected_in_embedded_documents() {
         }
         round_trip(control);
     }
-    round_trip(MeasurementValuesMap {
-        number: Some(NumberMatcher::Range {
+    round_trip({
+        let mut values = MeasurementValuesMap::default();
+        values.number = Some(NumberMatcher::Range {
             min: None,
             max: None,
-        }),
-        ..Default::default()
+        });
+        values
     });
 }
 
@@ -441,23 +451,25 @@ fn corim_with_matchers(mval: MeasurementValuesMap) -> corim::types::CorimMap {
 
 #[test]
 fn baseline_reports_matcher_presence_and_value_differences() {
-    let base = MeasurementValuesMap {
-        r#bool: Some(false),
-        number: Some(NumberMatcher::Exact(Number::Float(f64::NAN))),
-        text: Some(TextMatcher::Exact("a".into())),
-        bytes: Some(BytesMatcher::Exact(vec![1])),
-        ..Default::default()
+    let base = {
+        let mut values = MeasurementValuesMap::default();
+        values.r#bool = Some(false);
+        values.number = Some(NumberMatcher::Exact(Number::Float(f64::NAN)));
+        values.text = Some(TextMatcher::Exact("a".into()));
+        values.bytes = Some(BytesMatcher::Exact(vec![1]));
+        values
     };
     let baseline = corim_with_matchers(base.clone());
     let identical = corim::baseline::compare(&baseline, &baseline).unwrap();
     assert!(identical.structural_mismatches.is_empty());
     assert!(identical.value_differences.is_empty());
-    let changed = corim_with_matchers(MeasurementValuesMap {
-        r#bool: Some(true),
-        number: Some(NumberMatcher::Exact(Number::Int(2))),
-        text: Some(TextMatcher::Exact("b".into())),
-        bytes: Some(BytesMatcher::Exact(vec![2])),
-        ..Default::default()
+    let changed = corim_with_matchers({
+        let mut values = MeasurementValuesMap::default();
+        values.r#bool = Some(true);
+        values.number = Some(NumberMatcher::Exact(Number::Int(2)));
+        values.text = Some(TextMatcher::Exact("b".into()));
+        values.bytes = Some(BytesMatcher::Exact(vec![2]));
+        values
     });
     let report = corim::baseline::compare(&changed, &baseline).unwrap();
     assert_eq!(report.structural_mismatches.len(), 1);
@@ -504,13 +516,15 @@ fn baseline_numeric_set_reservation_uses_float_bits() {
     ] {
         let mut reversed = values.clone();
         reversed.reverse();
-        let baseline = corim_with_matchers(MeasurementValuesMap {
-            number: Some(NumberMatcher::Set(values)),
-            ..Default::default()
+        let baseline = corim_with_matchers({
+            let mut initial_values = MeasurementValuesMap::default();
+            initial_values.number = Some(NumberMatcher::Set(values));
+            initial_values
         });
-        let input = corim_with_matchers(MeasurementValuesMap {
-            number: Some(NumberMatcher::Set(reversed)),
-            ..Default::default()
+        let input = corim_with_matchers({
+            let mut values = MeasurementValuesMap::default();
+            values.number = Some(NumberMatcher::Set(reversed));
+            values
         });
         let report = corim::baseline::compare(&input, &baseline).unwrap();
         assert!(report.is_conformant());
@@ -520,13 +534,15 @@ fn baseline_numeric_set_reservation_uses_float_bits() {
 
 #[test]
 fn baseline_matcher_sets_are_unordered_and_shape_sensitive() {
-    let baseline = corim_with_matchers(MeasurementValuesMap {
-        text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
-        ..Default::default()
+    let baseline = corim_with_matchers({
+        let mut values = MeasurementValuesMap::default();
+        values.text = Some(TextMatcher::Set(vec!["a".into(), "b".into()]));
+        values
     });
-    let reordered = corim_with_matchers(MeasurementValuesMap {
-        text: Some(TextMatcher::Set(vec!["b".into(), "a".into()])),
-        ..Default::default()
+    let reordered = corim_with_matchers({
+        let mut values = MeasurementValuesMap::default();
+        values.text = Some(TextMatcher::Set(vec!["b".into(), "a".into()]));
+        values
     });
     let report = corim::baseline::compare(&reordered, &baseline).unwrap();
     assert!(report.is_conformant());
@@ -535,9 +551,10 @@ fn baseline_matcher_sets_are_unordered_and_shape_sensitive() {
         TextMatcher::Exact("a".into()),
         TextMatcher::Set(vec!["a".into(), "b".into(), "c".into()]),
     ] {
-        let changed = corim_with_matchers(MeasurementValuesMap {
-            text: Some(matcher),
-            ..Default::default()
+        let changed = corim_with_matchers({
+            let mut values = MeasurementValuesMap::default();
+            values.text = Some(matcher);
+            values
         });
         assert!(!corim::baseline::compare(&changed, &baseline)
             .unwrap()
@@ -553,9 +570,10 @@ fn cca_profile_does_not_silently_accept_new_matcher_fields() {
     let original = corim::types::MeasurementMap {
         mkey: Some(corim::types::MeasuredElement::Text("cca.rim".into())),
         authorized_by: None,
-        mval: MeasurementValuesMap {
-            digests: Some(vec![corim::types::Digest::new_text("sha-256", vec![0; 32])]),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![corim::types::Digest::new_text("sha-256", vec![0; 32])]);
+            values
         },
     };
     let context = corim::profile::MatchContext::new();
@@ -614,12 +632,13 @@ fn duplicate_matcher_fields_are_rejected() {
 #[cfg(feature = "profile-intel")]
 #[test]
 fn profile_appraisal_applies_standard_matcher_rules() {
-    let condition = MeasurementValuesMap {
-        r#bool: Some(false),
-        number: Some(NumberMatcher::Set(vec![Number::Int(1), Number::Float(2.5)])),
-        text: Some(TextMatcher::Set(vec!["a".into(), "b".into()])),
-        bytes: Some(BytesMatcher::Exact(vec![255])),
-        ..Default::default()
+    let condition = {
+        let mut values = MeasurementValuesMap::default();
+        values.r#bool = Some(false);
+        values.number = Some(NumberMatcher::Set(vec![Number::Int(1), Number::Float(2.5)]));
+        values.text = Some(TextMatcher::Set(vec!["a".into(), "b".into()]));
+        values.bytes = Some(BytesMatcher::Exact(vec![255]));
+        values
     };
     let references = corim_with_matchers(condition).tags[0]
         .as_comid()
@@ -634,16 +653,17 @@ fn profile_appraisal_applies_standard_matcher_rules() {
             measurements: vec![corim::types::MeasurementMap {
                 mkey: None,
                 authorized_by: None,
-                mval: MeasurementValuesMap {
-                    r#bool: Some(false),
-                    number: Some(NumberMatcher::Exact(Number::Float(if matches {
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.r#bool = Some(false);
+                    values.number = Some(NumberMatcher::Exact(Number::Float(if matches {
                         2.5
                     } else {
                         3.0
-                    }))),
-                    text: Some(TextMatcher::Exact("a".into())),
-                    bytes: Some(BytesMatcher::Exact(vec![255])),
-                    ..Default::default()
+                    })));
+                    values.text = Some(TextMatcher::Exact("a".into()));
+                    values.bytes = Some(BytesMatcher::Exact(vec![255]));
+                    values
                 },
             }],
         };

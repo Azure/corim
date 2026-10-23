@@ -19,11 +19,11 @@
 use super::{
     CoseSign1Corim, NumericDate, ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE,
     COSE_HEADER_CONTENT_TYPE, COSE_HEADER_CORIM_META, COSE_HEADER_CWT_CLAIMS,
-    COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+    COSE_HEADER_PAYLOAD_HASH_ALG, COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP, CWT_CLAIM_ISS,
+    CWT_CLAIM_NBF, CWT_CLAIM_SUB,
 };
 use crate::cbor::{self, value::Value, DecodeLimits};
 use crate::nostd_prelude::*;
-use crate::types::matcher::{Number, NumberMatcher};
 use crate::types::tags::TAG_SIGNED_CORIM;
 use crate::validate::ValidatedCorim;
 use crate::{Validate, ValidationError};
@@ -68,6 +68,8 @@ pub fn decode_and_validate_signed_corim_at(
 ///
 /// Envelope, protected header, metadata, selected payload and tag bodies share
 /// one aggregate budget. No budget reset or redundant CBOR parse is performed.
+/// Known embedded framing, duplicate-key and resource failures are detected
+/// before header semantic or temporal failures (RFC 8949 §3, §5.6 and §10).
 /// Has the same non-cryptographic contract as [`decode_and_validate_signed_corim_at`].
 pub fn decode_and_validate_signed_corim_at_with_limits(
     bytes: &[u8],
@@ -99,13 +101,33 @@ fn decode_and_validate_signed_corim_impl(
     limits: &DecodeLimits,
 ) -> Result<(CoseSign1Corim, ValidatedCorim), ValidationError> {
     let mut budget = cbor::DecodeBudget::new(limits)?;
-    let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
+    let value = budget.decode_value_exact(bytes)?;
+    let validated = validate_parsed_signed(value, detached_payload, now_epoch_secs, &mut budget)?;
+    Ok((validated.envelope, validated.payload))
+}
+
+pub(crate) struct ValidatedSignedDocument {
+    pub envelope: CoseSign1Corim,
+    pub payload: ValidatedCorim,
+    pub used_flat_cwt: bool,
+}
+
+pub(crate) fn validate_parsed_signed(
+    value: Value,
+    detached_payload: Option<&[u8]>,
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedSignedDocument, ValidationError> {
+    let value = crate::compat::peel_value(value);
     let Value::Tag(TAG_SIGNED_CORIM, inner) = value else {
         return Err(invalid("expected signed CoRIM tag 18"));
     };
     let Value::Array(parts) = *inner else {
         return Err(invalid("COSE_Sign1 must be an array"));
     };
+    for part in &parts {
+        cbor::map_keys::check(part)?;
+    }
     let [protected, unprotected, payload, signature]: [Value; 4] = parts
         .try_into()
         .map_err(|_| invalid("COSE_Sign1 must have four elements"))?;
@@ -115,8 +137,6 @@ fn decode_and_validate_signed_corim_impl(
     let Value::Map(unprotected) = unprotected else {
         return Err(invalid("COSE unprotected header must be a map"));
     };
-    header_labels(&unprotected)?;
-    cbor::map_keys::check(&Value::Map(unprotected.clone()))?;
     let payload = match payload {
         Value::Bytes(bytes) => Some(bytes),
         Value::Null => None,
@@ -130,17 +150,47 @@ fn decode_and_validate_signed_corim_impl(
     let Value::Map(fields) = &header else {
         return Err(invalid("protected header must be a map"));
     };
+    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
+    let prepared_metadata = match field(fields, COSE_HEADER_CORIM_META) {
+        Some(Value::Bytes(bytes)) => {
+            let value = budget.decode_value_exact(bytes)?;
+            cbor::map_keys::check(&value)?;
+            Some(value)
+        }
+        _ => None,
+    };
+    // Declared hash payloads remain opaque; every known CBOR body is prepared
+    // before semantic/time checks, then consumed without a second parse.
+    let prepared_payload = if field(fields, COSE_HEADER_PAYLOAD_HASH_ALG).is_some() {
+        None
+    } else {
+        let selected = match (&payload, detached_payload) {
+            (Some(attached), Some(detached)) if attached.as_slice() != detached => {
+                return Err(invalid("supplied payload differs from attached payload"));
+            }
+            (Some(attached), _) => attached.as_slice(),
+            (None, Some(detached)) => detached,
+            (None, None) => {
+                return Err(invalid(
+                    "detached payload is required for complete validation",
+                ))
+            }
+        };
+        let value = budget.decode_value_exact(selected)?;
+        Some(crate::validate::prepare_parsed_corim(value, budget)?)
+    };
+    header_labels(&unprotected)?;
     header_labels(fields)?;
     disjoint_header_labels(fields, &unprotected)?;
     let window = original_claims(fields)?;
-    check_window(window.0, window.1, now_epoch_secs, true)?;
-    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
+    check_window(window.not_before, window.expires, now_epoch_secs, true)?;
     let mut nested_error = None;
-    let protected = ProtectedCorimHeaderMap::from_value_with_budget::<serde::de::value::Error>(
+    let protected = ProtectedCorimHeaderMap::from_value_with_metadata::<serde::de::value::Error>(
         header,
-        &mut budget,
+        budget,
         &mut nested_error,
         true,
+        prepared_metadata,
     );
     budget.check()?;
     if let Some(error) = nested_error {
@@ -172,12 +222,13 @@ fn decode_and_validate_signed_corim_impl(
                     (
                         validity
                             .not_before
-                            .map(|value| Number::Int(value.epoch_secs().into())),
-                        Some(Number::Int(validity.not_after.epoch_secs().into())),
+                            .map(|value| NumericDate::Int(value.epoch_secs())),
+                        Some(NumericDate::Int(validity.not_after.epoch_secs())),
                     )
                 });
         if protected.cwt_claims.is_some()
-            && (!same_time(window.0, not_before) || !same_time(window.1, not_after))
+            && (!same_time(window.not_before, not_before)?
+                || !same_time(window.expires, not_after)?)
         {
             return Err(invalid(
                 "CWT nbf/exp must agree with corim-meta signature-validity",
@@ -190,37 +241,27 @@ fn decode_and_validate_signed_corim_impl(
             "hash-envelope requires an authenticated preimage; digest is not an inline CoRIM",
         ));
     }
-    let selected = match (&payload, detached_payload) {
-        (Some(attached), Some(detached)) if attached.as_slice() != detached => {
-            return Err(invalid("supplied payload differs from attached payload"))
-        }
-        (Some(attached), _) => attached.as_slice(),
-        (None, Some(detached)) => detached,
-        (None, None) => {
-            return Err(invalid(
-                "detached payload is required for complete validation",
-            ))
-        }
-    };
-    let validated = crate::validate::decode_and_validate_budget_with_time(
-        selected,
-        now_epoch_secs,
-        &mut budget,
-    )?;
+    let prepared_payload =
+        prepared_payload.ok_or_else(|| invalid("missing prepared inline payload"))?;
+    let validated = crate::validate::validate_prepared_corim(prepared_payload, now_epoch_secs)?;
     validated.corim.valid().map_err(ValidationError::Invalid)?;
     if validated.coswid_opaque_count != 0 {
         return Err(invalid(
             "strict validation cannot validate opaque CoSWID content",
         ));
     }
-    let signed = CoseSign1Corim {
+    let signed = CoseSign1Corim::from_decoded_parts(
         protected_header_bytes,
         protected,
         unprotected,
         payload,
         signature,
-    };
-    Ok((signed, validated))
+    );
+    Ok(ValidatedSignedDocument {
+        envelope: signed,
+        payload: validated,
+        used_flat_cwt: window.used_flat,
+    })
 }
 
 fn invalid(message: &str) -> ValidationError {
@@ -276,52 +317,65 @@ fn disjoint_header_labels(
     Ok(())
 }
 
-fn timestamp(value: &Value) -> Result<Number, ValidationError> {
-    NumericDate::from_value(value)
-        .map(NumericDate::number)
-        .map_err(ValidationError::Invalid)
+fn timestamp(value: &Value) -> Result<NumericDate, ValidationError> {
+    NumericDate::from_value(value).map_err(ValidationError::Invalid)
 }
 
-fn same_time(left: Option<Number>, right: Option<Number>) -> bool {
+fn same_time(
+    left: Option<NumericDate>,
+    right: Option<NumericDate>,
+) -> Result<bool, ValidationError> {
     match (left, right) {
-        (None, None) => true,
+        (None, None) => Ok(true),
         (Some(left), Some(right)) => {
-            NumberMatcher::Exact(left).matches(&NumberMatcher::Exact(right))
+            Ok(left.numeric_cmp(&right).map_err(ValidationError::Invalid)?
+                == core::cmp::Ordering::Equal)
         }
-        _ => false,
+        _ => Ok(false),
     }
 }
 
 fn check_window(
-    min: Option<Number>,
-    max: Option<Number>,
+    min: Option<NumericDate>,
+    max: Option<NumericDate>,
     now: Option<i64>,
     exclusive_end: bool,
 ) -> Result<(), ValidationError> {
-    let range = NumberMatcher::Range { min, max };
-    range.valid().map_err(ValidationError::Invalid)?;
-    if exclusive_end && min.is_some() && same_time(min, max) {
-        return Err(invalid("CWT validity interval is empty"));
+    use core::cmp::Ordering;
+    if let (Some(min), Some(max)) = (min, max) {
+        match min.numeric_cmp(&max).map_err(ValidationError::Invalid)? {
+            Ordering::Greater => return Err(invalid("validity minimum exceeds maximum")),
+            Ordering::Equal if exclusive_end => {
+                return Err(invalid("CWT validity interval is empty"))
+            }
+            _ => {}
+        }
     }
     let Some(now) = now else {
         return Ok(());
     };
-    let clock = Number::Int(now.into());
-    let observation = NumberMatcher::Exact(clock);
-    if !(NumberMatcher::Range { min, max: None }).matches(&observation) {
-        return Err(ValidationError::NotYetValid);
+    let clock = NumericDate::Int(now);
+    if let Some(min) = min {
+        if clock.numeric_cmp(&min).map_err(ValidationError::Invalid)? == Ordering::Less {
+            return Err(ValidationError::NotYetValid);
+        }
     }
-    if !(NumberMatcher::Range { min: None, max }).matches(&observation)
-        || exclusive_end && same_time(max, Some(clock))
-    {
-        return Err(ValidationError::Expired);
+    if let Some(max) = max {
+        let ordering = clock.numeric_cmp(&max).map_err(ValidationError::Invalid)?;
+        if ordering == Ordering::Greater || exclusive_end && ordering == Ordering::Equal {
+            return Err(ValidationError::Expired);
+        }
     }
     Ok(())
 }
 
-fn original_claims(
-    fields: &[(Value, Value)],
-) -> Result<(Option<Number>, Option<Number>), ValidationError> {
+struct ClaimWindow {
+    not_before: Option<NumericDate>,
+    expires: Option<NumericDate>,
+    used_flat: bool,
+}
+
+fn original_claims(fields: &[(Value, Value)]) -> Result<ClaimWindow, ValidationError> {
     let mut flat_issuer = None;
     let mut flat_subject = None;
     let mut flat_nbf = None;
@@ -347,6 +401,8 @@ fn original_claims(
             _ => {}
         }
     }
+    let used_flat =
+        flat_issuer.is_some() || flat_subject.is_some() || flat_nbf.is_some() || flat_exp.is_some();
     if let Some(nested) = field(fields, COSE_HEADER_CWT_CLAIMS) {
         let Value::Map(claims) = nested else {
             return Err(invalid("CWT-Claims must be a map"));
@@ -360,18 +416,26 @@ fn original_claims(
                 }
             }
         }
-        if flat_nbf.is_some() && !same_time(flat_nbf, nbf)
-            || flat_exp.is_some() && !same_time(flat_exp, exp)
+        if flat_nbf.is_some() && !same_time(flat_nbf, nbf)?
+            || flat_exp.is_some() && !same_time(flat_exp, exp)?
         {
             return Err(invalid("flat and nested CWT time claims disagree"));
         }
-        Ok((nbf, exp))
+        Ok(ClaimWindow {
+            not_before: nbf,
+            expires: exp,
+            used_flat,
+        })
     } else {
         if flat_issuer.is_none()
             && (flat_subject.is_some() || flat_nbf.is_some() || flat_exp.is_some())
         {
             return Err(invalid("flat CWT claims require an issuer"));
         }
-        Ok((flat_nbf, flat_exp))
+        Ok(ClaimWindow {
+            not_before: flat_nbf,
+            expires: flat_exp,
+            used_flat,
+        })
     }
 }

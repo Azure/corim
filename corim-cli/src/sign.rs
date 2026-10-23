@@ -57,7 +57,8 @@ pub struct ExtractArgs {
     #[arg(long, requires = "header")]
     json: bool,
 
-    /// Validate the extracted CoRIM after extraction. Ignored with `--header`.
+    /// Require complete validation of an unsigned payload before writing.
+    /// Partial validation exits 4 without output. Ignored with `--header`.
     #[arg(long)]
     validate: bool,
 }
@@ -66,14 +67,37 @@ pub struct ExtractArgs {
 pub fn run_extract(args: ExtractArgs) {
     if let Err(e) = run_extract_impl(args) {
         eprintln!("Error: {e}");
-        process::exit(1);
+        process::exit(match e {
+            ExtractError::Partial(_) => crate::validation::PARTIAL_EXIT_CODE,
+            ExtractError::Failure(_) => 1,
+        });
     }
 }
 
-fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
+#[derive(Debug)]
+enum ExtractError {
+    Failure(String),
+    Partial(String),
+}
+
+impl From<String> for ExtractError {
+    fn from(message: String) -> Self {
+        Self::Failure(message)
+    }
+}
+
+impl std::fmt::Display for ExtractError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failure(message) | Self::Partial(message) => formatter.write_str(message),
+        }
+    }
+}
+
+fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
     let bytes = crate::input::read_document(args.file.as_deref())?;
     if bytes.is_empty() {
-        return Err("input is empty".into());
+        return Err(ExtractError::Failure("input is empty".into()));
     }
 
     let envelope =
@@ -82,10 +106,11 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
     if args.header {
         if args.json {
             let rendered = crate::jsonfmt::protected_header(
-                &envelope.protected,
-                envelope.protected_header_bytes.len(),
+                envelope.protected(),
+                envelope.protected_header_bytes().len(),
                 "",
-            );
+            )
+            .map_err(|error| error.to_string())?;
             write_output(
                 args.output.as_deref(),
                 format!("{rendered}\n").as_bytes(),
@@ -94,7 +119,7 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
         } else {
             write_output(
                 args.output.as_deref(),
-                &envelope.protected_header_bytes,
+                envelope.protected_header_bytes(),
                 "protected header",
             )?;
         }
@@ -109,8 +134,21 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
     })?;
 
     if args.validate {
-        corim::validate::decode_and_validate(&payload)
-            .map_err(|e| format!("extracted CoRIM failed validation: {e}"))?;
+        let registry = crate::profiles::build_registry();
+        let document =
+            crate::validation::document(&payload, Some(crate::validation::now()?), &registry)
+                .map_err(|error| format!("extracted CoRIM failed validation: {error}"))?;
+        if document.signed.is_some() {
+            return Err(ExtractError::Failure(
+                "extracted payload must be an unsigned CoRIM, not a signed envelope".into(),
+            ));
+        }
+        if !document.coverage.is_complete() {
+            return Err(ExtractError::Partial(format!(
+                "extracted CoRIM validation is partial: {}",
+                crate::validation::coverage_json(&document.coverage),
+            )));
+        }
     }
 
     write_output(args.output.as_deref(), &payload, "CoRIM payload")?;

@@ -7,6 +7,7 @@ use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod authoring;
 mod baseline;
 mod convert;
 mod display;
@@ -37,18 +38,17 @@ enum Commands {
     /// decoded structure.
     Validate(ValidateArgs),
 
-    /// Generate an unsigned CoRIM CBOR document from a JSON template.
+    /// Generate a validated CoRIM from readable or lossless document JSON.
     ///
-    /// Reads a hand-authored JSON template describing the CoRIM id,
-    /// profile, and CoMID tags (full triples tree), builds the CoRIM
-    /// via the builder API, validates it, and writes the CBOR output.
+    /// Readable templates support named fields, profile aliases and comment
+    /// annotations. Lossless documents are recognized separately. Output is
+    /// written only when document validation coverage is complete.
     Generate(generate::GenerateArgs),
 
-    /// Convert an unsigned CoRIM CBOR document to a JSON template.
+    /// Convert a document to a readable JSON authoring template.
     ///
-    /// The inverse of `generate`: decodes a tag-501 CoRIM and emits a
-    /// prose-keyed JSON template that feeds straight back into
-    /// `generate`, reproducing the original bytes.
+    /// Use --lossless for full-envelope interchange, preserving protected and
+    /// payload byte strings. Conversion does not authenticate signatures.
     Convert(convert::ConvertArgs),
 
     /// Extract the unsigned CoRIM payload from a signed CoRIM.
@@ -76,7 +76,7 @@ struct ValidateArgs {
     format: String,
 
     /// Skip clock comparisons but retain structural/profile checks. Successful
-    /// output is partial validation, not confirmation of temporal validity.
+    /// output is partial validation (exit 4), not confirmation of temporal validity.
     #[arg(long)]
     skip_expiry: bool,
 
@@ -107,7 +107,8 @@ struct ValidateArgs {
     /// structural conformance. The baseline may be a CBOR CoRIM, a signed
     /// CoRIM (attached payload), or a JSON template. Reports structural
     /// mismatches (which fail) and value differences (informational).
-    /// Exit code: 0 conformant, 3 structural mismatch, 2 invalid input.
+    /// Exit code: 0 fully checked and conformant, 3 structural mismatch,
+    /// 4 partial validation, 2 invalid input.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["diagnose", "edn"])]
     baseline: Option<String>,
 }
@@ -186,7 +187,12 @@ fn run_validate(cli: ValidateArgs) {
     if document.legacy_wrappers {
         eprintln!("note: accepted legacy outer CBOR tag(s) #6.500 / #6.502");
     }
-    let signed_info = document.signed.map(signed_info);
+    let signed_info = document
+        .signed
+        .map(signed_info)
+        .transpose()
+        .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
+    let coverage = document.coverage;
     let corim = document.payload.corim;
     let comid_tags = document.payload.comids;
     let profile_for_render = corim.profile.as_ref().and_then(|pc| registry.get(pc));
@@ -194,6 +200,11 @@ fn run_validate(cli: ValidateArgs) {
     let mut warnings = Vec::new();
     if cli.skip_expiry {
         warnings.push("partial validation: temporal checks skipped".into());
+    }
+    if let corim::document::ProfileCoverage::Unregistered(id) = coverage.profile() {
+        warnings.push(format!(
+            "partial validation: profile {id} is not registered"
+        ));
     }
     let mut coswid_count = 0;
     let mut cotl_count = 0;
@@ -223,9 +234,14 @@ fn run_validate(cli: ValidateArgs) {
             baseline_path,
             &cli.format,
             now,
+            &coverage,
         ) {
-            Ok(true) => process::exit(0),
-            Ok(false) => process::exit(3),
+            Ok(outcome) if !outcome.conformant => process::exit(3),
+            Ok(outcome) => process::exit(if outcome.complete {
+                0
+            } else {
+                validation::PARTIAL_EXIT_CODE
+            }),
             Err(e) => {
                 validation_failure(&cli.format, &e.to_string(), e.exit_code());
             }
@@ -235,15 +251,8 @@ fn run_validate(cli: ValidateArgs) {
     // Step 4: Output results
     match cli.format.as_str() {
         "json" => {
-            print_json_output(
-                &corim,
-                &comid_tags,
-                &errors,
-                &warnings,
-                &signed_info,
-                cli.show_raw,
-                !cli.skip_expiry,
-            );
+            print_json_output(&corim, &comid_tags, &warnings, &signed_info, &coverage)
+                .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
         }
         _ => {
             print_text_output(
@@ -257,17 +266,23 @@ fn run_validate(cli: ValidateArgs) {
                 unknown_count,
                 &signed_info,
                 profile_for_render,
-                !cli.skip_expiry,
+                coverage.is_complete(),
             );
         }
     }
+    process::exit(if coverage.is_complete() {
+        0
+    } else {
+        validation::PARTIAL_EXIT_CODE
+    });
 }
 
 fn validation_failure(format: &str, error: &str, code: i32) -> ! {
     if format == "json" {
         println!(
             "{}",
-            serde_json::json!({"valid":false,"time_validated":false,"errors":[error]})
+            serde_json::json!({"status": if code == 1 { "error" } else { "invalid" },
+                "valid":false,"time_validated":false,"errors":[error]})
         );
     } else {
         eprintln!("FAIL: {error}");
@@ -305,29 +320,26 @@ struct SignedInfo {
     signature: Vec<u8>,
 }
 
-fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> SignedInfo {
-    // Re-encode the unprotected header map so we can display its raw CBOR bytes
-    // alongside the other COSE_Sign1 sections. Failures here are non-fatal —
-    // an empty Vec just means we won't render bytes for that section.
+fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> Result<SignedInfo, String> {
     let unprotected_bytes =
         corim::cbor::encode(&corim::cbor::value::Value::Map(signed.unprotected.clone()))
-            .unwrap_or_default();
+            .map_err(|error| format!("encoding unprotected header for display: {error}"))?;
 
     let info = SignedInfo {
-        alg: signed.protected.alg,
-        content_type: signed.protected.content_type.clone(),
-        has_cwt_claims: signed.protected.cwt_claims.is_some(),
-        has_corim_meta: signed.protected.corim_meta.is_some(),
+        alg: signed.protected().alg,
+        content_type: signed.protected().content_type.clone(),
+        has_cwt_claims: signed.protected().cwt_claims.is_some(),
+        has_corim_meta: signed.protected().corim_meta.is_some(),
         x5chain_count: signed
-            .protected
+            .protected()
             .x5chain
             .as_ref()
             .map(|x| x.certs().len())
             .unwrap_or(0),
-        has_x5t: signed.protected.x5t.is_some(),
-        has_kid: signed.protected.kid.is_some(),
-        protected_header_bytes: signed.protected_header_bytes.clone(),
-        protected: signed.protected.clone(),
+        has_x5t: signed.protected().x5t.is_some(),
+        has_kid: signed.protected().kid.is_some(),
+        protected_header_bytes: signed.protected_header_bytes().to_vec(),
+        protected: signed.protected().clone(),
         unprotected_entries: signed.unprotected.len(),
         unprotected_bytes,
         is_detached: signed.is_detached(),
@@ -335,7 +347,7 @@ fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> SignedInfo {
         signature: signed.signature.clone(),
     };
 
-    info
+    Ok(info)
 }
 
 /// Render the four COSE_Sign1 elements per RFC 9052 §4:
@@ -465,11 +477,11 @@ fn print_text_output(
     unknown_count: u32,
     signed_info: &Option<SignedInfo>,
     profile: Option<&(dyn corim::profile::Profile + Send + Sync)>,
-    time_validated: bool,
+    complete: bool,
 ) {
     // Validation result
-    if errors.is_empty() && !time_validated {
-        println!("PARTIAL: structural and profile checks passed; temporal checks skipped\n");
+    if errors.is_empty() && !complete {
+        println!("PARTIAL: some validation checks were not performed; see warnings\n");
     } else if errors.is_empty() {
         println!("PASS: structural, temporal and profile checks passed\n");
     } else {
@@ -520,114 +532,63 @@ fn print_text_output(
 fn print_json_output(
     corim: &corim::types::corim::CorimMap,
     comids: &[corim::types::comid::ComidTag],
-    errors: &[String],
     warnings: &[String],
     signed_info: &Option<SignedInfo>,
-    _show_raw: bool,
-    time_validated: bool,
-) {
-    // Simple JSON output without pulling in serde_json
-    println!("{{");
-    println!(
-        "  \"valid\": {},",
-        if !errors.is_empty() {
-            "false"
-        } else if time_validated {
-            "true"
-        } else {
-            "null"
-        }
-    );
-    println!("  \"time_validated\": {},", time_validated);
-
-    if !errors.is_empty() {
-        println!("  \"errors\": [");
-        for (i, e) in errors.iter().enumerate() {
-            let comma = if i + 1 < errors.len() { "," } else { "" };
-            println!("    \"{}\"{}", jsonfmt::escape(e), comma);
-        }
-        println!("  ],");
-    }
-
+    coverage: &corim::document::ValidationCoverage,
+) -> Result<(), String> {
+    let encoded = |value| corim::json::value_to_json(&value).map_err(|error| error.to_string());
+    let id = corim::cbor::value::to_value(&corim.id)?;
+    let summaries = comids
+        .iter()
+        .map(|comid| {
+            let mut summary = serde_json::json!({
+                "tag_id": encoded(corim::cbor::value::to_value(&comid.tag_identity.tag_id)?)?,
+                "triple_types": serde_json::from_str::<serde_json::Value>(&format!(
+                    "[{}]", display::triple_type_list(&comid.triples),
+                )).map_err(|error| error.to_string())?,
+            });
+            if let Some(version) = comid.tag_identity.tag_version {
+                summary["tag_version"] =
+                    encoded(corim::cbor::value::Value::Integer(version.into()))?;
+            }
+            Ok(summary)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let complete = coverage.is_complete();
+    let mut report = serde_json::json!({
+        "status": if complete { "complete" } else { "partial" },
+        "valid": complete.then_some(true),
+        "time_validated": matches!(coverage.time(), corim::document::TimeCheck::At(_)),
+        "coverage": validation::coverage_json(coverage),
+        "id": encoded(id)?,
+        "tags_count": corim.tags.len(),
+        "comid_count": comids.len(),
+        "comids": summaries,
+    });
     if !warnings.is_empty() {
-        println!("  \"warnings\": [");
-        for (i, w) in warnings.iter().enumerate() {
-            let comma = if i + 1 < warnings.len() { "," } else { "" };
-            println!("    \"{}\"{}", jsonfmt::escape(w), comma);
-        }
-        println!("  ],");
+        report["warnings"] = serde_json::json!(warnings);
     }
-
+    if let Some(profile) = &corim.profile {
+        report["profile"] = encoded(corim::cbor::value::to_value(profile)?)?;
+    }
     if let Some(info) = signed_info {
-        print_signed_json(info, "  ", true);
+        report["signed"] = signed_json(info)?;
     }
-
-    println!("  \"id\": {},", display::corim_id_json(&corim.id));
-    println!("  \"tags_count\": {},", corim.tags.len());
-    println!("  \"comid_count\": {},", comids.len());
-
-    if let Some(ref profile) = corim.profile {
-        println!(
-            "  \"profile\": \"{}\",",
-            jsonfmt::escape(&display::profile_str(profile))
-        );
-    }
-
-    // CoMIDs summary
-    println!("  \"comids\": [");
-    for (i, comid) in comids.iter().enumerate() {
-        let comma = if i + 1 < comids.len() { "," } else { "" };
-        println!("    {{");
-        println!(
-            "      \"tag_id\": {},",
-            display::tag_id_json(&comid.tag_identity.tag_id)
-        );
-        if let Some(v) = comid.tag_identity.tag_version {
-            println!("      \"tag_version\": {},", v);
-        }
-        let triple_types = display::triple_type_list(&comid.triples);
-        println!("      \"triple_types\": [{}]", triple_types);
-        println!("    }}{}", comma);
-    }
-    println!("  ]");
-
-    println!("}}");
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
-/// Emit the `"signed"` object, mirroring the fields the text renderer shows
-/// for the four COSE_Sign1 elements (RFC 9052 §4).
-fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
-    let p = &info.protected;
-    println!("{indent}\"signed\": {{");
-    println!(
-        "{indent}  \"tag\": {},",
-        corim::types::tags::TAG_SIGNED_CORIM
-    );
-
-    println!(
-        "{indent}  \"protected\": {},",
-        jsonfmt::protected_header(p, info.protected_header_bytes.len(), &format!("{indent}  "))
-    );
-
-    println!(
-        "{indent}  \"unprotected\": {{ \"entries\": {}, \"size\": {} }},",
-        info.unprotected_entries,
-        info.unprotected_bytes.len()
-    );
-    if info.is_detached {
-        println!("{indent}  \"payload\": {{ \"detached\": true }},");
-    } else {
-        println!(
-            "{indent}  \"payload\": {{ \"detached\": false, \"size\": {} }},",
-            info.payload_bytes.len()
-        );
-    }
-    println!(
-        "{indent}  \"signature\": {{ \"size\": {} }},",
-        info.signature.len()
-    );
-    // Structure-only tool: the signature is never checked.
-    println!("{indent}  \"signature_verified\": false");
-
-    println!("{indent}}}{}", if comma { "," } else { "" });
+fn signed_json(info: &SignedInfo) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "tag": corim::types::tags::TAG_SIGNED_CORIM,
+        "protected": jsonfmt::protected_header_value(&info.protected, info.protected_header_bytes.len())
+            .map_err(|error| error.to_string())?,
+        "unprotected": { "entries": info.unprotected_entries, "size": info.unprotected_bytes.len() },
+        "payload": { "detached": info.is_detached, "size": info.payload_bytes.len() },
+        "signature": { "size": info.signature.len() },
+        "signature_verified": false,
+    }))
 }

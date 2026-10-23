@@ -15,7 +15,9 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   Set and numeric-range conditions accept exact observations only. Numeric
   comparison preserves integer precision; NaN never matches. The Rust map fields
   are `r#bool`, `number`, `text`, and `bytes`. See the
-  [matcher module](src/types/matcher.rs) for usage and lossless JSON formats.
+  [matcher module](src/types/matcher.rs) for Rust usage. Document JSON uses the
+  lossless CBOR-tree codec in `corim::json`. The CLI separately supports
+  readable authoring templates with semantic matcher wrappers and annotations.
 - **Full CDDL coverage** — `corim-map`, CoMID, CoTL, all 9 triple types,
   `measurement-values-map` with all fields
 - **Signed CoRIM (`#6.18`)** — decode, validate, construct (attached + detached);
@@ -28,7 +30,9 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   `EnvironmentMap` be shared across triples without duplication, and
   `strict_links` adds a cross-triple env-anchoring lint.
 - **Validation & Appraisal** — structural and registered-profile validation,
-  reference value matching, and conditional endorsement series
+  reference value matching, and conditional endorsement series. The
+  [`document`](src/document.rs) API uses one parser budget and reports
+  time/profile/content coverage explicitly; validated data is read-only.
 - **Profile framework** — [`Profile`] trait, [`ProfileRegistry`], and a
   [`MatchContext`] for time-aware comparators let downstream crates plug in
   CoRIM profiles that define their own validation, tags, matching rules, or
@@ -36,10 +40,21 @@ Remote Attestation (RATS) Endorsements and Reference Values.
   Arm PSA, and Arm CCA Platform/Realm profiles.
 - **CoSWID** — structured types per RFC 9393 with co-constraint validation
 - **Optional JSON** — `json` feature gate for `Value ↔ serde_json::Value` conversion
+  with ordered entry-array maps, decimal integer strings, lowercase hex byte
+  strings, explicit tags, and exact binary64 float bits. Generic helpers use
+  CBOR-mode serde. These library helpers do not parse the CLI's separate
+  readable authoring format. For untrusted JSON,
+  `json::parse_json` bounds input size, expanded wrapper depth, and node count,
+  and rejects duplicate object members.
+  Document string input/output is capped at `json::DEFAULT_MAX_JSON_BYTES`
+  (16 MiB). Hex, escaping, wrappers, and pretty-printing can deliberately
+  produce a resource error after expansion; output is never truncated.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Decode-only; encoders always emit draft-11 wire format.
+  firmware). Builders emit draft-11 wire format; lossless JSON transcoding
+  preserves an existing document's wire forms rather than normalizing signed
+  byte strings.
 
 [`Profile`]: https://docs.rs/corim/latest/corim/profile/trait.Profile.html
 [`ProfileRegistry`]: https://docs.rs/corim/latest/corim/profile/struct.ProfileRegistry.html
@@ -67,12 +82,11 @@ let env = EnvironmentMap {
     group: None,
 };
 
+let mut values = MeasurementValuesMap::default();
+values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
 let meas = MeasurementMap {
     mkey: Some(MeasuredElement::Text("firmware".into())),
-    mval: MeasurementValuesMap {
-        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-        ..MeasurementValuesMap::default()
-    },
+    mval: values,
     authorized_by: None,
 };
 

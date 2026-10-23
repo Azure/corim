@@ -461,9 +461,10 @@ fn integrity_registers_uint_and_text_keys_round_trip() {
         vec![Digest::new(1, vec![0xBB; 20])],
     );
     let regs = IntegrityRegisters(map);
-    let mval = MeasurementValuesMap {
-        integrity_registers: Some(regs),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.integrity_registers = Some(regs);
+        values
     };
     let bytes = cbor::encode(&mval).unwrap();
     let decoded: MeasurementValuesMap = cbor::decode(&bytes).unwrap();
@@ -487,11 +488,12 @@ fn integrity_registers_text_key_only_round_trip() {
 
 #[test]
 fn ip_addr_v6_round_trip() {
-    let mval = MeasurementValuesMap {
-        ip_addr: Some(IpAddr::V6([
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.ip_addr = Some(IpAddr::V6([
             0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1,
-        ])),
-        ..MeasurementValuesMap::default()
+        ]));
+        values
     };
     let bytes = cbor::encode(&mval).unwrap();
     let decoded: MeasurementValuesMap = cbor::decode(&bytes).unwrap();
@@ -500,11 +502,12 @@ fn ip_addr_v6_round_trip() {
 
 #[test]
 fn mac_addr_eui64_round_trip() {
-    let mval = MeasurementValuesMap {
-        mac_addr: Some(MacAddr::Eui64([
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.mac_addr = Some(MacAddr::Eui64([
             0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
-        ])),
-        ..MeasurementValuesMap::default()
+        ]));
+        values
     };
     let bytes = cbor::encode(&mval).unwrap();
     let decoded: MeasurementValuesMap = cbor::decode(&bytes).unwrap();
@@ -513,12 +516,13 @@ fn mac_addr_eui64_round_trip() {
 
 #[test]
 fn raw_value_masked_round_trip() {
-    let mval = MeasurementValuesMap {
-        raw_value: Some(RawValueChoice::Masked {
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.raw_value = Some(RawValueChoice::Masked {
             value: vec![0x01, 0x02, 0x03, 0x04],
             mask: vec![0xFF, 0xFF, 0xFF, 0xFF],
-        }),
-        ..MeasurementValuesMap::default()
+        });
+        values
     };
     let bytes = cbor::encode(&mval).unwrap();
     let decoded: MeasurementValuesMap = cbor::decode(&bytes).unwrap();
@@ -530,17 +534,18 @@ fn raw_value_masked_round_trip() {
 
 #[test]
 fn measurement_values_map_many_fields_round_trip() {
-    let mval = MeasurementValuesMap {
-        version: Some(VersionMap {
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.version = Some(VersionMap {
             version: "1.0".into(),
             version_scheme: Some(16384),
-        }),
-        serial_number: Some("SN12345".into()),
-        ueid: Some(vec![0x02; 10]),
-        uuid: Some(vec![0xAA; 16]),
-        name: Some("test-comp".into()),
-        cryptokeys: Some(vec![CryptoKey::PkixBase64Key("key...".into())]),
-        ..MeasurementValuesMap::default()
+        });
+        values.serial_number = Some("SN12345".into());
+        values.ueid = Some(vec![0x02; 10]);
+        values.uuid = Some(vec![0xAA; 16]);
+        values.name = Some("test-comp".into());
+        values.cryptokeys = Some(vec![CryptoKey::PkixBase64Key("key...".into())]);
+        values
     };
     let bytes = cbor::encode(&mval).unwrap();
     let decoded: MeasurementValuesMap = cbor::decode(&bytes).unwrap();

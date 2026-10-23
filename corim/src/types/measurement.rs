@@ -632,6 +632,7 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
 /// semantics to extra entries; profile-aware consumers interpret them.
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
 #[cbor(non_empty, extras = "extra_entries")]
+#[non_exhaustive]
 pub struct MeasurementValuesMap {
     /// `version` (key 0).
     #[cbor(key = 0, optional)]

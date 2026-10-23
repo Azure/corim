@@ -26,12 +26,11 @@
 //!     instance: None, group: None,
 //! };
 //!
+//! let mut values = MeasurementValuesMap::default();
+//! values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
 //! let meas = MeasurementMap {
 //!     mkey: Some(MeasuredElement::Text("firmware".into())),
-//!     mval: MeasurementValuesMap {
-//!         digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-//!         ..MeasurementValuesMap::default()
-//!     },
+//!     mval: values,
 //!     authorized_by: None,
 //! };
 //!
@@ -164,6 +163,7 @@ pub mod compat;
 /// types in this module may change between minor versions without a
 /// deprecation cycle. Production code should use [`validate::decode_and_validate`].
 pub mod diagnose;
+pub mod document;
 /// Profile-extension registry and trait. See module docs for how
 /// profile-aware crates plug into validation and diagnosis.
 pub mod profile;

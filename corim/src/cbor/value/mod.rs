@@ -159,11 +159,12 @@ impl<T> Tagged<T> {
 /// Serialize a Rust type into a `Value` using serde.
 ///
 /// This is the first step in JSON encoding: `T → Value → serde_json::Value`.
+/// Checks CBOR integer range and default decode resource limits without
+/// re-encoding, sorting maps, or discarding duplicate entries.
 pub fn to_value<T: serde::Serialize>(value: &T) -> Result<Value, String> {
-    // Use our minimal backend serializer to get a Value
-    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
-    let val: Value = crate::cbor::decode(&bytes).map_err(|e| e.to_string())?;
-    Ok(val)
+    let value = super::minimal_backend::value_ser::to_value(value)?;
+    check_tree(&value)?;
+    Ok(value)
 }
 
 /// Serialize a Rust type into a human-readable `Value` using serde.
@@ -177,8 +178,105 @@ pub fn to_human_readable_value<T: serde::Serialize>(value: &T) -> Result<Value, 
 /// Deserialize a `Value` back into a Rust type using serde.
 ///
 /// This is the last step in JSON decoding: `serde_json::Value → Value → T`.
+/// Checks the entire tree before cloning or replay, including ignored fields,
+/// under the same wire range and default resource limits as [`to_value`].
 pub fn from_value<T: serde::de::DeserializeOwned>(value: &Value) -> Result<T, String> {
-    // Encode the Value to CBOR bytes, then decode into T
-    let bytes = crate::cbor::encode(value).map_err(|e| e.to_string())?;
-    crate::cbor::decode(&bytes).map_err(|e| e.to_string())
+    check_tree(value)?;
+    super::minimal_backend::value_de::from_value(value.clone())
+}
+
+/// Major-type argument for a CBOR integer, per RFC 8949 §3.1.
+pub(crate) fn integer_argument(n: i128) -> Result<u64, String> {
+    if n >= 0 {
+        u64::try_from(n)
+            .map_err(|_| "positive integer above 2^64-1 cannot be encoded in CBOR".into())
+    } else {
+        u64::try_from(-1_i128 - n)
+            .map_err(|_| "negative integer below -(2^64) cannot be encoded in CBOR".into())
+    }
+}
+
+// Check the hypothetical deterministic wire size without allocating encoded
+// bytes or sorting map keys. Float encoding is binary64 in this backend.
+fn check_tree(value: &Value) -> Result<(), String> {
+    let limits = super::DecodeLimits::default();
+    let mut budget = super::DecodeBudget::new(&limits).map_err(|e| e.to_string())?;
+    let mut remaining_bytes = limits.max_input_bytes;
+    check_node(value, 0, &mut budget, &mut remaining_bytes)
+}
+
+fn head_size(argument: u64) -> usize {
+    if argument <= u64::from(super::constants::AI_MAX_INLINE) {
+        1
+    } else if argument <= u64::from(u8::MAX) {
+        2
+    } else if argument <= u64::from(u16::MAX) {
+        3
+    } else if argument <= u64::from(u32::MAX) {
+        5
+    } else {
+        9
+    }
+}
+
+fn check_node(
+    value: &Value,
+    depth: usize,
+    budget: &mut super::DecodeBudget,
+    remaining_bytes: &mut usize,
+) -> Result<(), String> {
+    budget.value().map_err(|e| e.to_string())?;
+    let sized_head = |len: usize| -> Result<usize, String> {
+        let argument = u64::try_from(len).map_err(|_| "CBOR length exceeds u64 range")?;
+        Ok(head_size(argument))
+    };
+    let bytes = match value {
+        Value::Integer(n) => Some(head_size(integer_argument(*n)?)),
+        Value::Bytes(b) => sized_head(b.len())?.checked_add(b.len()),
+        Value::Text(t) => sized_head(t.len())?.checked_add(t.len()),
+        Value::Array(a) => {
+            budget.container(depth).map_err(|e| e.to_string())?;
+            budget
+                .collection(a.len(), false)
+                .map_err(|e| e.to_string())?;
+            Some(sized_head(a.len())?)
+        }
+        Value::Map(m) => {
+            budget.container(depth).map_err(|e| e.to_string())?;
+            budget
+                .collection(m.len(), true)
+                .map_err(|e| e.to_string())?;
+            Some(sized_head(m.len())?)
+        }
+        Value::Tag(tag, _) => {
+            budget.container(depth).map_err(|e| e.to_string())?;
+            Some(head_size(*tag))
+        }
+        Value::Float(_) => Some(9),
+        Value::Bool(_) | Value::Null => Some(1),
+    };
+    let bytes = bytes.ok_or("CBOR encoded size exceeds usize range")?;
+    *remaining_bytes = remaining_bytes.checked_sub(bytes).ok_or_else(|| {
+        crate::error::DecodeError::LimitExceeded {
+            resource: "input bytes",
+            limit: budget.limits.max_input_bytes,
+        }
+        .to_string()
+    })?;
+    match value {
+        Value::Array(a) => {
+            for item in a {
+                check_node(item, depth + 1, budget, remaining_bytes)?;
+            }
+        }
+        Value::Map(m) => {
+            for (key, value) in m {
+                check_node(key, depth + 1, budget, remaining_bytes)?;
+                check_node(value, depth + 1, budget, remaining_bytes)?;
+            }
+        }
+        Value::Tag(_, inner) => check_node(inner, depth + 1, budget, remaining_bytes)?,
+        _ => {}
+    }
+    Ok(())
 }

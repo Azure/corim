@@ -1,15 +1,19 @@
 //! Shared non-cryptographic document validation for CLI inputs and baselines.
 
-use corim::cbor::{self, value::Value, DecodeLimits};
+use corim::document::{
+    self, CompatibilityNote, ProfileCoverage, TimeCheck, ValidationContext, ValidationCoverage,
+};
 use corim::profile::ProfileRegistry;
-use corim::types::signed::{self, CoseSign1Corim};
-use corim::types::tags::{TAG_LEGACY_SIGNED, TAG_LEGACY_TOP, TAG_SIGNED_CORIM};
-use corim::validate::{self, ValidatedCorim};
+use corim::types::signed::CoseSign1Corim;
+use corim::validate::ValidatedCorim;
+
+pub(crate) const PARTIAL_EXIT_CODE: i32 = 4;
 
 pub(crate) struct Document {
     pub payload: ValidatedCorim,
     pub signed: Option<CoseSign1Corim>,
     pub legacy_wrappers: bool,
+    pub coverage: ValidationCoverage,
 }
 
 pub(crate) fn now() -> Result<i64, String> {
@@ -25,44 +29,58 @@ pub(crate) fn document(
     now: Option<i64>,
     registry: &ProfileRegistry,
 ) -> Result<Document, String> {
-    validate::check_document_framing(bytes, &DecodeLimits::default())
+    let time = now.map_or(TimeCheck::Skip, TimeCheck::At);
+    let outcome = document::validate(bytes, &ValidationContext::new(time, registry))
         .map_err(|error| error.to_string())?;
-    let mut root: Value = cbor::decode_exact(bytes).map_err(|error| error.to_string())?;
-    let mut legacy_wrappers = false;
-    while let Value::Tag(TAG_LEGACY_TOP | TAG_LEGACY_SIGNED, inner) = root {
-        legacy_wrappers = true;
-        root = *inner;
-    }
-    let is_signed = matches!(root, Value::Tag(TAG_SIGNED_CORIM, _));
-    drop(root);
-    let limits = DecodeLimits::default();
-    let (signed, payload) = if is_signed {
-        let (signed, payload) = match now {
-            Some(now) => {
-                signed::decode_and_validate_signed_corim_at_with_limits(bytes, None, now, &limits)
-            }
-            None => {
-                signed::decode_and_validate_signed_corim_structure_with_limits(bytes, None, &limits)
-            }
-        }
-        .map_err(|error| error.to_string())?;
-        (Some(signed), payload)
-    } else {
-        let payload = match now {
-            Some(now) => validate::decode_and_validate_document_at_with_limits(bytes, now, &limits),
-            None => validate::decode_and_validate_structure_with_limits(bytes, &limits),
-        }
-        .map_err(|error| error.to_string())?;
-        (None, payload)
-    };
-    if payload.coswid_opaque_count != 0 {
-        return Err("cannot validate opaque CoSWID content".into());
-    }
-    validate::validate_corim_profile(&payload.corim, &payload.comids, registry)
-        .map_err(|error| error.to_string())?;
+    let (payload, signed, coverage) = outcome.into_parts();
+    let legacy_wrappers = coverage
+        .compatibility()
+        .iter()
+        .any(|note| matches!(note, CompatibilityNote::LegacyOuterTag(_)));
     Ok(Document {
         payload,
         signed,
         legacy_wrappers,
+        coverage,
+    })
+}
+
+pub(crate) fn coverage_json(coverage: &ValidationCoverage) -> serde_json::Value {
+    use serde_json::json;
+    let time = match coverage.time() {
+        TimeCheck::At(now) => json!({"status": "checked", "at": now}),
+        TimeCheck::Skip => json!({"status": "skipped"}),
+        _ => json!({"status": "unexamined"}),
+    };
+    let profile = match coverage.profile() {
+        ProfileCoverage::NotDeclared => json!({"status": "not-declared"}),
+        ProfileCoverage::Checked(id) => json!({"status": "checked", "id": id.to_string()}),
+        ProfileCoverage::Unregistered(id) => {
+            json!({"status": "unregistered", "id": id.to_string()})
+        }
+        _ => json!({"status": "unexamined"}),
+    };
+    let compatibility: Vec<_> = coverage
+        .compatibility()
+        .iter()
+        .map(|note| match note {
+            CompatibilityNote::LegacyOuterTag(tag) => {
+                json!({"kind": "legacy-outer-tag", "tag": tag})
+            }
+            CompatibilityNote::BareCorimMap => json!({"kind": "bare-corim-map"}),
+            CompatibilityNote::BareComidTag(index) => {
+                json!({"kind": "bare-comid-tag", "index": index})
+            }
+            CompatibilityNote::FlatCwtClaims => json!({"kind": "flat-cwt-claims"}),
+            _ => json!({"kind": "unexamined"}),
+        })
+        .collect();
+    json!({
+        "complete": coverage.is_complete(),
+        "time": time,
+        "profile": profile,
+        "unexamined_tags": coverage.unexamined_tags(),
+        "compatibility": compatibility,
+        "signature_verified": false,
     })
 }
