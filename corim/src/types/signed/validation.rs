@@ -19,7 +19,8 @@
 use super::{
     CoseSign1Corim, NumericDate, ProtectedCorimHeaderMap, CORIM_CONTENT_TYPE,
     COSE_HEADER_CONTENT_TYPE, COSE_HEADER_CORIM_META, COSE_HEADER_CWT_CLAIMS,
-    COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+    COSE_HEADER_PAYLOAD_HASH_ALG, COSE_HEADER_PAYLOAD_PREIMAGE_CT, CWT_CLAIM_EXP, CWT_CLAIM_ISS,
+    CWT_CLAIM_NBF, CWT_CLAIM_SUB,
 };
 use crate::cbor::{self, value::Value, DecodeLimits};
 use crate::nostd_prelude::*;
@@ -67,6 +68,8 @@ pub fn decode_and_validate_signed_corim_at(
 ///
 /// Envelope, protected header, metadata, selected payload and tag bodies share
 /// one aggregate budget. No budget reset or redundant CBOR parse is performed.
+/// Known embedded framing, duplicate-key and resource failures are detected
+/// before header semantic or temporal failures (RFC 8949 §3, §5.6 and §10).
 /// Has the same non-cryptographic contract as [`decode_and_validate_signed_corim_at`].
 pub fn decode_and_validate_signed_corim_at_with_limits(
     bytes: &[u8],
@@ -134,7 +137,6 @@ pub(crate) fn validate_parsed_signed(
     let Value::Map(unprotected) = unprotected else {
         return Err(invalid("COSE unprotected header must be a map"));
     };
-    header_labels(&unprotected)?;
     let payload = match payload {
         Value::Bytes(bytes) => Some(bytes),
         Value::Null => None,
@@ -148,21 +150,47 @@ pub(crate) fn validate_parsed_signed(
     let Value::Map(fields) = &header else {
         return Err(invalid("protected header must be a map"));
     };
+    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
+    let prepared_metadata = match field(fields, COSE_HEADER_CORIM_META) {
+        Some(Value::Bytes(bytes)) => {
+            let value = budget.decode_value_exact(bytes)?;
+            cbor::map_keys::check(&value)?;
+            Some(value)
+        }
+        _ => None,
+    };
+    // Declared hash payloads remain opaque; every known CBOR body is prepared
+    // before semantic/time checks, then consumed without a second parse.
+    let prepared_payload = if field(fields, COSE_HEADER_PAYLOAD_HASH_ALG).is_some() {
+        None
+    } else {
+        let selected = match (&payload, detached_payload) {
+            (Some(attached), Some(detached)) if attached.as_slice() != detached => {
+                return Err(invalid("supplied payload differs from attached payload"));
+            }
+            (Some(attached), _) => attached.as_slice(),
+            (None, Some(detached)) => detached,
+            (None, None) => {
+                return Err(invalid(
+                    "detached payload is required for complete validation",
+                ))
+            }
+        };
+        let value = budget.decode_value_exact(selected)?;
+        Some(crate::validate::prepare_parsed_corim(value, budget)?)
+    };
+    header_labels(&unprotected)?;
     header_labels(fields)?;
     disjoint_header_labels(fields, &unprotected)?;
-    let used_flat_cwt = fields.iter().any(|(key, value)| {
-        matches!((key, value),
-            (Value::Integer(key), Value::Text(_)) if *key == i128::from(CWT_CLAIM_ISS))
-    });
     let window = original_claims(fields)?;
-    check_window(window.0, window.1, now_epoch_secs, true)?;
-    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
+    check_window(window.not_before, window.expires, now_epoch_secs, true)?;
     let mut nested_error = None;
-    let protected = ProtectedCorimHeaderMap::from_value_with_budget::<serde::de::value::Error>(
+    let protected = ProtectedCorimHeaderMap::from_value_with_metadata::<serde::de::value::Error>(
         header,
         budget,
         &mut nested_error,
         true,
+        prepared_metadata,
     );
     budget.check()?;
     if let Some(error) = nested_error {
@@ -199,7 +227,8 @@ pub(crate) fn validate_parsed_signed(
                     )
                 });
         if protected.cwt_claims.is_some()
-            && (!same_time(window.0, not_before)? || !same_time(window.1, not_after)?)
+            && (!same_time(window.not_before, not_before)?
+                || !same_time(window.expires, not_after)?)
         {
             return Err(invalid(
                 "CWT nbf/exp must agree with corim-meta signature-validity",
@@ -212,20 +241,9 @@ pub(crate) fn validate_parsed_signed(
             "hash-envelope requires an authenticated preimage; digest is not an inline CoRIM",
         ));
     }
-    let selected = match (&payload, detached_payload) {
-        (Some(attached), Some(detached)) if attached.as_slice() != detached => {
-            return Err(invalid("supplied payload differs from attached payload"))
-        }
-        (Some(attached), _) => attached.as_slice(),
-        (None, Some(detached)) => detached,
-        (None, None) => {
-            return Err(invalid(
-                "detached payload is required for complete validation",
-            ))
-        }
-    };
-    let validated =
-        crate::validate::decode_and_validate_budget_with_time(selected, now_epoch_secs, budget)?;
+    let prepared_payload =
+        prepared_payload.ok_or_else(|| invalid("missing prepared inline payload"))?;
+    let validated = crate::validate::validate_prepared_corim(prepared_payload, now_epoch_secs)?;
     validated.corim.valid().map_err(ValidationError::Invalid)?;
     if validated.coswid_opaque_count != 0 {
         return Err(invalid(
@@ -242,7 +260,7 @@ pub(crate) fn validate_parsed_signed(
     Ok(ValidatedSignedDocument {
         envelope: signed,
         payload: validated,
-        used_flat_cwt,
+        used_flat_cwt: window.used_flat,
     })
 }
 
@@ -351,9 +369,13 @@ fn check_window(
     Ok(())
 }
 
-fn original_claims(
-    fields: &[(Value, Value)],
-) -> Result<(Option<NumericDate>, Option<NumericDate>), ValidationError> {
+struct ClaimWindow {
+    not_before: Option<NumericDate>,
+    expires: Option<NumericDate>,
+    used_flat: bool,
+}
+
+fn original_claims(fields: &[(Value, Value)]) -> Result<ClaimWindow, ValidationError> {
     let mut flat_issuer = None;
     let mut flat_subject = None;
     let mut flat_nbf = None;
@@ -379,6 +401,8 @@ fn original_claims(
             _ => {}
         }
     }
+    let used_flat =
+        flat_issuer.is_some() || flat_subject.is_some() || flat_nbf.is_some() || flat_exp.is_some();
     if let Some(nested) = field(fields, COSE_HEADER_CWT_CLAIMS) {
         let Value::Map(claims) = nested else {
             return Err(invalid("CWT-Claims must be a map"));
@@ -397,13 +421,21 @@ fn original_claims(
         {
             return Err(invalid("flat and nested CWT time claims disagree"));
         }
-        Ok((nbf, exp))
+        Ok(ClaimWindow {
+            not_before: nbf,
+            expires: exp,
+            used_flat,
+        })
     } else {
         if flat_issuer.is_none()
             && (flat_subject.is_some() || flat_nbf.is_some() || flat_exp.is_some())
         {
             return Err(invalid("flat CWT claims require an issuer"));
         }
-        Ok((flat_nbf, flat_exp))
+        Ok(ClaimWindow {
+            not_before: flat_nbf,
+            expires: flat_exp,
+            used_flat,
+        })
     }
 }
