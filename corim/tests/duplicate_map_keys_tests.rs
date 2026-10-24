@@ -127,6 +127,63 @@ fn generic_value_preserves_repeated_keys_for_inspection() {
 }
 
 #[test]
+fn document_boundaries_reject_nested_extension_duplicates() {
+    for duplicate in [false, true] {
+        let mut extension = vec![(text("custom"), int(1))];
+        if duplicate {
+            extension.push((text("custom"), int(2)));
+        }
+        for boundary in ["outer", "comid", "tcg-bare", "tcg-tagged"] {
+            let mut corim = sample_corim();
+            if boundary != "outer" {
+                let ConciseTagChoice::Comid(bytes) = &corim.tags[0] else {
+                    panic!("CoMID fixture")
+                };
+                let Value::Map(mut fields) = cbor::decode::<Value>(bytes).unwrap() else {
+                    panic!("CoMID map")
+                };
+                fields.push((int(EXTENSION), Value::Map(extension.clone())));
+                let body = Value::Map(fields);
+                corim.tags[0] = if boundary == "comid" {
+                    ConciseTagChoice::Comid(cbor::encode(&body).unwrap())
+                } else {
+                    let body = if boundary == "tcg-tagged" {
+                        Value::Tag(TAG_COMID, Box::new(body))
+                    } else {
+                        body
+                    };
+                    decode::<ConciseTagChoice>(&Value::Bytes(cbor::encode(&body).unwrap())).unwrap()
+                };
+                assert_eq!(
+                    corim.tags[0].as_comid().is_ok(),
+                    !duplicate,
+                    "accessor {boundary}, duplicate={duplicate}"
+                );
+            }
+            let mut fields = entries(&corim);
+            if boundary == "outer" {
+                fields.push((int(EXTENSION), Value::Map(extension.clone())));
+            }
+            let bytes = cbor::encode(&Value::Tag(TAG_CORIM, Box::new(Value::Map(fields)))).unwrap();
+            let result = decode_and_validate_full_at(&bytes, 0);
+            if duplicate {
+                assert!(
+                    matches!(
+                        result,
+                        Err(corim::ValidationError::Decode(
+                            corim::DecodeError::DuplicateKey { .. }
+                        ))
+                    ),
+                    "{boundary}: {result:?}"
+                );
+            } else {
+                assert!(result.is_ok(), "{boundary}: {result:?}");
+            }
+        }
+    }
+}
+
+#[test]
 fn corim_rejects_duplicate_required_and_optional_null_fields() {
     let base = entries(&sample_corim());
     let mut fields = base.clone();
@@ -171,7 +228,7 @@ fn serializers_reject_extras_colliding_with_populated_modeled_fields() {
     let mut claims = CwtClaims::new("issuer");
     claims
         .extra
-        .insert(ClaimKey::Int(CWT_CLAIM_ISS), text("issuer"));
+        .insert(CWT_CLAIM_ISS, text("issuer"));
     let mut h = header();
     h.extra.insert(COSE_HEADER_ALG, int(h.alg.to_i64()));
     let errors = [
@@ -270,11 +327,11 @@ fn unique_unknown_fields_remain_forward_compatible() {
     assert_eq!(value(&mval), raw);
     assert!(decode::<EnvironmentMap>(&raw).is_ok()); // Skipped, not retained.
     let mut claims = CwtClaims::new("issuer");
-    claims.extra.insert(ClaimKey::Int(EXTENSION), text("int"));
-    claims
-        .extra
-        .insert(ClaimKey::Text("custom".into()), text("text"));
+    claims.extra.insert(EXTENSION, text("int"));
     assert_eq!(decode::<CwtClaims>(&value(&claims)).unwrap(), claims);
+    let mut with_text = entries(&claims);
+    with_text.push((text("custom"), text("text")));
+    assert_eq!(decode::<CwtClaims>(&Value::Map(with_text)).unwrap(), claims);
     let mut h = header();
     h.extra.insert(EXTENSION, raw);
     assert_eq!(decode::<Header>(&value(&h)).unwrap(), h);
@@ -424,14 +481,13 @@ fn cwt_reserved_extras_reject_even_when_optional_fields_are_absent() {
     for key in [CWT_CLAIM_ISS, CWT_CLAIM_SUB, CWT_CLAIM_EXP, CWT_CLAIM_NBF] {
         let mut claims = CwtClaims::new("issuer");
         assert_eq!((&claims.sub, claims.exp, claims.nbf), (&None, None, None));
-        claims.extra.insert(ClaimKey::Int(key), Value::Null);
+        claims.extra.insert(key, Value::Null);
         assert!(cbor::encode(&claims).is_err(), "reserved key {key}");
     }
-    let mut claims = CwtClaims::new("issuer");
-    claims
-        .extra
-        .insert(ClaimKey::Text("1".into()), text("distinct"));
-    assert_eq!(decode::<CwtClaims>(&value(&claims)).unwrap(), claims);
+    let claims = CwtClaims::new("issuer");
+    let mut with_text = entries(&claims);
+    with_text.push((text("1"), text("distinct")));
+    assert_eq!(decode::<CwtClaims>(&Value::Map(with_text)).unwrap(), claims);
 }
 
 #[test]

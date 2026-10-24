@@ -630,12 +630,6 @@ fn legacy_unsigned_input_size_error_is_preserved() {
     for result in [
         decode_and_validate_full_at(&bytes, NOW).map(|_| ()),
         corim::validate::decode_and_validate_at(&bytes, NOW).map(|_| ()),
-        corim::validate::decode_and_validate_full_at_with_registry(
-            &bytes,
-            NOW,
-            &corim::profile::ProfileRegistry::new(),
-        )
-        .map(|_| ()),
     ] {
         assert!(
             matches!(result, Err(ValidationError::PayloadTooLarge { size, max: found })
