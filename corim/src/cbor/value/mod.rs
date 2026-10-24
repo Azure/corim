@@ -43,6 +43,27 @@ pub enum Value {
     Float(f64),
 }
 
+/// Escape quoted diagnostic text per RFC 8949 §8, including Unicode controls.
+pub fn escape_text(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for character in text.chars() {
+        match character {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() || c == '\u{2028}' || c == '\u{2029}' => {
+                out.push_str(&format!("\\u{:04x}", u32::from(c)));
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 impl Value {
     /// Try to extract as integer.
     pub fn into_integer(self) -> Option<i128> {
