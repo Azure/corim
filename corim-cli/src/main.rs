@@ -341,7 +341,7 @@ struct SignedInfo {
 /// Result when signed CoRIM decode partially fails.
 enum SignedDecodeResult {
     /// Protected header decoded but payload is absent/non-standard.
-    HeaderOnly(SignedInfo),
+    HeaderOnly(Box<SignedInfo>),
     /// Complete failure.
     Failed(String),
 }
@@ -421,7 +421,7 @@ fn try_decode_signed(
 
     let payload = match &signed.payload {
         Some(p) => p,
-        None => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
+        None => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
     };
 
     // Decode interop: TCG-style producers (e.g. NVIDIA) emit the inner CoRIM
@@ -434,11 +434,11 @@ fn try_decode_signed(
     let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
         match corim::cbor::decode(payload_bytes) {
             Ok(t) => t,
-            Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(info))),
+            Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
         };
 
     if tagged.tag != corim::types::tags::TAG_CORIM {
-        return Some(Err(SignedDecodeResult::HeaderOnly(info)));
+        return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info))));
     }
 
     Some(Ok((tagged.value, info)))

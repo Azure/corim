@@ -226,9 +226,7 @@ fn serializers_reject_extras_colliding_with_populated_modeled_fields() {
     mval.extra_entries
         .insert(MVAL_KEY_SVN, value(&SvnChoice::ExactValue(1)));
     let mut claims = CwtClaims::new("issuer");
-    claims
-        .extra
-        .insert(CWT_CLAIM_ISS, text("issuer"));
+    claims.extra.insert(CWT_CLAIM_ISS, text("issuer"));
     let mut h = header();
     h.extra.insert(COSE_HEADER_ALG, int(h.alg.to_i64()));
     let errors = [
