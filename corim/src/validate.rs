@@ -250,7 +250,8 @@ fn decode_and_validate_full_impl(
 pub struct CorroboratedClaim {
     /// The environment that was matched.
     pub environment: EnvironmentMap,
-    /// The measurement(s) that matched.
+    /// The complete matched evidence measurement list, not reference constraints.
+    /// Per draft-ietf-rats-corim-11 §8.2.4.2.1.
     pub measurements: Vec<MeasurementMap>,
 }
 
@@ -260,6 +261,13 @@ pub struct CorroboratedClaim {
 /// §9.4.2 (environment) and §9.4.6.1.3 (digests):
 /// - Absent condition field = wildcard
 /// - All common algorithms must agree
+///
+/// Every reference measurement must match within the same evidence claim
+/// (draft-ietf-rats-corim-11 §8.2.4.4.3). An empty reference list does not match.
+/// On success, the result retains the reference environment and copies the
+/// complete evidence measurement list, including additional measurements, in
+/// evidence order (§8.2.3.7.2 and §8.2.4.2.1). Each matching reference/evidence
+/// pair produces one result; separate evidence claims are not combined.
 pub fn match_reference_values(
     ref_triples: &[ReferenceTriple],
     evidence: &[EvidenceClaim],
@@ -272,17 +280,15 @@ pub fn match_reference_values(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches(ref_meas, &ev.measurements) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions
+                    .iter()
+                    .all(|reference| measurement_matches(reference, &ev.measurements))
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
@@ -304,6 +310,9 @@ pub struct EvidenceClaim {
 /// [`Profile::match_measurement`] hook for each candidate
 /// (reference, evidence) measurement pair before falling back to the
 /// crate's default exact-match logic.
+/// All reference measurements must match within one evidence claim; successful
+/// results copy that claim's complete measurement list, as in
+/// [`match_reference_values`] (draft-ietf-rats-corim-11 §8.2.4.2.1).
 ///
 /// Per-pair semantics:
 /// - `Some(true)` from the profile — the pair is treated as matching
@@ -344,17 +353,15 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile, ctx) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions.iter().all(|reference| {
+                    measurement_matches_with_profile(reference, &ev.measurements, profile, ctx)
+                })
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
@@ -513,7 +520,8 @@ fn find_matching_series<P: ?Sized + Profile>(
 // SVN comparison (§9.4.6.1.2)
 // ---------------------------------------------------------------------------
 
-/// Compare an SVN value against evidence.
+/// Compare an SVN condition against an exact numeric evidence SVN.
+/// Per draft-ietf-rats-corim-11 §8.2.4.4.5.3.
 ///
 /// - `ExactValue(n)`: evidence SVN must equal `n`
 /// - `MinValue(n)`: evidence SVN must be `>= n`
@@ -640,10 +648,14 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
     // Match SVN if present in reference (§9.4.6.1.2)
     if let Some(ref ref_svn) = reference.mval.svn {
         if let Some(ref ev_svn) = ev_meas.mval.svn {
-            let ev_val = match ev_svn {
-                SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
+            let matches = match (ref_svn, ev_svn) {
+                (_, SvnChoice::ExactValue(observed)) => svn_matches(ref_svn, *observed),
+                (SvnChoice::MinValue(condition), SvnChoice::MinValue(observed)) => {
+                    condition == observed
+                }
+                (SvnChoice::ExactValue(_), SvnChoice::MinValue(_)) => false,
             };
-            if !svn_matches(ref_svn, ev_val) {
+            if !matches {
                 return false;
             }
         } else {
