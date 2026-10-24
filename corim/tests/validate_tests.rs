@@ -1085,8 +1085,7 @@ fn appraisal_results(
             evidence,
             None,
             &corim::profile::MatchContext::new(),
-        )
-        .unwrap(),
+        ),
     ]
 }
 
