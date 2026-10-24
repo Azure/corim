@@ -27,8 +27,9 @@ version.** Applications upgrading from 0.2.0 must review the following changes:
 - Construct `MeasurementValuesMap`, `ProtectedCorimHeaderMap`, and `CwtClaims`
   through defaults, constructors, or builders, then assign fields; external
   struct literals are no longer supported.
-- Use `CoseLabel` keys for protected-header extensions and `NumericDate` for
-  CWT expiration/not-before fields. Existing integer builder calls still work.
+- Use `CoseLabel` keys for protected-header extensions, `ClaimKey` keys for
+  `CwtClaims::extra`, and `NumericDate` for CWT expiration/not-before fields.
+  Existing integer builder calls still work.
 - Handle CLI exit **4** for incomplete validation; baseline mismatch retains
   exit **3** precedence. Partial generation and validated extraction do not
   write output.
