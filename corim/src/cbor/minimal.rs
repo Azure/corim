@@ -97,11 +97,10 @@ pub fn encode_value(w: &mut Vec<u8>, val: &super::value::Value) -> Result<(), En
                 .iter()
                 .map(|(k, v)| {
                     let mut kb = Vec::new();
-                    // Key encoding into a Vec is infallible for sortable keys.
-                    encode_value(&mut kb, k).expect("key encoding cannot fail for canonical sort");
-                    (kb, k, v)
+                    encode_value(&mut kb, k)?;
+                    Ok((kb, k, v))
                 })
-                .collect();
+                .collect::<Result<_, EncodeError>>()?;
             items.sort_by(|(a, _, _), (b, _, _)| a.len().cmp(&b.len()).then_with(|| a.cmp(b)));
 
             encode_head(w, c::MAJOR_MAP, items.len() as u64);
@@ -181,11 +180,9 @@ impl<'a> SliceReader<'a> {
     }
 
     fn read_exact(&mut self, len: usize) -> Result<&'a [u8], CborError> {
-        if self.pos + len > self.data.len() {
-            return Err(CborError::Eof);
-        }
-        let slice = &self.data[self.pos..self.pos + len];
-        self.pos += len;
+        let end = self.pos.checked_add(len).ok_or(CborError::Eof)?;
+        let slice = self.data.get(self.pos..end).ok_or(CborError::Eof)?;
+        self.pos = end;
         Ok(slice)
     }
 }
