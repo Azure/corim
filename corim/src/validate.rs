@@ -35,6 +35,35 @@ use crate::Validate;
 /// untrusted input.
 pub const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
 
+/// Check resource budgets across a CoRIM's embedded CBOR (RFC 8949 §10).
+///
+/// This resource-only pass is intended for diagnostic/inspection consumers:
+/// malformed CBOR or invalid document structure is NOT rejected here. Use
+/// validation APIs for semantic validation. Limit failures are always fatal.
+/// Outer data, protected headers, corim-meta, and inline payload/tag bodies
+/// share one value budget; signatures, certificates and hashes stay opaque.
+pub fn check_decode_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document(bytes)
+}
+
+/// Check single-item framing at known document and embedded-CBOR boundaries.
+///
+/// Unlike [`check_decode_limits`], rejects trailing bytes after a successfully
+/// parsed item (RFC 8949 §3), and duplicate integer/text labels in schema maps
+/// (RFC 8949 §5.6), retaining the protected-header flat-CWT legacy exception.
+/// Enforces the same resource limits. Other syntax
+/// and semantic errors are intentionally left to validation/diagnostic APIs.
+/// Opaque signatures, certificates and declared hash payloads are not decoded.
+pub fn check_document_framing(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document_framing(bytes)
+}
+
 /// Result of decoding and validating a CoRIM document.
 ///
 /// Contains the decoded `CorimMap` and all extracted/validated tags.
@@ -146,29 +175,46 @@ fn decode_and_validate_full_impl(
             max: MAX_PAYLOAD_SIZE,
         });
     }
-    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
-    // present (TCG Endorsement spec / NVIDIA producers). See
-    // `crate::compat::peel_tcg_wrappers`.
-    let peeled = crate::compat::peel_tcg_wrappers(bytes).map_err(ValidationError::Decode)?;
-    let bytes = peeled.as_bytes();
-    // Decode interop: if the input is a bare `corim-map` (no #6.501 wrapper),
-    // synthesize the wrapper so strict decode succeeds. Same producer family
-    // as above (TCG-style implementations omit the inner tag because the
-    // outer #6.500/#6.502 historically provided disambiguation).
-    let wrapped = crate::compat::wrap_bare_corim_map(bytes);
-    let bytes = wrapped.as_bytes();
-    // Decode the tag-501 wrapped CoRIM
-    let tagged: cbor::value::Tagged<CorimMap> =
-        cbor::decode(bytes).map_err(ValidationError::Decode)?;
-    if tagged.tag != TAG_CORIM {
-        return Err(ValidationError::Decode(
-            crate::error::DecodeError::UnexpectedTag {
+    decode_and_validate_full_at_with_limits(bytes, now_epoch_secs, &cbor::DecodeLimits::default())
+}
+
+/// Decode and validate with an explicit clock and resource limits (RFC 8949 §10).
+/// The outer map and every embedded tag share one aggregate value budget.
+/// Resource failures return `ValidationError::Decode(DecodeError::LimitExceeded)`.
+/// Legacy validation APIs use default limits but retain `PayloadTooLarge` for
+/// oversized outer input.
+pub fn decode_and_validate_full_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    decode_and_validate_budget(bytes, now_epoch_secs, &mut budget)
+}
+
+pub(crate) fn decode_and_validate_budget(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    budget.check_input(bytes)?;
+    // Peel in the already-budgeted tree: wrappers count toward depth/work.
+    let value = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
+    let map = match value {
+        cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
+        map @ cbor::value::Value::Map(_) => map,
+        cbor::value::Value::Tag(found, _) => {
+            return Err(crate::DecodeError::UnexpectedTag {
                 expected: TAG_CORIM,
-                found: tagged.tag,
-            },
-        ));
-    }
-    let corim = tagged.value;
+                found,
+            }
+            .into())
+        }
+        _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
+    };
+    cbor::map_keys::check(&map)?;
+    let corim: CorimMap =
+        cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
@@ -190,23 +236,25 @@ fn decode_and_validate_full_impl(
     for tag in &corim.tags {
         match tag {
             ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = cbor::decode(comid_bytes).map_err(ValidationError::Decode)?;
+                let comid: ComidTag = budget.decode_schema_exact(comid_bytes)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
             ConciseTagChoice::Cotl(cotl_bytes) => {
-                let cotl: ConciseTlTag =
-                    cbor::decode(cotl_bytes).map_err(ValidationError::Decode)?;
+                let cotl: ConciseTlTag = budget.decode_schema_exact(cotl_bytes)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
             ConciseTagChoice::Coswid(coswid_bytes) => {
                 // Try structured decode; fall back to opaque count
-                match cbor::decode::<ConciseSwidTag>(coswid_bytes) {
+                match budget.decode_schema_exact::<ConciseSwidTag>(coswid_bytes) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
                     }
+                    Err(e @ crate::DecodeError::LimitExceeded { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::TrailingData { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::DuplicateKey { .. }) => return Err(e.into()),
                     Err(_) => coswid_opaque_count += 1,
                 }
             }
@@ -217,7 +265,7 @@ fn decode_and_validate_full_impl(
                 // tag-tolerant compat decoder; failure here is fatal because
                 // we have no other interpretation for a bare bstr in this
                 // position.
-                let comid = crate::compat::decode_comid_from_tcg_bstr(bytes)
+                let comid = crate::compat::decode_comid_with_budget(bytes, budget)
                     .map_err(ValidationError::Decode)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
@@ -250,7 +298,8 @@ fn decode_and_validate_full_impl(
 pub struct CorroboratedClaim {
     /// The environment that was matched.
     pub environment: EnvironmentMap,
-    /// The measurement(s) that matched.
+    /// The complete matched evidence measurement list, not reference constraints.
+    /// Per draft-ietf-rats-corim-11 §8.2.4.2.1.
     pub measurements: Vec<MeasurementMap>,
 }
 
@@ -260,6 +309,13 @@ pub struct CorroboratedClaim {
 /// §9.4.2 (environment) and §9.4.6.1.3 (digests):
 /// - Absent condition field = wildcard
 /// - All common algorithms must agree
+///
+/// Every reference measurement must match within the same evidence claim
+/// (draft-ietf-rats-corim-11 §8.2.4.4.3). An empty reference list does not match.
+/// On success, the result retains the reference environment and copies the
+/// complete evidence measurement list, including additional measurements, in
+/// evidence order (§8.2.3.7.2 and §8.2.4.2.1). Each matching reference/evidence
+/// pair produces one result; separate evidence claims are not combined.
 pub fn match_reference_values(
     ref_triples: &[ReferenceTriple],
     evidence: &[EvidenceClaim],
@@ -272,17 +328,15 @@ pub fn match_reference_values(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches(ref_meas, &ev.measurements) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions
+                    .iter()
+                    .all(|reference| measurement_matches(reference, &ev.measurements))
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
@@ -304,6 +358,9 @@ pub struct EvidenceClaim {
 /// [`Profile::match_measurement`] hook for each candidate
 /// (reference, evidence) measurement pair before falling back to the
 /// crate's default exact-match logic.
+/// All reference measurements must match within one evidence claim; successful
+/// results copy that claim's complete measurement list, as in
+/// [`match_reference_values`] (draft-ietf-rats-corim-11 §8.2.4.2.1).
 ///
 /// Per-pair semantics:
 /// - `Some(true)` from the profile — the pair is treated as matching
@@ -344,17 +401,15 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile, ctx) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions.iter().all(|reference| {
+                    measurement_matches_with_profile(reference, &ev.measurements, profile, ctx)
+                })
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
@@ -513,7 +568,8 @@ fn find_matching_series<P: ?Sized + Profile>(
 // SVN comparison (§9.4.6.1.2)
 // ---------------------------------------------------------------------------
 
-/// Compare an SVN value against evidence.
+/// Compare an SVN condition against an exact numeric evidence SVN.
+/// Per draft-ietf-rats-corim-11 §8.2.4.4.5.3.
 ///
 /// - `ExactValue(n)`: evidence SVN must equal `n`
 /// - `MinValue(n)`: evidence SVN must be `>= n`
@@ -640,10 +696,14 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
     // Match SVN if present in reference (§9.4.6.1.2)
     if let Some(ref ref_svn) = reference.mval.svn {
         if let Some(ref ev_svn) = ev_meas.mval.svn {
-            let ev_val = match ev_svn {
-                SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
+            let matches = match (ref_svn, ev_svn) {
+                (_, SvnChoice::ExactValue(observed)) => svn_matches(ref_svn, *observed),
+                (SvnChoice::MinValue(condition), SvnChoice::MinValue(observed)) => {
+                    condition == observed
+                }
+                (SvnChoice::ExactValue(_), SvnChoice::MinValue(_)) => false,
             };
-            if !svn_matches(ref_svn, ev_val) {
+            if !matches {
                 return false;
             }
         } else {

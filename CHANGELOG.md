@@ -8,6 +8,62 @@ versions.
 
 ## [Unreleased]
 
+## [0.1.4] — 2026-10-23
+
+**Crates:** `corim` and `corim-macros` v0.1.4; the unpublished CLI follows
+the workspace version. Based on **v0.1.3**, not the stale `release/v0.1.0`
+branch. MSRV remains Rust 1.85.
+
+This maintenance release retains existing public struct layouts, integer-keyed
+`CwtClaims::extra`, integer timestamp fields, profile hooks, JSON helpers and
+draft-10 wire output. It does not adopt the 0.2.x wire-model, profile,
+lossless-JSON or partial-validation exit-code redesigns.
+
+### Fixed
+
+- CBOR strings with overflowing lengths and unencodable integer map keys
+  return errors instead of panicking.
+- Nested map keys reuse their cached sort encodings, eliminating exponential
+  re-encoding work without changing canonical bytes or map ordering.
+- Document boundaries reject trailing CBOR and duplicate schema labels,
+  including skipped extensions, nested maps, metadata and tag bodies.
+  Generic `Value` decoding still preserves duplicate pairs; generic `decode`
+  still reads the first item for compatibility.
+- Decoding uses bounded byte, depth, collection and aggregate-value budgets.
+  Limits-aware envelope/header/document APIs share budgets across embedded
+  CBOR. Metadata and CoSWID fallback paths cannot hide resource, framing or
+  duplicate failures. Default limits reject oversized or excessively nested
+  inputs that older versions accepted.
+- Core and Intel-aware appraisal require all reference conditions within one
+  evidence claim and return its complete observed measurements. Exact SVN
+  conditions do not accept minimum-SVN evidence; minimum/minimum comparisons
+  require equal values. Public matching signatures remain unchanged.
+- CLI file/stdin reads are capped at 16 MiB, known document boundaries are
+  checked before normal decoding, and diagnostics/EDN use bounded parsing.
+  Unknown extension byte strings remain opaque.
+
+### Added
+
+- `CoseSign1Corim::cwt_claims_value()` and its limits-aware variant expose
+  original CWT maps with integer and text labels, including custom `"svn"`
+  claims. Registered issuer/subject strings and metadata signer names retain
+  their existing support. The view also preserves fractional raw dates without
+  changing the legacy typed timestamp fields. It reads the original protected
+  bytes and never rewrites signing input. Registered flat CWT claims are
+  supported; arbitrary text COSE extensions are not guessed to be CWT claims.
+- CLI text output includes subject and CWT claims. Signed JSON reports add
+  `signed.signer`, `signed.subject` and `signed.cwt_claims_edn`; the last is
+  explicitly an EDN string so arbitrary CBOR claim keys and values do not
+  collide or silently change type. Unsigned JSON retains its previous shape.
+  This is inspection metadata, not signature authentication.
+- Additive exact/prefix decoding and explicit `DecodeLimits`/`DecodeSession`
+  APIs allow callers to choose framing and resource contracts without changing
+  `CborCodec`.
+- Release publication uses pinned Rust/Cargo, locked dependencies, jointly
+  verified archives retained before authentication, and checksum-verified
+  resumability. Isolated tests perform no uploads. CI covers Rust 1.85 and the
+  existing no_std combinations: none and Intel.
+
 ## [0.1.3] — 2026-06-10
 
 **Crates:** [`corim`](https://crates.io/crates/corim) v0.1.3, [`corim-macros`](https://crates.io/crates/corim-macros) v0.1.3
