@@ -33,7 +33,7 @@ fn signed(claims: Option<Value>) -> CoseSign1Corim {
     let protected_header_bytes = cbor::encode(&Value::Map(header)).unwrap();
     CoseSign1Corim {
         protected_header_bytes,
-        protected: ProtectedCorimHeaderMap::default(),
+        protected: ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).build(),
         unprotected: vec![],
         payload: None,
         signature: vec![1],
@@ -114,10 +114,8 @@ fn view_rejects_duplicate_claims_and_honors_explicit_limits() {
     ]);
     assert!(signed(Some(duplicate)).cwt_claims_value().is_err());
     let envelope = signed(Some(nested_claims()));
-    let limits = DecodeLimits {
-        max_values: 1,
-        ..DecodeLimits::default()
-    };
+    let mut limits = DecodeLimits::default();
+    limits.max_values = 1;
     assert!(envelope.cwt_claims_value_with_limits(&limits).is_err());
     let bytes = encode_signed_corim(&envelope).unwrap();
     assert!(matches!(

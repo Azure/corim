@@ -68,6 +68,66 @@ pub struct CoseSign1Corim {
 }
 
 impl CoseSign1Corim {
+    /// Read original CWT claims, including text labels (RFC 8392 §3).
+    ///
+    /// Unlike the legacy integer-keyed [`super::CwtClaims`] view, this returns
+    /// the original CBOR map from protected-header label 15 (RFC 9597 §2).
+    /// Integer/text labels and fractional dates retain their CBOR types.
+    /// If label 15 is absent, registered legacy flat claims are projected by
+    /// their value types. Other text COSE labels are not guessed to be claims.
+    ///
+    /// Reads [`Self::protected_header_bytes`], not independently mutable typed
+    /// fields. No bytes are rewritten and no signature or claim semantics are
+    /// validated. Malformed framing, duplicate labels and limit failures error.
+    pub fn cwt_claims_value(&self) -> Result<Option<Value>, crate::DecodeError> {
+        self.cwt_claims_value_with_limits(&cbor::DecodeLimits::default())
+    }
+
+    /// Read original claims with explicit resource limits (RFC 8949 §10).
+    ///
+    /// The budget covers this protected-header read, not earlier decoding.
+    pub fn cwt_claims_value_with_limits(
+        &self,
+        limits: &cbor::DecodeLimits,
+    ) -> Result<Option<Value>, crate::DecodeError> {
+        use super::{
+            COSE_HEADER_CWT_CLAIMS, CWT_CLAIM_EXP, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+        };
+        let mut budget = cbor::DecodeBudget::new(limits)?;
+        let header = budget.decode_value_exact(&self.protected_header_bytes)?;
+        cbor::map_keys::check_header(&header)?;
+        let Value::Map(entries) = header else {
+            return Err(crate::DecodeError::InvalidStructure(
+                "protected header must be a CBOR map".into(),
+            ));
+        };
+        let mut flat = Vec::new();
+        for (key, value) in entries {
+            if key == Value::Integer(i128::from(COSE_HEADER_CWT_CLAIMS)) {
+                return match value {
+                    value @ Value::Map(_) => Ok(Some(value)),
+                    _ => Err(crate::DecodeError::InvalidStructure(
+                        "cwt-claims must be a map".into(),
+                    )),
+                };
+            }
+            if let Value::Integer(label) = &key {
+                let is_claim = matches!(
+                    (i64::try_from(*label).ok(), &value),
+                    (Some(CWT_CLAIM_ISS | CWT_CLAIM_SUB), Value::Text(_))
+                        | (
+                            Some(CWT_CLAIM_EXP | CWT_CLAIM_NBF),
+                            Value::Integer(_) | Value::Float(_)
+                        )
+                );
+                if is_claim {
+                    flat.push((key, value));
+                }
+            }
+        }
+        Ok((!flat.is_empty()).then_some(Value::Map(flat)))
+    }
+
     /// Construct the COSE `Sig_structure1` to-be-signed bytes per RFC 9052 §4.4.
     ///
     /// ```text
