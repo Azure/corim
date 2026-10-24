@@ -108,6 +108,13 @@ fn main() {
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
     }
 
+    if let Err(error) =
+        corim::validate::check_document_framing(&bytes, &corim::cbor::DecodeLimits::default())
+    {
+        eprintln!("FAIL: document boundary check failed: {error}");
+        process::exit(2);
+    }
+
     // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers
     // (TCG Endorsement spec / NVIDIA producers) before format detection,
     // so the `0xD2`-first-byte check below sees the inner #6.18.
@@ -272,7 +279,14 @@ decoded via compat::decode_comid_from_tcg_bstr",
     // Step 4: Output results
     match cli.format.as_str() {
         "json" => {
-            print_json_output(&corim, &comid_tags, &errors, &warnings, cli.show_raw);
+            print_json_output(
+                &corim,
+                &comid_tags,
+                &errors,
+                &warnings,
+                cli.show_raw,
+                &signed_info,
+            );
         }
         _ => {
             print_text_output(
@@ -302,6 +316,8 @@ struct SignedInfo {
     // -- protected header (decoded fields + raw bstr) --
     alg: corim::types::signed::CoseAlgorithm,
     signer_name: Option<String>,
+    subject: Option<String>,
+    cwt_claims_edn: Option<String>,
     content_type: Option<String>,
     has_cwt_claims: bool,
     has_corim_meta: bool,
@@ -358,6 +374,19 @@ fn try_decode_signed(
                 .as_ref()
                 .map(|m| m.signer.signer_name.clone())
         });
+    let subject = signed
+        .protected
+        .cwt_claims
+        .as_ref()
+        .and_then(|claims| claims.sub.clone());
+    let cwt_claims_edn = match signed
+        .cwt_claims_value()
+        .map_err(|error| error.to_string())
+        .and_then(|claims| claims.as_ref().map(edn::render_value).transpose())
+    {
+        Ok(claims) => claims,
+        Err(error) => return Some(Err(SignedDecodeResult::Failed(error))),
+    };
 
     // Re-encode the unprotected header map so we can display its raw CBOR bytes
     // alongside the other COSE_Sign1 sections. Failures here are non-fatal —
@@ -369,6 +398,8 @@ fn try_decode_signed(
     let info = SignedInfo {
         alg: signed.protected.alg,
         signer_name,
+        subject,
+        cwt_claims_edn,
         content_type: signed.protected.content_type.clone(),
         has_cwt_claims: signed.protected.cwt_claims.is_some(),
         has_corim_meta: signed.protected.corim_meta.is_some(),
@@ -445,7 +476,13 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
         println!("{}Content-Type: {}", sub, ct);
     }
     if let Some(ref name) = info.signer_name {
-        println!("{}Signer:       {}", sub, name);
+        println!("{}Signer:       {}", sub, json_escape(name));
+    }
+    if let Some(ref subject) = info.subject {
+        println!("{}Subject:      {}", sub, json_escape(subject));
+    }
+    if let Some(ref claims) = info.cwt_claims_edn {
+        println!("{}CWT claims:   {}", sub, claims);
     }
     let metadata = match (info.has_cwt_claims, info.has_corim_meta) {
         (true, true) => "CWT-Claims + corim-meta",
@@ -509,13 +546,26 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
 
 fn read_input(path: &Option<String>) -> io::Result<Vec<u8>> {
     match path {
-        Some(p) if p != "-" => fs::read(p),
-        _ => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            Ok(buf)
-        }
+        Some(p) if p != "-" => read_bounded(fs::File::open(p)?),
+        _ => read_bounded(io::stdin().lock()),
     }
+}
+
+fn read_bounded(reader: impl Read) -> io::Result<Vec<u8>> {
+    let limit = corim::cbor::DEFAULT_MAX_INPUT_BYTES;
+    let take = u64::try_from(limit)
+        .ok()
+        .and_then(|limit| limit.checked_add(1))
+        .ok_or_else(|| io::Error::other("input limit is too large"))?;
+    let mut bytes = Vec::new();
+    reader.take(take).read_to_end(&mut bytes)?;
+    if bytes.len() > limit {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("input exceeds maximum size of {limit} bytes (16 MiB)"),
+        ));
+    }
+    Ok(bytes)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -583,6 +633,7 @@ fn print_json_output(
     errors: &[String],
     warnings: &[String],
     _show_raw: bool,
+    signed_info: &Option<SignedInfo>,
 ) {
     // Simple JSON output without pulling in serde_json
     println!("{{");
@@ -617,6 +668,23 @@ fn print_json_output(
         );
     }
 
+    if let Some(info) = signed_info {
+        println!("  \"signed\": {{");
+        println!(
+            "    \"signer\": {},",
+            json_optional_string(info.signer_name.as_deref())
+        );
+        println!(
+            "    \"subject\": {},",
+            json_optional_string(info.subject.as_deref())
+        );
+        println!(
+            "    \"cwt_claims_edn\": {}",
+            json_optional_string(info.cwt_claims_edn.as_deref())
+        );
+        println!("  }},");
+    }
+
     // CoMIDs summary
     println!("  \"comids\": [");
     for (i, comid) in comids.iter().enumerate() {
@@ -639,7 +707,12 @@ fn print_json_output(
 }
 
 fn json_escape(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
+    corim::cbor::value::escape_text(s)
+}
+
+fn json_optional_string(value: Option<&str>) -> String {
+    match value {
+        Some(value) => format!("\"{}\"", json_escape(value)),
+        None => "null".into(),
+    }
 }

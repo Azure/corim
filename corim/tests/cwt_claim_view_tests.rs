@@ -53,9 +53,15 @@ fn original_claims_retain_string_values_text_labels_and_numeric_identity() {
     let tbs = decoded.to_be_signed_detached(b"payload", b"aad").unwrap();
     decoded.protected.cwt_claims.as_mut().unwrap().iss = "Edited typed view".into();
     assert_eq!(decoded.cwt_claims_value().unwrap(), Some(nested_claims()));
-    assert_eq!(decoded.to_be_signed_detached(b"payload", b"aad").unwrap(), tbs);
+    assert_eq!(
+        decoded.to_be_signed_detached(b"payload", b"aad").unwrap(),
+        tbs
+    );
     assert_eq!(encode_signed_corim(&decoded).unwrap(), bytes);
-    assert_eq!(decoded.protected_header_bytes, original.protected_header_bytes);
+    assert_eq!(
+        decoded.protected_header_bytes,
+        original.protected_header_bytes
+    );
 }
 
 #[test]

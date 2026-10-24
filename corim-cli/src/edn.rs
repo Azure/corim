@@ -41,6 +41,16 @@ pub fn render(bytes: &[u8]) -> Result<String, String> {
     Ok(out)
 }
 
+/// Render an already bounded claim value without guessing embedded documents.
+pub(crate) fn render_value(value: &Value) -> Result<String, String> {
+    let mut renderer = Renderer::new().map_err(|error| error.to_string())?;
+    let mut out = String::new();
+    renderer
+        .write_value(value, 0, 0, Ctx::Opaque, &mut out)
+        .map_err(|error| error.to_string())?;
+    Ok(out)
+}
+
 /// Position context that controls schema-aware bstr unwrapping.
 #[derive(Clone, Copy, PartialEq)]
 enum Ctx {

@@ -35,7 +35,10 @@ fn input() -> Vec<u8> {
 
 fn signed_input(svn: Value) -> Vec<u8> {
     let claims = Value::Map(vec![
-        (Value::Integer(i128::from(CWT_CLAIM_ISS)), Value::Text("Signer".into())),
+        (
+            Value::Integer(i128::from(CWT_CLAIM_ISS)),
+            Value::Text("Signer".into()),
+        ),
         (
             Value::Integer(i128::from(CWT_CLAIM_SUB)),
             Value::Text("Subject\n\"quoted\"".into()),
@@ -89,7 +92,10 @@ fn signed_text_and_json_surface_signer_subject_and_text_keyed_svn() {
         assert!(text.status.success(), "{:?}", text);
         let text = String::from_utf8(text.stdout).unwrap();
         assert!(text.contains("Signer:       Signer"), "{text}");
-        assert!(text.contains("Subject:      Subject\\n\\\"quoted\\\""), "{text}");
+        assert!(
+            text.contains("Subject:      Subject\\n\\\"quoted\\\""),
+            "{text}"
+        );
         assert!(text.contains("\"svn\""), "{text}");
         let json = run(&bytes, &["--format", "json"]);
         assert!(json.status.success(), "{:?}", json);
@@ -103,7 +109,7 @@ fn signed_text_and_json_surface_signer_subject_and_text_keyed_svn() {
 
 #[test]
 fn metadata_signer_remains_available_without_cwt() {
-    let signed = SignedCorimBuilder::new(CoseAlgorithm::Esp256, input())
+    let signed_bytes = SignedCorimBuilder::new(CoseAlgorithm::Esp256, input())
         .set_corim_meta(CorimMetaMap {
             signer: CorimSignerMap {
                 signer_name: "Metadata signer".into(),
@@ -113,7 +119,7 @@ fn metadata_signer_remains_available_without_cwt() {
         })
         .build_with_signature(vec![1])
         .unwrap();
-    let output = run(&encode_signed_corim(&signed).unwrap(), &["--format", "json"]);
+    let output = run(&signed_bytes, &["--format", "json"]);
     assert!(output.status.success(), "{output:?}");
     let report: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(report["signed"]["signer"], "Metadata signer");
@@ -140,5 +146,7 @@ fn document_framing_and_bounded_stdin_are_enforced() {
     let oversized = vec![0; cbor::DEFAULT_MAX_INPUT_BYTES + 1];
     let output = run(&oversized, &[]);
     assert!(!output.status.success());
-    assert!(String::from_utf8(output.stderr).unwrap().contains("maximum"));
+    assert!(String::from_utf8(output.stderr)
+        .unwrap()
+        .contains("maximum"));
 }
