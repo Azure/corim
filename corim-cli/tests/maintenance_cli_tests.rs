@@ -104,7 +104,7 @@ fn signed_text_and_json_surface_signer_subject_and_text_keyed_svn() {
 #[test]
 fn metadata_signer_remains_available_without_cwt() {
     let signed = SignedCorimBuilder::new(CoseAlgorithm::Esp256, input())
-        .corim_meta(CorimMetaMap {
+        .set_corim_meta(CorimMetaMap {
             signer: CorimSignerMap {
                 signer_name: "Metadata signer".into(),
                 signer_uri: None,
