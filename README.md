@@ -69,6 +69,29 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 
 Rust 1.85.
 
+## 0.1.x maintenance compatibility
+
+Version 0.1.4 is based on v0.1.3 and retains its public structs, profile hooks,
+JSON conversion and draft-10 encoding. It adds bounded parsing, exact document
+framing, duplicate-key rejection and corrected complete-evidence appraisal.
+Default decoding limits reject oversized or excessively nested inputs;
+`DecodeLimits` and limits-aware APIs provide explicit control.
+
+`CwtClaims::iss` and `sub` still expose registered string values, while
+`CwtClaims::extra` remains integer-keyed. For custom text labels such as
+`"svn"`, use
+[`CoseSign1Corim::cwt_claims_value`](corim/src/types/signed/envelope.rs), which
+returns the original CBOR map as `Value`. The limits-aware variant accepts
+custom budgets. Neither rewrites the protected bytes used for verification.
+Nested claims retain all labels and CBOR value types; legacy flat registered
+claims are recognized without treating arbitrary COSE text labels as claims.
+These accessors do not authenticate signatures or validate claim semantics.
+
+The CLI shows signer, subject and CWT claims in text. Signed JSON reports add
+`signed.signer`, `signed.subject` and `signed.cwt_claims_edn` (an EDN string,
+not a coerced JSON map). Existing unsigned JSON output is unchanged. The
+0.2.x lossless JSON codec and partial-validation exit code are not backported.
+
 ## Quick start
 
 ```rust
