@@ -1074,6 +1074,138 @@ fn match_reference_values_no_env_match() {
     assert!(corim::validate::match_reference_values(&[ref_triple], &evidence).is_empty());
 }
 
+fn appraisal_results(
+    references: &[ReferenceTriple],
+    evidence: &[corim::validate::EvidenceClaim],
+) -> [Vec<corim::validate::CorroboratedClaim>; 2] {
+    [
+        corim::validate::match_reference_values(references, evidence),
+        corim::validate::match_reference_values_with_profile::<dyn corim::profile::Profile>(
+            references,
+            evidence,
+            None,
+            &corim::profile::MatchContext::new(),
+        )
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn appraisal_requires_every_reference_measurement_in_one_evidence_claim() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let mut measurements = one_meas_with_svn(1);
+    measurements[0].mkey = Some(MeasuredElement::Uint(1));
+    let mut second = one_meas_with_svn(2).remove(0);
+    second.mkey = Some(MeasuredElement::Uint(2));
+    measurements.push(second);
+    let reference = ReferenceTriple::new(environment.clone(), measurements.clone());
+    for count in 0..=measurements.len() {
+        let evidence = corim::validate::EvidenceClaim {
+            environment: environment.clone(),
+            measurements: measurements[..count].to_vec(),
+        };
+        for result in appraisal_results(std::slice::from_ref(&reference), &[evidence]) {
+            assert_eq!(
+                result.len(),
+                usize::from(count == measurements.len()),
+                "count={count}"
+            );
+        }
+    }
+    let split: Vec<_> = measurements
+        .into_iter()
+        .map(|measurement| corim::validate::EvidenceClaim {
+            environment: environment.clone(),
+            measurements: vec![measurement],
+        })
+        .collect();
+    for result in appraisal_results(&[reference], &split) {
+        assert!(
+            result.is_empty(),
+            "separate partial evidence claims cannot satisfy one condition"
+        );
+    }
+}
+
+#[test]
+fn appraisal_copies_the_complete_matched_evidence_measurement_list() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let mut condition = one_meas_with_svn(5).remove(0);
+    condition.mkey = Some(MeasuredElement::Uint(1));
+    condition.mval.svn = Some(SvnChoice::MinValue(5));
+    let reference = ReferenceTriple::new(environment.clone(), vec![condition]);
+    let mut observed = one_meas_with_svn(7).remove(0);
+    observed.mkey = Some(MeasuredElement::Uint(1));
+    observed.mval.name = Some("observed".into());
+    let mut extra = one_meas_with_svn(0).remove(0);
+    extra.mkey = Some(MeasuredElement::Uint(2));
+    let evidence = corim::validate::EvidenceClaim {
+        environment: environment.clone(),
+        measurements: vec![extra, observed],
+    };
+    for result in appraisal_results(&[reference], std::slice::from_ref(&evidence)) {
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].environment, environment);
+        assert_eq!(result[0].measurements, evidence.measurements);
+    }
+}
+
+#[test]
+fn appraisal_svn_comparison_preserves_evidence_variant() {
+    use SvnChoice::{ExactValue, MinValue};
+    for (condition, observed, expected) in [
+        (ExactValue(5), ExactValue(5), true),
+        (ExactValue(5), ExactValue(6), false),
+        (ExactValue(5), ExactValue(4), false),
+        (MinValue(5), ExactValue(4), false),
+        (MinValue(5), ExactValue(5), true),
+        (MinValue(5), ExactValue(6), true),
+        (ExactValue(5), MinValue(5), false),
+        (MinValue(5), MinValue(4), false),
+        (MinValue(5), MinValue(5), true),
+        (MinValue(5), MinValue(6), false),
+        (MinValue(0), ExactValue(u64::MAX), true),
+        (ExactValue(u64::MAX), MinValue(u64::MAX), false),
+        (MinValue(u64::MAX), MinValue(u64::MAX), true),
+    ] {
+        let mut reference = one_meas_with_svn(0).remove(0);
+        reference.mval.svn = Some(condition.clone());
+        let mut measurement = one_meas_with_svn(0).remove(0);
+        measurement.mval.svn = Some(observed.clone());
+        assert_eq!(
+            corim::validate::core_fields_match(&reference, &measurement),
+            expected,
+            "condition={condition:?}, observed={observed:?}"
+        );
+        let environment = EnvironmentMap::for_class("V", "M");
+        let triple = ReferenceTriple::new(environment.clone(), vec![reference]);
+        let evidence = corim::validate::EvidenceClaim {
+            environment,
+            measurements: vec![measurement],
+        };
+        for result in appraisal_results(&[triple], &[evidence]) {
+            assert_eq!(
+                !result.is_empty(),
+                expected,
+                "condition={condition:?}, observed={observed:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn appraisal_empty_reference_measurements_do_not_corroborate() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let reference = ReferenceTriple::new(environment.clone(), vec![]);
+    let evidence = corim::validate::EvidenceClaim {
+        environment,
+        measurements: one_meas_with_svn(1),
+    };
+    for result in appraisal_results(&[reference], &[evidence]) {
+        assert!(result.is_empty());
+    }
+}
+
 #[test]
 fn match_reference_values_no_measurement_match() {
     let env = EnvironmentMap::for_class("ACME", "Widget");
