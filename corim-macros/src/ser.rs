@@ -86,8 +86,14 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     };
     let extras_entries = if let Some(ref extras_ident) = struct_attrs.extras {
+        let modeled_keys: Vec<_> = fields.iter().map(|f| f.attrs.key).collect();
         quote! {
             for (__k, __v) in self.#extras_ident.iter() {
+                if [#(#modeled_keys),*].contains(__k) {
+                    return Err(serde::ser::Error::custom(format!(
+                        "extra map key {__k} collides with a modeled field"
+                    )));
+                }
                 map.serialize_entry(__k, __v)?;
             }
         }

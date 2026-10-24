@@ -120,6 +120,14 @@ impl Serialize for CwtClaims {
             map.serialize_entry(&CWT_CLAIM_NBF, &nbf)?;
         }
         for (k, v) in &self.extra {
+            if matches!(
+                *k,
+                CWT_CLAIM_ISS | CWT_CLAIM_SUB | CWT_CLAIM_EXP | CWT_CLAIM_NBF
+            ) {
+                return Err(serde::ser::Error::custom(format!(
+                    "extra claim key {k} collides with a modeled claim"
+                )));
+            }
             map.serialize_entry(k, v)?;
         }
         map.end()
@@ -129,6 +137,7 @@ impl Serialize for CwtClaims {
 impl<'de> Deserialize<'de> for CwtClaims {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
+        crate::cbor::map_keys::check(&val).map_err(serde::de::Error::custom)?;
         let map = match val {
             Value::Map(m) => m,
             _ => return Err(serde::de::Error::custom("cwt-claims must be a map")),
