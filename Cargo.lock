@@ -112,7 +112,7 @@ checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
 
 [[package]]
 name = "corim"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "corim-macros",
@@ -124,7 +124,7 @@ dependencies = [
 
 [[package]]
 name = "corim-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "base64",
  "clap",
@@ -136,7 +136,7 @@ dependencies = [
 
 [[package]]
 name = "corim-macros"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "proc-macro2",
  "quote",
