@@ -115,6 +115,7 @@ dependencies = [
  "clap",
  "corim",
  "hex",
+ "serde_json",
 ]
 
 [[package]]

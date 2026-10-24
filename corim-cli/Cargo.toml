@@ -30,6 +30,9 @@ corim = { path = "../corim", version = "0.1.3" }
 clap = { version = "4", features = ["derive"] }
 hex = "0.4"
 
+[dev-dependencies]
+serde_json.workspace = true
+
 [features]
 # CLI ships with all first-party CoRIM profiles enabled by default so
 # `--diagnose` labels vendor-defined mval keys by their spec names
