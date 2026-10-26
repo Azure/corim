@@ -14,7 +14,9 @@ name: Release
 #
 # Release runbook:
 #   1. Bump version in workspace + per-crate Cargo.toml; update CHANGELOG.
-#   2. Merge to main.
+#   2. Sync main through a PR into the cleaned release/v0.2.x branch.
+#      Replay patches; do not merge main's pre-cleanup history.
+#      Create the release tag from the merged release/v0.2.x commit.
 #   3. git tag v0.X.Y && git push origin v0.X.Y
 #   4. Approve the `crates-io` environment deployment in the Actions UI.
 
