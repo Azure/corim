@@ -3,32 +3,22 @@
 
 //! CLI tool for validating and inspecting CoRIM documents.
 
-use std::fs;
-use std::io::{self, Read};
 use std::process;
 
 use clap::{Parser, Subcommand};
 
+mod authoring;
 mod baseline;
 mod convert;
 mod display;
 mod edn;
 mod generate;
+mod input;
 mod jsonfmt;
+mod profiles;
 mod prose;
 mod sign;
-
-fn build_registry() -> corim::profile::ProfileRegistry {
-    #[allow(unused_mut)]
-    let mut registry = corim::profile::ProfileRegistry::new();
-    #[cfg(feature = "intel")]
-    registry.register(Box::new(corim::profile::intel::IntelProfile::new()));
-    #[cfg(feature = "azure")]
-    registry.register(Box::new(corim::profile::azure::AzureProfile::new()));
-    #[cfg(feature = "psa")]
-    registry.register(Box::new(corim::profile::psa::PsaProfile::new()));
-    registry
-}
+mod validation;
 
 /// Validate, inspect, and generate CoRIM (Concise Reference Integrity
 /// Manifest) documents.
@@ -44,22 +34,21 @@ enum Commands {
     /// Validate and inspect a CoRIM CBOR document.
     ///
     /// Reads a CBOR-encoded CoRIM file (tag-501-wrapped), validates its
-    /// structure against draft-ietf-rats-corim-10, and outputs the
+    /// structure against draft-ietf-rats-corim-11, and outputs the
     /// decoded structure.
     Validate(ValidateArgs),
 
-    /// Generate an unsigned CoRIM CBOR document from a JSON template.
+    /// Generate a validated CoRIM from readable or lossless document JSON.
     ///
-    /// Reads a hand-authored JSON template describing the CoRIM id,
-    /// profile, and CoMID tags (full triples tree), builds the CoRIM
-    /// via the builder API, validates it, and writes the CBOR output.
+    /// Readable templates support named fields, profile aliases and comment
+    /// annotations. Lossless documents are recognized separately. Output is
+    /// written only when document validation coverage is complete.
     Generate(generate::GenerateArgs),
 
-    /// Convert an unsigned CoRIM CBOR document to a JSON template.
+    /// Convert a document to a readable JSON authoring template.
     ///
-    /// The inverse of `generate`: decodes a tag-501 CoRIM and emits a
-    /// prose-keyed JSON template that feeds straight back into
-    /// `generate`, reproducing the original bytes.
+    /// Use --lossless for full-envelope interchange, preserving protected and
+    /// payload byte strings. Conversion does not authenticate signatures.
     Convert(convert::ConvertArgs),
 
     /// Extract the unsigned CoRIM payload from a signed CoRIM.
@@ -86,7 +75,8 @@ struct ValidateArgs {
     #[arg(short, long, default_value = "text", value_parser = ["text", "json"])]
     format: String,
 
-    /// Skip validity-period expiration check.
+    /// Skip clock comparisons but retain structural/profile checks. Successful
+    /// output is partial validation (exit 4), not confirmation of temporal validity.
     #[arg(long)]
     skip_expiry: bool,
 
@@ -96,9 +86,10 @@ struct ValidateArgs {
     #[arg(long)]
     show_raw: bool,
 
-    /// Run a non-aborting structural diagnose pass and print a human-readable
-    /// report (envelope kind, every recognized issue, summary). Useful when
-    /// strict decoding fails and you need to see *all* problems at once.
+    /// Run a non-aborting structural and profile-semantic diagnose pass and
+    /// print a human-readable report (envelope kind, every recognized issue,
+    /// summary). Useful when strict decoding fails and you need to see *all*
+    /// problems at once.
     /// When set, the strict decode path is skipped; exit code is 0 if no
     /// errors are found, 2 otherwise.
     #[arg(long)]
@@ -116,7 +107,8 @@ struct ValidateArgs {
     /// structural conformance. The baseline may be a CBOR CoRIM, a signed
     /// CoRIM (attached payload), or a JSON template. Reports structural
     /// mismatches (which fail) and value differences (informational).
-    /// Exit code: 0 conformant, 3 structural mismatch, 2 invalid input.
+    /// Exit code: 0 fully checked and conformant, 3 structural mismatch,
+    /// 4 partial validation, 2 invalid input.
     #[arg(long, value_name = "FILE", conflicts_with_all = ["diagnose", "edn"])]
     baseline: Option<String>,
 }
@@ -134,17 +126,24 @@ fn main() {
 }
 
 fn run_validate(cli: ValidateArgs) {
-    let bytes = match read_input(&cli.file) {
+    let bytes = match input::read_input(cli.file.as_deref()) {
         Ok(b) => b,
         Err(e) => {
-            eprintln!("Error reading input: {}", e);
-            process::exit(1);
+            let code = if e.kind() == std::io::ErrorKind::InvalidData && !cli.edn && !cli.diagnose {
+                2
+            } else {
+                1
+            };
+            validation_failure(&cli.format, &format!("Error reading input: {e}"), code);
         }
     };
 
     if bytes.is_empty() {
-        eprintln!("Error: input is empty");
-        process::exit(1);
+        validation_failure(
+            &cli.format,
+            "input is empty",
+            if cli.edn || cli.diagnose { 1 } else { 2 },
+        );
     }
 
     // --edn: render the raw CBOR as Extended Diagnostic Notation and
@@ -163,199 +162,65 @@ fn run_validate(cli: ValidateArgs) {
         }
     }
 
-    // --diagnose: best-effort structural inspection that does NOT abort on
-    // the first error. Prints all issues, then exits.
+    // --diagnose: best-effort structural and profile-semantic inspection that
+    // does NOT abort on the first error. Prints all issues, then exits.
     //
     // Note: --diagnose runs on the *original* bytes so the report can
     // explicitly call out legacy `#6.500` / `#6.502` outer wrappers.
     if cli.diagnose {
         // Register all first-party profiles enabled for this CLI build
-        // so diagnose can label profile-defined mval keys by name.
-        let registry = build_registry();
+        // so diagnose can label and validate profile-defined content.
+        let registry = profiles::build_registry();
         let report = corim::diagnose::inspect(&bytes, &registry);
         print!("{}", report);
         process::exit(if report.error_count() == 0 { 0 } else { 2 });
     }
 
-    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers
-    // (TCG Endorsement spec / NVIDIA producers) before format detection,
-    // so the `0xD2`-first-byte check below sees the inner #6.18.
-    let bytes: Vec<u8> = match corim::compat::peel_tcg_wrappers(&bytes) {
-        Ok(p) => {
-            if p.was_peeled() {
-                eprintln!(
-                    "note: stripped legacy outer CBOR tag(s) #6.500 / #6.502 \
-(TCG Endorsement spec / pre-draft-10 producer)"
-                );
-            }
-            p.as_bytes().to_vec()
-        }
-        Err(e) => {
-            eprintln!("FAIL: legacy-wrapper peel failed: {}", e);
-            process::exit(2);
-        }
+    let registry = profiles::build_registry();
+    let now = if cli.skip_expiry {
+        None
+    } else {
+        Some(validation::now().unwrap_or_else(|error| validation_failure(&cli.format, &error, 1)))
     };
-
-    // Step 1: Detect format — try signed CoRIM (tag 18) first, then unsigned (tag 501)
-    let (corim, signed_info) = match try_decode_signed(&bytes) {
-        Some(result) => match result {
-            Ok((corim_map, info)) => (Some(corim_map), Some(info)),
-            Err(SignedDecodeResult::HeaderOnly(info)) => {
-                // Signed CoRIM decoded but payload is detached/non-standard.
-                // With `--baseline`, still compare the protected header
-                // (there is no payload to validate/compare). Otherwise show
-                // header info only.
-                if let Some(baseline_path) = &cli.baseline {
-                    match baseline::run(None, Some(&info.protected), baseline_path, &cli.format) {
-                        Ok(true) => process::exit(0),
-                        Ok(false) => process::exit(3),
-                        Err(e) => {
-                            eprintln!("Error: {e}");
-                            process::exit(1);
-                        }
-                    }
-                }
-                if cli.format == "json" {
-                    println!("{{");
-                    println!("  \"valid\": true,");
-                    println!("  \"payload_decoded\": false,");
-                    print_signed_json(&info, "  ", false);
-                    println!("}}");
-                } else {
-                    print_signed_header_only(&info, cli.show_raw);
-                }
-                process::exit(0);
-            }
-            Err(SignedDecodeResult::Failed(e)) => {
-                eprintln!("FAIL: Detected signed CoRIM (tag 18) but decode failed");
-                eprintln!("  Error: {}", e);
-                process::exit(2);
-            }
-        },
-        None => {
-            // Try unsigned CoRIM (tag 501)
-            let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
-                match corim::cbor::decode(&bytes) {
-                    Ok(t) => t,
-                    Err(e) => {
-                        eprintln!("FAIL: Cannot decode as CoRIM");
-                        eprintln!("  Not a signed CoRIM (tag 18) or unsigned CoRIM (tag 501)");
-                        eprintln!("  CBOR decode error: {}", e);
-                        process::exit(2);
-                    }
-                };
-
-            if tagged.tag != corim::types::tags::TAG_CORIM {
-                eprintln!(
-                    "FAIL: Expected CBOR tag {} (unsigned) or {} (signed), found tag {}",
-                    corim::types::tags::TAG_CORIM,
-                    corim::types::tags::TAG_SIGNED_CORIM,
-                    tagged.tag
-                );
-                process::exit(2);
-            }
-            (Some(tagged.value), None)
-        }
-    };
-
-    let corim = corim.unwrap(); // safe: HeaderOnly case already exited above
-    let registry = build_registry();
+    let document = validation::document(&bytes, now, &registry)
+        .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
+    if document.legacy_wrappers {
+        eprintln!("note: accepted legacy outer CBOR tag(s) #6.500 / #6.502");
+    }
+    let signed_info = document
+        .signed
+        .map(signed_info)
+        .transpose()
+        .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
+    let coverage = document.coverage;
+    let corim = document.payload.corim;
+    let comid_tags = document.payload.comids;
     let profile_for_render = corim.profile.as_ref().and_then(|pc| registry.get(pc));
-
-    // Step 2: Structural validation
-    let mut warnings: Vec<String> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-
-    // Check rim-validity
-    if let Some(ref validity) = corim.rim_validity {
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs() as i64;
-
-        if let Some(nb) = validity.not_before {
-            if now < nb.epoch_secs() && !cli.skip_expiry {
-                warnings.push(format!(
-                    "rim-validity.not-before ({}) is in the future",
-                    nb.epoch_secs()
-                ));
-            }
-        }
-
-        if validity.not_after.epoch_secs() < now && !cli.skip_expiry {
-            errors.push(format!(
-                "rim-validity.not-after ({}) is in the past — CoRIM is expired",
-                validity.not_after.epoch_secs()
-            ));
-        }
+    let errors = Vec::new();
+    let mut warnings = Vec::new();
+    if cli.skip_expiry {
+        warnings.push("partial validation: temporal checks skipped".into());
     }
-
-    if corim.tags.is_empty() {
-        errors.push("tags array is empty — at least one tag is required".into());
+    if let corim::document::ProfileCoverage::Unregistered(id) = coverage.profile() {
+        warnings.push(format!(
+            "partial validation: profile {id} is not registered"
+        ));
     }
-
-    // Step 3: Decode and validate each tag
-    let mut comid_tags: Vec<corim::types::comid::ComidTag> = Vec::new();
-    let mut coswid_count = 0u32;
-    let mut cotl_count = 0u32;
-    let mut unknown_count = 0u32;
-
-    for (i, tag) in corim.tags.iter().enumerate() {
+    let mut coswid_count = 0;
+    let mut cotl_count = 0;
+    let mut unknown_count = 0;
+    for (index, tag) in corim.tags.iter().enumerate() {
+        use corim::types::ConciseTagChoice;
         match tag {
-            corim::types::corim::ConciseTagChoice::Comid(comid_bytes) => {
-                match corim::cbor::decode::<corim::types::comid::ComidTag>(comid_bytes) {
-                    Ok(comid) => {
-                        // Validate triples non-empty
-                        let t = &comid.triples;
-                        let has_triples = t.reference_triples.is_some()
-                            || t.endorsed_triples.is_some()
-                            || t.identity_triples.is_some()
-                            || t.attest_key_triples.is_some()
-                            || t.dependency_triples.is_some()
-                            || t.membership_triples.is_some()
-                            || t.coswid_triples.is_some()
-                            || t.conditional_endorsement_series.is_some()
-                            || t.conditional_endorsement.is_some();
-
-                        if !has_triples {
-                            errors.push(format!("tags[{}] (CoMID): triples-map is empty", i));
-                        }
-                        comid_tags.push(comid);
-                    }
-                    Err(e) => {
-                        errors.push(format!(
-                            "tags[{}] (CoMID): failed to decode inner CBOR — {}",
-                            i, e
-                        ));
-                    }
-                }
-            }
-            corim::types::corim::ConciseTagChoice::Coswid(_) => coswid_count += 1,
-            corim::types::corim::ConciseTagChoice::Cotl(_) => cotl_count += 1,
-            corim::types::corim::ConciseTagChoice::Unknown(tag_num, _) => {
-                warnings.push(format!("tags[{}]: unknown tag type {}", i, tag_num));
-                unknown_count += 1;
-            }
-            corim::types::corim::ConciseTagChoice::BareBstr(bstr) => {
-                // TCG-style interop: producers omit the outer `#6.506(bstr)`
-                // wrapping. Use the compat helper to surface the inner CoMID.
-                warnings.push(format!(
-                    "tags[{}]: bare bstr ({} bytes) — TCG-style untagged CoMID; \
-decoded via compat::decode_comid_from_tcg_bstr",
-                    i,
-                    bstr.len()
-                ));
-                match corim::compat::decode_comid_from_tcg_bstr(bstr) {
-                    Ok(comid) => comid_tags.push(comid),
-                    Err(e) => errors.push(format!(
-                        "tags[{}] (BareBstr): failed to decode as CoMID — {}",
-                        i, e
-                    )),
-                }
+            ConciseTagChoice::Coswid(_) => coswid_count += 1,
+            ConciseTagChoice::Cotl(_) => cotl_count += 1,
+            ConciseTagChoice::Comid(_) => {}
+            ConciseTagChoice::BareBstr(_) => {
+                warnings.push(format!("tags[{index}]: TCG-style untagged CoMID"))
             }
             _ => {
-                warnings.push(format!("tags[{}]: unrecognized tag variant", i));
                 unknown_count += 1;
+                warnings.push(format!("tags[{index}]: unknown tag type"));
             }
         }
     }
@@ -363,24 +228,22 @@ decoded via compat::decode_comid_from_tcg_bstr",
     // Baseline conformance mode: compare the (valid) input against a
     // known-good baseline and exit on the conformance result.
     if let Some(baseline_path) = &cli.baseline {
-        if !errors.is_empty() {
-            eprintln!("Input CoRIM is not valid; cannot compare against baseline:");
-            for e in &errors {
-                eprintln!("  {e}");
-            }
-            process::exit(2);
-        }
         match baseline::run(
             Some(&corim),
             signed_info.as_ref().map(|i| &i.protected),
             baseline_path,
             &cli.format,
+            now,
+            &coverage,
         ) {
-            Ok(true) => process::exit(0),
-            Ok(false) => process::exit(3),
+            Ok(outcome) if !outcome.conformant => process::exit(3),
+            Ok(outcome) => process::exit(if outcome.complete {
+                0
+            } else {
+                validation::PARTIAL_EXIT_CODE
+            }),
             Err(e) => {
-                eprintln!("Error: {e}");
-                process::exit(1);
+                validation_failure(&cli.format, &e.to_string(), e.exit_code());
             }
         }
     }
@@ -388,14 +251,8 @@ decoded via compat::decode_comid_from_tcg_bstr",
     // Step 4: Output results
     match cli.format.as_str() {
         "json" => {
-            print_json_output(
-                &corim,
-                &comid_tags,
-                &errors,
-                &warnings,
-                &signed_info,
-                cli.show_raw,
-            );
+            print_json_output(&corim, &comid_tags, &warnings, &signed_info, &coverage)
+                .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
         }
         _ => {
             print_text_output(
@@ -409,13 +266,28 @@ decoded via compat::decode_comid_from_tcg_bstr",
                 unknown_count,
                 &signed_info,
                 profile_for_render,
+                coverage.is_complete(),
             );
         }
     }
+    process::exit(if coverage.is_complete() {
+        0
+    } else {
+        validation::PARTIAL_EXIT_CODE
+    });
+}
 
-    if !errors.is_empty() {
-        process::exit(2);
+fn validation_failure(format: &str, error: &str, code: i32) -> ! {
+    if format == "json" {
+        println!(
+            "{}",
+            serde_json::json!({"status": if code == 1 { "error" } else { "invalid" },
+                "valid":false,"time_validated":false,"errors":[error]})
+        );
+    } else {
+        eprintln!("FAIL: {error}");
     }
+    process::exit(code)
 }
 
 /// Information extracted from a signed CoRIM's COSE_Sign1 wrapper.
@@ -448,52 +320,26 @@ struct SignedInfo {
     signature: Vec<u8>,
 }
 
-/// Result when signed CoRIM decode partially fails.
-enum SignedDecodeResult {
-    /// Protected header decoded but payload is absent/non-standard.
-    HeaderOnly(Box<SignedInfo>),
-    /// Complete failure.
-    Failed(String),
-}
-
-/// Try to decode the bytes as a signed CoRIM (tag 18).
-/// Returns `None` if the first byte doesn't indicate tag 18 (0xD2).
-/// Returns `Some(Ok(...))` on success or `Some(Err(...))` on decode failure.
-fn try_decode_signed(
-    bytes: &[u8],
-) -> Option<Result<(corim::types::corim::CorimMap, SignedInfo), SignedDecodeResult>> {
-    // Quick check: tag 18 starts with 0xD2
-    if bytes.first() != Some(&0xD2) {
-        return None;
-    }
-
-    let signed = match corim::types::signed::decode_signed_corim(bytes) {
-        Ok(s) => s,
-        Err(e) => return Some(Err(SignedDecodeResult::Failed(format!("{}", e)))),
-    };
-
-    // Re-encode the unprotected header map so we can display its raw CBOR bytes
-    // alongside the other COSE_Sign1 sections. Failures here are non-fatal —
-    // an empty Vec just means we won't render bytes for that section.
+fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> Result<SignedInfo, String> {
     let unprotected_bytes =
         corim::cbor::encode(&corim::cbor::value::Value::Map(signed.unprotected.clone()))
-            .unwrap_or_default();
+            .map_err(|error| format!("encoding unprotected header for display: {error}"))?;
 
     let info = SignedInfo {
-        alg: signed.protected.alg,
-        content_type: signed.protected.content_type.clone(),
-        has_cwt_claims: signed.protected.cwt_claims.is_some(),
-        has_corim_meta: signed.protected.corim_meta.is_some(),
+        alg: signed.protected().alg,
+        content_type: signed.protected().content_type.clone(),
+        has_cwt_claims: signed.protected().cwt_claims.is_some(),
+        has_corim_meta: signed.protected().corim_meta.is_some(),
         x5chain_count: signed
-            .protected
+            .protected()
             .x5chain
             .as_ref()
             .map(|x| x.certs().len())
             .unwrap_or(0),
-        has_x5t: signed.protected.x5t.is_some(),
-        has_kid: signed.protected.kid.is_some(),
-        protected_header_bytes: signed.protected_header_bytes.clone(),
-        protected: signed.protected.clone(),
+        has_x5t: signed.protected().x5t.is_some(),
+        has_kid: signed.protected().kid.is_some(),
+        protected_header_bytes: signed.protected_header_bytes().to_vec(),
+        protected: signed.protected().clone(),
         unprotected_entries: signed.unprotected.len(),
         unprotected_bytes,
         is_detached: signed.is_detached(),
@@ -501,35 +347,7 @@ fn try_decode_signed(
         signature: signed.signature.clone(),
     };
 
-    let payload = match &signed.payload {
-        Some(p) => p,
-        None => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
-    };
-
-    // Decode interop: TCG-style producers (e.g. NVIDIA) emit the inner CoRIM
-    // as a bare `corim-map` instead of `#6.501(corim-map)`. Wrap if needed
-    // so the strict decode below sees the spec-compliant tagged form.
-    let payload_for_decode = corim::compat::wrap_bare_corim_map(payload);
-    let payload_bytes = payload_for_decode.as_bytes();
-
-    // Decode the inner CoRIM from the (possibly synthesized) tagged payload
-    let tagged: corim::cbor::value::Tagged<corim::types::corim::CorimMap> =
-        match corim::cbor::decode(payload_bytes) {
-            Ok(t) => t,
-            Err(_) => return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info)))),
-        };
-
-    if tagged.tag != corim::types::tags::TAG_CORIM {
-        return Some(Err(SignedDecodeResult::HeaderOnly(Box::new(info))));
-    }
-
-    Some(Ok((tagged.value, info)))
-}
-
-/// Print signed CoRIM header info when the inner payload can't be decoded.
-fn print_signed_header_only(info: &SignedInfo, show_raw: bool) {
-    println!("✓ Signed CoRIM (tag 18) — header decoded\n");
-    print_cose_sign1(info, "  ", show_raw);
+    Ok(info)
 }
 
 /// Render the four COSE_Sign1 elements per RFC 9052 §4:
@@ -647,17 +465,6 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     println!();
 }
 
-fn read_input(path: &Option<String>) -> io::Result<Vec<u8>> {
-    match path {
-        Some(p) if p != "-" => fs::read(p),
-        _ => {
-            let mut buf = Vec::new();
-            io::stdin().read_to_end(&mut buf)?;
-            Ok(buf)
-        }
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn print_text_output(
     corim: &corim::types::corim::CorimMap,
@@ -670,10 +477,13 @@ fn print_text_output(
     unknown_count: u32,
     signed_info: &Option<SignedInfo>,
     profile: Option<&(dyn corim::profile::Profile + Send + Sync)>,
+    complete: bool,
 ) {
     // Validation result
-    if errors.is_empty() {
-        println!("✓ CoRIM is valid\n");
+    if errors.is_empty() && !complete {
+        println!("PARTIAL: some validation checks were not performed; see warnings\n");
+    } else if errors.is_empty() {
+        println!("PASS: structural, temporal and profile checks passed\n");
     } else {
         println!("✗ CoRIM validation failed\n");
         for e in errors {
@@ -682,6 +492,7 @@ fn print_text_output(
         println!();
     }
 
+    println!("Cryptographic verification was not performed.");
     for w in warnings {
         println!("  WARNING: {}", w);
     }
@@ -721,103 +532,63 @@ fn print_text_output(
 fn print_json_output(
     corim: &corim::types::corim::CorimMap,
     comids: &[corim::types::comid::ComidTag],
-    errors: &[String],
     warnings: &[String],
     signed_info: &Option<SignedInfo>,
-    _show_raw: bool,
-) {
-    // Simple JSON output without pulling in serde_json
-    println!("{{");
-    println!("  \"valid\": {},", errors.is_empty());
-
-    if !errors.is_empty() {
-        println!("  \"errors\": [");
-        for (i, e) in errors.iter().enumerate() {
-            let comma = if i + 1 < errors.len() { "," } else { "" };
-            println!("    \"{}\"{}", jsonfmt::escape(e), comma);
-        }
-        println!("  ],");
-    }
-
+    coverage: &corim::document::ValidationCoverage,
+) -> Result<(), String> {
+    let encoded = |value| corim::json::value_to_json(&value).map_err(|error| error.to_string());
+    let id = corim::cbor::value::to_value(&corim.id)?;
+    let summaries = comids
+        .iter()
+        .map(|comid| {
+            let mut summary = serde_json::json!({
+                "tag_id": encoded(corim::cbor::value::to_value(&comid.tag_identity.tag_id)?)?,
+                "triple_types": serde_json::from_str::<serde_json::Value>(&format!(
+                    "[{}]", display::triple_type_list(&comid.triples),
+                )).map_err(|error| error.to_string())?,
+            });
+            if let Some(version) = comid.tag_identity.tag_version {
+                summary["tag_version"] =
+                    encoded(corim::cbor::value::Value::Integer(version.into()))?;
+            }
+            Ok(summary)
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let complete = coverage.is_complete();
+    let mut report = serde_json::json!({
+        "status": if complete { "complete" } else { "partial" },
+        "valid": complete.then_some(true),
+        "time_validated": matches!(coverage.time(), corim::document::TimeCheck::At(_)),
+        "coverage": validation::coverage_json(coverage),
+        "id": encoded(id)?,
+        "tags_count": corim.tags.len(),
+        "comid_count": comids.len(),
+        "comids": summaries,
+    });
     if !warnings.is_empty() {
-        println!("  \"warnings\": [");
-        for (i, w) in warnings.iter().enumerate() {
-            let comma = if i + 1 < warnings.len() { "," } else { "" };
-            println!("    \"{}\"{}", jsonfmt::escape(w), comma);
-        }
-        println!("  ],");
+        report["warnings"] = serde_json::json!(warnings);
     }
-
+    if let Some(profile) = &corim.profile {
+        report["profile"] = encoded(corim::cbor::value::to_value(profile)?)?;
+    }
     if let Some(info) = signed_info {
-        print_signed_json(info, "  ", true);
+        report["signed"] = signed_json(info)?;
     }
-
-    println!("  \"id\": {},", display::corim_id_json(&corim.id));
-    println!("  \"tags_count\": {},", corim.tags.len());
-    println!("  \"comid_count\": {},", comids.len());
-
-    if let Some(ref profile) = corim.profile {
-        println!(
-            "  \"profile\": \"{}\",",
-            jsonfmt::escape(&display::profile_str(profile))
-        );
-    }
-
-    // CoMIDs summary
-    println!("  \"comids\": [");
-    for (i, comid) in comids.iter().enumerate() {
-        let comma = if i + 1 < comids.len() { "," } else { "" };
-        println!("    {{");
-        println!(
-            "      \"tag_id\": {},",
-            display::tag_id_json(&comid.tag_identity.tag_id)
-        );
-        if let Some(v) = comid.tag_identity.tag_version {
-            println!("      \"tag_version\": {},", v);
-        }
-        let triple_types = display::triple_type_list(&comid.triples);
-        println!("      \"triple_types\": [{}]", triple_types);
-        println!("    }}{}", comma);
-    }
-    println!("  ]");
-
-    println!("}}");
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?
+    );
+    Ok(())
 }
 
-/// Emit the `"signed"` object, mirroring the fields the text renderer shows
-/// for the four COSE_Sign1 elements (RFC 9052 §4).
-fn print_signed_json(info: &SignedInfo, indent: &str, comma: bool) {
-    let p = &info.protected;
-    println!("{indent}\"signed\": {{");
-    println!(
-        "{indent}  \"tag\": {},",
-        corim::types::tags::TAG_SIGNED_CORIM
-    );
-
-    println!(
-        "{indent}  \"protected\": {},",
-        jsonfmt::protected_header(p, info.protected_header_bytes.len(), &format!("{indent}  "))
-    );
-
-    println!(
-        "{indent}  \"unprotected\": {{ \"entries\": {}, \"size\": {} }},",
-        info.unprotected_entries,
-        info.unprotected_bytes.len()
-    );
-    if info.is_detached {
-        println!("{indent}  \"payload\": {{ \"detached\": true }},");
-    } else {
-        println!(
-            "{indent}  \"payload\": {{ \"detached\": false, \"size\": {} }},",
-            info.payload_bytes.len()
-        );
-    }
-    println!(
-        "{indent}  \"signature\": {{ \"size\": {} }},",
-        info.signature.len()
-    );
-    // Structure-only tool: the signature is never checked.
-    println!("{indent}  \"signature_verified\": false");
-
-    println!("{indent}}}{}", if comma { "," } else { "" });
+fn signed_json(info: &SignedInfo) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
+        "tag": corim::types::tags::TAG_SIGNED_CORIM,
+        "protected": jsonfmt::protected_header_value(&info.protected, info.protected_header_bytes.len())
+            .map_err(|error| error.to_string())?,
+        "unprotected": { "entries": info.unprotected_entries, "size": info.unprotected_bytes.len() },
+        "payload": { "detached": info.is_detached, "size": info.payload_bytes.len() },
+        "signature": { "size": info.signature.len() },
+        "signature_verified": false,
+    }))
 }

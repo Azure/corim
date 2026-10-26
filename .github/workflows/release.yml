@@ -14,7 +14,9 @@ name: Release
 #
 # Release runbook:
 #   1. Bump version in workspace + per-crate Cargo.toml; update CHANGELOG.
-#   2. Merge to main.
+#   2. Sync main through a PR into the cleaned release/v0.2.x branch.
+#      Replay patches; do not merge main's pre-cleanup history.
+#      Create the release tag from the merged release/v0.2.x commit.
 #   3. git tag v0.X.Y && git push origin v0.X.Y
 #   4. Approve the `crates-io` environment deployment in the Actions UI.
 
@@ -29,6 +31,8 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  RUSTUP_TOOLCHAIN: 1.99.0
+  CARGO_TARGET_DIR: target/release-build
 
 jobs:
   publish:
@@ -38,8 +42,13 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
+      # Public release, not a rolling stable alias or a vendor toolchain.
+      # Cargo 1.99 supports stable `cargo package --workspace`.
+      - name: Install Rust 1.99.0
+        run: |
+          rustup toolchain install 1.99.0 --profile minimal --component clippy
+          rustc --version --verbose
+          cargo --version --verbose
 
       - name: Cache cargo registry & build
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -47,8 +56,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('**/Cargo.lock') }}
+            target/release-build
+          key: ${{ runner.os }}-cargo-release-1.99.0-${{ hashFiles('**/Cargo.lock') }}
 
       # Sanity: tag must match versions in Cargo.toml.
       - name: Verify tag matches crate versions
@@ -64,19 +73,43 @@ jobs:
           fi
 
       # Pre-flight: full test + clippy on the exact tagged commit, across
-      # every feature combination we ship (default, +profile-intel, +json),
+      # all optional profiles and JSON support,
       # plus a no-default-features build for the no_std + alloc path.
       - name: Test (workspace, all features)
-        run: cargo test --workspace --all-features
+        run: cargo test --locked --workspace --all-features
 
       - name: Clippy (workspace, all features)
-        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
 
       - name: Clippy (corim, no-default-features)
-        run: cargo clippy -p corim --lib --no-default-features -- -D warnings
+        run: cargo clippy --locked -p corim --lib --no-default-features -- -D warnings
 
       - name: Build (corim, no-default-features, no_std + alloc)
-        run: cargo build -p corim --no-default-features
+        run: cargo build --locked -p corim --no-default-features
+
+      - name: Package and verify both crates together
+        run: |
+          set -euo pipefail
+          cargo package --workspace --exclude corim-cli --all-features --locked
+          version="${GITHUB_REF_NAME#v}"
+          mkdir -p target/release-artifacts
+          cp "$CARGO_TARGET_DIR/package/corim-macros-$version.crate" target/release-artifacts/
+          cp "$CARGO_TARGET_DIR/package/corim-$version.crate" target/release-artifacts/
+          (
+            cd target/release-artifacts
+            sha256sum "corim-macros-$version.crate" "corim-$version.crate" > SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      # Complete this upload before obtaining a registry credential. Artifacts
+      # from a successful step remain downloadable even if publication fails.
+      - name: Retain verified release archives
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: verified-crates-${{ github.ref_name }}
+          path: target/release-artifacts/
+          if-no-files-found: error
+          retention-days: 90
 
       # Exchange the GitHub OIDC token for a crates.io publish token.
       # Sets CARGO_REGISTRY_TOKEN in the environment for subsequent steps.
@@ -87,15 +120,9 @@ jobs:
       - name: Publish corim-macros
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p corim-macros
-
-      # The crates.io sparse index can take 30–60s to surface the newly
-      # published version. corim depends on corim-macros, so we wait
-      # before publishing it.
-      - name: Wait for corim-macros to be indexed
-        run: sleep 60
+        run: bash scripts/publish-crate.sh corim-macros "${GITHUB_REF_NAME#v}" "target/release-artifacts/corim-macros-${GITHUB_REF_NAME#v}.crate"
 
       - name: Publish corim
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p corim
+        run: bash scripts/publish-crate.sh corim "${GITHUB_REF_NAME#v}" "target/release-artifacts/corim-${GITHUB_REF_NAME#v}.crate"

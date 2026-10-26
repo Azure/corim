@@ -26,11 +26,12 @@ use serde::{Deserialize, Serialize};
 use super::super::corim::CorimMetaMap;
 use super::super::measurement::DigestAlg;
 use super::algorithm::CoseAlgorithm;
-use super::cwt::{value_to_epoch, CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_NBF, CWT_CLAIM_SUB};
+use super::cwt::{CwtClaims, NumericDate, CWT_CLAIM_EXP, CWT_CLAIM_NBF, CWT_CLAIM_SUB};
 use super::x509::{
     deserialize_cose_cert_hash, deserialize_cose_x509, serialize_cose_x509, CoseCertHash, CoseX509,
     COSE_HEADER_KID, COSE_HEADER_X5BAG, COSE_HEADER_X5CHAIN, COSE_HEADER_X5T, COSE_HEADER_X5U,
 };
+use super::CoseLabel;
 use crate::cbor;
 use crate::cbor::value::Value;
 use crate::Validate;
@@ -75,6 +76,7 @@ pub const CORIM_CONTENT_TYPE: &str = "application/rim+cbor";
 /// }
 /// ```
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct ProtectedCorimHeaderMap {
     /// COSE algorithm identifier (key 1).
     pub alg: CoseAlgorithm,
@@ -109,7 +111,7 @@ pub struct ProtectedCorimHeaderMap {
     pub x5u: Option<String>,
 
     /// Any additional COSE header labels not explicitly modeled above.
-    pub extra: BTreeMap<i64, Value>,
+    pub extra: BTreeMap<CoseLabel, Value>,
 }
 
 impl ProtectedCorimHeaderMap {
@@ -236,8 +238,8 @@ impl ProtectedCorimHeaderMapBuilder {
     }
 
     /// Add an extra COSE header label.
-    pub fn extra(mut self, key: i64, value: Value) -> Self {
-        self.inner.extra.insert(key, value);
+    pub fn extra(mut self, key: impl Into<CoseLabel>, value: Value) -> Self {
+        self.inner.extra.insert(key.into(), value);
         self
     }
 
@@ -250,6 +252,38 @@ impl ProtectedCorimHeaderMapBuilder {
 impl Serialize for ProtectedCorimHeaderMap {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         use serde::ser::SerializeMap;
+
+        // Only collisions with emitted fields are rejected here: a raw,
+        // malformed corim-meta may intentionally be retained in extra.
+        for (key, present) in [
+            (COSE_HEADER_ALG, true),
+            (COSE_HEADER_CONTENT_TYPE, self.content_type.is_some()),
+            (COSE_HEADER_CORIM_META, self.corim_meta.is_some()),
+            (COSE_HEADER_CWT_CLAIMS, self.cwt_claims.is_some()),
+            (COSE_HEADER_KID, self.kid.is_some()),
+            (COSE_HEADER_X5BAG, self.x5bag.is_some()),
+            (COSE_HEADER_X5CHAIN, self.x5chain.is_some()),
+            (COSE_HEADER_X5T, self.x5t.is_some()),
+            (COSE_HEADER_X5U, self.x5u.is_some()),
+            (
+                COSE_HEADER_PAYLOAD_HASH_ALG,
+                self.payload_hash_alg.is_some(),
+            ),
+            (
+                COSE_HEADER_PAYLOAD_PREIMAGE_CT,
+                self.payload_preimage_content_type.is_some(),
+            ),
+            (
+                COSE_HEADER_PAYLOAD_LOCATION,
+                self.payload_location.is_some(),
+            ),
+        ] {
+            if present && self.extra.contains_key(&CoseLabel::Int(key)) {
+                return Err(serde::ser::Error::custom(format!(
+                    "extra header key {key} collides with a modeled field"
+                )));
+            }
+        }
 
         let mut count = 1; // alg is required
         if self.content_type.is_some() {
@@ -344,6 +378,63 @@ impl Serialize for ProtectedCorimHeaderMap {
 impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let val = Value::deserialize(d)?;
+        let mut budget = cbor::DecodeBudget::new(&cbor::DecodeLimits::default())
+            .map_err(serde::de::Error::custom)?;
+        Self::from_value_with_budget(val, &mut budget, &mut None, false)
+    }
+}
+
+impl ProtectedCorimHeaderMap {
+    pub(crate) fn decode_with_budget(
+        bytes: &[u8],
+        budget: &mut cbor::DecodeBudget,
+    ) -> Result<Self, crate::DecodeError> {
+        let val = budget.decode_value_exact(bytes)?;
+        cbor::map_keys::check_header(&val)?;
+        let mut nested_error = None;
+        let result = Self::from_value_with_budget::<serde::de::value::Error>(
+            val,
+            budget,
+            &mut nested_error,
+            false,
+        );
+        budget.check()?;
+        if let Some(error) = nested_error {
+            return Err(error);
+        }
+        result.map_err(|e| crate::DecodeError::InvalidStructure(e.to_string()))
+    }
+
+    /// Decode this header and its embedded corim-meta with shared limits.
+    ///
+    /// Prefer this to generic Serde decoding when the header and metadata must
+    /// share custom budgets. Generic `cbor::decode_with_limits::<Self>` limits
+    /// the outer CBOR only; Serde has no operation-context parameter, so its
+    /// nested corim-meta decode uses a separate default budget.
+    pub fn decode_with_limits(
+        bytes: &[u8],
+        limits: &cbor::DecodeLimits,
+    ) -> Result<Self, crate::DecodeError> {
+        Self::decode_with_budget(bytes, &mut cbor::DecodeBudget::new(limits)?)
+    }
+
+    pub(super) fn from_value_with_budget<E: serde::de::Error>(
+        val: Value,
+        budget: &mut cbor::DecodeBudget,
+        nested_error: &mut Option<crate::DecodeError>,
+        strict_metadata: bool,
+    ) -> Result<Self, E> {
+        Self::from_value_with_metadata(val, budget, nested_error, strict_metadata, None)
+    }
+
+    pub(super) fn from_value_with_metadata<E: serde::de::Error>(
+        val: Value,
+        budget: &mut cbor::DecodeBudget,
+        nested_error: &mut Option<crate::DecodeError>,
+        strict_metadata: bool,
+        mut prepared_metadata: Option<Value>,
+    ) -> Result<Self, E> {
+        cbor::map_keys::check_header(&val).map_err(serde::de::Error::custom)?;
         let map = match val {
             Value::Map(m) => m,
             _ => {
@@ -371,16 +462,15 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
         // nested under key 15. Track them separately and synthesize at the end.
         let mut cwt_iss: Option<String> = None;
         let mut cwt_sub: Option<String> = None;
-        let mut cwt_exp: Option<i64> = None;
-        let mut cwt_nbf: Option<i64> = None;
+        let mut cwt_exp = None;
+        let mut cwt_nbf = None;
 
         for (k, v) in map {
             let key = match &k {
                 Value::Integer(n) => i64::try_from(*n)
                     .map_err(|_| serde::de::Error::custom("header key out of range"))?,
-                Value::Text(_) => {
-                    // Text COSE labels are valid per RFC 9052 but not modeled;
-                    // skip since our extra map uses i64 keys only.
+                Value::Text(text) => {
+                    extra.insert(CoseLabel::Text(text.clone()), v);
                     continue;
                 }
                 _ => continue,
@@ -408,13 +498,13 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     }
                 }
                 CWT_CLAIM_SUB => {
-                    // Key 2: CWT `sub` (tstr) or COSE `kid` (bstr).
+                    // Key 2: CWT `sub` (tstr) or COSE `crit` (array).
                     match v {
                         Value::Text(t) => {
                             cwt_sub = Some(t);
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -428,13 +518,15 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     // Key 4: CWT `exp` (int/float) or COSE `kid` (bstr).
                     match v {
                         Value::Integer(_) | Value::Float(_) => {
-                            cwt_exp = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
+                            cwt_exp = Some(
+                                NumericDate::from_value(&v).map_err(serde::de::Error::custom)?,
+                            );
                         }
                         Value::Bytes(b) => {
                             kid = Some(b);
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -442,10 +534,12 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     // Key 5: CWT `nbf` (int/float) or COSE header (other).
                     match &v {
                         Value::Integer(_) | Value::Float(_) => {
-                            cwt_nbf = Some(value_to_epoch(&v).map_err(serde::de::Error::custom)?);
+                            cwt_nbf = Some(
+                                NumericDate::from_value(&v).map_err(serde::de::Error::custom)?,
+                            );
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
@@ -453,25 +547,45 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     // bstr .cbor corim-meta-map — try to decode, skip on failure
                     match v {
                         Value::Bytes(b) => {
-                            match cbor::decode::<CorimMetaMap>(&b) {
+                            let decoded = match prepared_metadata.take() {
+                                Some(value) => Self::metadata_from_value(value, strict_metadata),
+                                None => Self::decode_metadata(&b, budget, strict_metadata),
+                            };
+                            match decoded {
                                 Ok(meta) => {
                                     corim_meta = Some(meta);
+                                }
+                                Err(e @ crate::DecodeError::LimitExceeded { .. }) => {
+                                    return Err(serde::de::Error::custom(e));
+                                }
+                                Err(
+                                    e @ (crate::DecodeError::TrailingData { .. }
+                                    | crate::DecodeError::DuplicateKey { .. }),
+                                ) => {
+                                    let message = e.to_string();
+                                    *nested_error = Some(e);
+                                    return Err(serde::de::Error::custom(message));
+                                }
+                                Err(error) if strict_metadata => {
+                                    let message = error.to_string();
+                                    *nested_error = Some(error);
+                                    return Err(serde::de::Error::custom(message));
                                 }
                                 Err(_) => {
                                     // Store the raw bytes in extra for forward-compat;
                                     // some producers emit malformed corim-meta.
-                                    extra.insert(key, Value::Bytes(b));
+                                    extra.insert(CoseLabel::Int(key), Value::Bytes(b));
                                 }
                             }
                         }
                         _ => {
-                            extra.insert(key, v);
+                            extra.insert(CoseLabel::Int(key), v);
                         }
                     }
                 }
                 COSE_HEADER_CWT_CLAIMS => {
                     // CWT-Claims is directly a map (not bstr-wrapped)
-                    let claims: CwtClaims = cbor::value::from_value(&v).map_err(|e| {
+                    let claims: CwtClaims = cbor::from_parsed_value(v).map_err(|e| {
                         serde::de::Error::custom(format!("cwt-claims decode: {}", e))
                     })?;
                     cwt_claims = Some(claims);
@@ -517,7 +631,7 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
                     });
                 }
                 _ => {
-                    extra.insert(key, v);
+                    extra.insert(CoseLabel::Int(key), v);
                 }
             }
         }
@@ -562,6 +676,43 @@ impl<'de> Deserialize<'de> for ProtectedCorimHeaderMap {
             x5u,
             extra,
         })
+    }
+}
+
+impl ProtectedCorimHeaderMap {
+    fn decode_metadata(
+        bytes: &[u8],
+        budget: &mut cbor::DecodeBudget,
+        strict: bool,
+    ) -> Result<CorimMetaMap, crate::DecodeError> {
+        let value = budget.decode_value_exact(bytes)?;
+        Self::metadata_from_value(value, strict)
+    }
+
+    fn metadata_from_value(value: Value, strict: bool) -> Result<CorimMetaMap, crate::DecodeError> {
+        use crate::types::tags::{META_KEY_SIGNATURE_VALIDITY, VALIDITY_KEY_NOT_BEFORE};
+        cbor::map_keys::check(&value)?;
+        if let (true, Value::Map(fields)) = (strict, &value) {
+            if let Some((_, validity)) = fields
+                .iter()
+                .find(|(key, _)| *key == Value::Integer(META_KEY_SIGNATURE_VALIDITY.into()))
+            {
+                let Value::Map(bounds) = validity else {
+                    return Err(crate::DecodeError::InvalidStructure(
+                        "signature-validity must be a map when present".into(),
+                    ));
+                };
+                if bounds.iter().any(|(key, value)| {
+                    *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into())
+                        && matches!(value, Value::Null)
+                }) {
+                    return Err(crate::DecodeError::InvalidStructure(
+                        "signature-validity not-before must not be null".into(),
+                    ));
+                }
+            }
+        }
+        cbor::from_parsed_value(value).map_err(crate::DecodeError::Deserialization)
     }
 }
 

@@ -31,50 +31,100 @@ pub const CWT_CLAIM_IAT: i64 = 6;
 // CWT Claims (RFC 8392 / RFC 9597)
 // ===================================================================
 
-/// A CWT claim key.
+/// An integer-or-text CWT claim key (RFC 8392 §3).
+pub use super::label::Label as ClaimKey;
+
+/// A CWT NumericDate preserving integer or fractional seconds (RFC 8392 §2).
 ///
-/// RFC 8392 registers integer claim keys, but the claims map is keyed by
-/// `int / tstr`, and real-world producers do use text keys (e.g. an Azure
-/// SOC-MANA CoRIM carries a `"svn"` claim). Both forms are preserved.
-#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+/// This implementation accepts integer seconds in the `i64` range and finite
+/// floats in the same half-open range, without truncating their precision.
+#[derive(Clone, Copy, Debug, PartialEq)]
 #[non_exhaustive]
-pub enum ClaimKey {
-    /// An integer claim key, e.g. `6` (`iat`).
+pub enum NumericDate {
+    /// Integer seconds since the Unix epoch.
     Int(i64),
-    /// A text claim key, e.g. `"svn"`.
-    Text(String),
+    /// Floating-point seconds since the Unix epoch.
+    Float(f64),
 }
 
-impl From<i64> for ClaimKey {
-    fn from(n: i64) -> Self {
-        Self::Int(n)
+impl NumericDate {
+    pub(crate) fn from_value(value: &Value) -> Result<Self, String> {
+        match value {
+            Value::Integer(value) => i64::try_from(*value)
+                .map(Self::Int)
+                .map_err(|_| "epoch time out of i64 range".into()),
+            Value::Float(value)
+                if value.is_finite()
+                    && *value >= -9_223_372_036_854_775_808.0
+                    && *value < 9_223_372_036_854_775_808.0 =>
+            {
+                Ok(Self::Float(*value))
+            }
+            _ => Err("epoch time must be finite and within i64 range".into()),
+        }
     }
-}
 
-impl From<&str> for ClaimKey {
-    fn from(s: &str) -> Self {
-        Self::Text(s.into())
-    }
-}
-
-impl core::fmt::Display for ClaimKey {
-    /// Text keys are quoted and escaped so they cannot be confused with an
-    /// integer key of the same digits, nor break a single-line report
-    /// (diagnostic notation, RFC 8949 §8).
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+    pub(crate) fn value(self) -> Value {
         match self {
-            Self::Int(n) => write!(f, "{n}"),
-            Self::Text(t) => write!(f, "\"{}\"", crate::cbor::value::escape_text(t)),
+            Self::Int(value) => Value::Integer(value.into()),
+            Self::Float(value) => Value::Float(value),
+        }
+    }
+
+    /// Compare instants mathematically without changing their encoded forms.
+    ///
+    /// Invalid non-finite or out-of-range dates return an error (RFC 8392 §2).
+    pub fn numeric_cmp(&self, other: &Self) -> Result<core::cmp::Ordering, String> {
+        use crate::Validate;
+        self.valid()?;
+        other.valid()?;
+        let ordering = match (*self, *other) {
+            (Self::Int(left), Self::Int(right)) => Some(left.cmp(&right)),
+            (Self::Float(left), Self::Float(right)) => left.partial_cmp(&right),
+            (Self::Int(integer), Self::Float(float)) => {
+                super::super::numeric::compare_integer_float(integer.into(), float)
+            }
+            (Self::Float(float), Self::Int(integer)) => {
+                super::super::numeric::compare_integer_float(integer.into(), float)
+                    .map(core::cmp::Ordering::reverse)
+            }
+        };
+        ordering.ok_or_else(|| "NumericDate values are not comparable".into())
+    }
+}
+
+impl From<i64> for NumericDate {
+    fn from(value: i64) -> Self {
+        Self::Int(value)
+    }
+}
+
+impl crate::Validate for NumericDate {
+    fn valid(&self) -> Result<(), String> {
+        Self::from_value(&self.value()).map(|_| ())
+    }
+}
+
+impl core::fmt::Display for NumericDate {
+    fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Int(value) => write!(formatter, "{value}"),
+            Self::Float(value) => write!(formatter, "{value}"),
         }
     }
 }
 
-impl Serialize for ClaimKey {
-    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        match self {
-            Self::Int(n) => s.serialize_i64(*n),
-            Self::Text(t) => s.serialize_str(t),
-        }
+impl Serialize for NumericDate {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let value = self.value();
+        Self::from_value(&value).map_err(serde::ser::Error::custom)?;
+        value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for NumericDate {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        Self::from_value(&Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
     }
 }
 
@@ -95,15 +145,16 @@ impl Serialize for ClaimKey {
 /// floating-point values. IEEE 754 floats do not satisfy the reflexive
 /// property (`NaN != NaN`), so `Eq` cannot be soundly derived.
 #[derive(Clone, Debug, PartialEq)]
+#[non_exhaustive]
 pub struct CwtClaims {
     /// `iss` (key 1): Issuer — identifies the CoRIM signer.
     pub iss: String,
     /// `sub` (key 2): Subject — optional, identifies the CoRIM document.
     pub sub: Option<String>,
     /// `exp` (key 4): Expiration time as epoch seconds.
-    pub exp: Option<i64>,
+    pub exp: Option<NumericDate>,
     /// `nbf` (key 5): Not-before time as epoch seconds.
-    pub nbf: Option<i64>,
+    pub nbf: Option<NumericDate>,
     /// Additional CWT claims beyond the standard ones, keyed by integer or
     /// text claim key.
     pub extra: BTreeMap<ClaimKey, Value>,
@@ -128,14 +179,14 @@ impl CwtClaims {
     }
 
     /// Set the expiration time.
-    pub fn with_exp(mut self, exp: i64) -> Self {
-        self.exp = Some(exp);
+    pub fn with_exp(mut self, exp: impl Into<NumericDate>) -> Self {
+        self.exp = Some(exp.into());
         self
     }
 
     /// Set the not-before time.
-    pub fn with_nbf(mut self, nbf: i64) -> Self {
-        self.nbf = Some(nbf);
+    pub fn with_nbf(mut self, nbf: impl Into<NumericDate>) -> Self {
+        self.nbf = Some(nbf.into());
         self
     }
 }
@@ -168,6 +219,14 @@ impl Serialize for CwtClaims {
             map.serialize_entry(&CWT_CLAIM_NBF, &nbf)?;
         }
         for (k, v) in &self.extra {
+            if matches!(
+                k,
+                ClaimKey::Int(CWT_CLAIM_ISS | CWT_CLAIM_SUB | CWT_CLAIM_EXP | CWT_CLAIM_NBF)
+            ) {
+                return Err(serde::ser::Error::custom(format!(
+                    "extra claim key {k} collides with a modeled claim"
+                )));
+            }
             map.serialize_entry(k, v)?;
         }
         map.end()
@@ -184,8 +243,8 @@ impl<'de> Deserialize<'de> for CwtClaims {
 
         let mut iss: Option<String> = None;
         let mut sub: Option<String> = None;
-        let mut exp: Option<i64> = None;
-        let mut nbf: Option<i64> = None;
+        let mut exp = None;
+        let mut nbf = None;
         let mut extra = BTreeMap::new();
 
         for (k, v) in map {
@@ -245,12 +304,12 @@ impl<'de> Deserialize<'de> for CwtClaims {
                 CWT_CLAIM_EXP => set_once!(
                     exp,
                     "exp",
-                    value_to_epoch(&v).map_err(serde::de::Error::custom)?
+                    NumericDate::from_value(&v).map_err(serde::de::Error::custom)?
                 ),
                 CWT_CLAIM_NBF => set_once!(
                     nbf,
                     "nbf",
-                    value_to_epoch(&v).map_err(serde::de::Error::custom)?
+                    NumericDate::from_value(&v).map_err(serde::de::Error::custom)?
                 ),
                 _ => {
                     if extra.insert(ClaimKey::Int(key), v).is_some() {
@@ -270,25 +329,5 @@ impl<'de> Deserialize<'de> for CwtClaims {
             nbf,
             extra,
         })
-    }
-}
-
-/// Convert a Value (integer or float) to epoch seconds.
-///
-/// Accepts CBOR integers (preferred) and CBOR floats (RFC 8392 allows
-/// `int / float` for time claims). Floats are rejected if they are NaN,
-/// infinite, or outside the representable `i64` range.
-pub(super) fn value_to_epoch(v: &Value) -> Result<i64, String> {
-    match v {
-        Value::Integer(n) => i64::try_from(*n).map_err(|_| "epoch time out of i64 range".into()),
-        Value::Float(f) => {
-            let n = *f;
-            // Reject NaN, infinity, and values outside i64 range before cast.
-            if n.is_nan() || n.is_infinite() || n < (i64::MIN as f64) || n > (i64::MAX as f64) {
-                return Err("epoch float out of i64 range".into());
-            }
-            Ok(n as i64)
-        }
-        _ => Err("epoch time must be int or float".into()),
     }
 }

@@ -25,6 +25,9 @@ pub const TAG_EPOCH_TIME: u64 = 1;
 /// `signed-corim` = `#6.18(COSE-Sign1-corim)`.
 pub const TAG_SIGNED_CORIM: u64 = 18;
 
+/// `uri` = `#6.32(tstr)` (RFC 8949 §3.4.5.3 and RFC 8610 Appendix D).
+pub const TAG_URI: u64 = 32;
+
 /// `tagged-uuid-type` = `#6.37(bytes .size 16)`.
 pub const TAG_UUID: u64 = 37;
 
@@ -45,16 +48,16 @@ pub const TAG_CORIM: u64 = 501;
 // 2025-01-22.
 //
 // We accept them on **decode only** by transparently peeling them in
-// `crate::compat::peel_tcg_wrappers`. Encoding always uses the draft-10
+// `crate::compat::peel_tcg_wrappers`. Encoding always uses the draft-11
 // shape (tag 18 for signed, tag 501 for unsigned).
 
 /// `#6.500(...)` — legacy outer wrapper from early CoRIM drafts and the
-/// TCG Endorsement spec. Not part of draft-ietf-rats-corim-10.
+/// TCG Endorsement spec. Not part of draft-ietf-rats-corim-11.
 pub const TAG_LEGACY_TOP: u64 = 500;
 
 /// `#6.502(signed-corim)` — legacy wrapper around `#6.18(COSE_Sign1)` from
 /// early CoRIM drafts and the TCG Endorsement spec. Not part of
-/// draft-ietf-rats-corim-10.
+/// draft-ietf-rats-corim-11.
 pub const TAG_LEGACY_SIGNED: u64 = 502;
 
 /// `tagged-concise-swid-tag` = `#6.505(bytes .cbor concise-swid-tag)`.
@@ -107,6 +110,11 @@ pub const TAG_MASKED_RAW_VALUE: u64 = 563;
 
 /// `tagged-int-range` = `#6.564(int-range)`.
 pub const TAG_INT_RANGE: u64 = 564;
+
+/// Numeric range, editor's draft (2026-10-07) Section 5.1.4.9: `#6.565([min, max])`.
+pub const TAG_NUMBER_RANGE: u64 = 565;
+/// Numeric/text/byte set, editor's draft (2026-10-07) Section 5.1.4.9: `#6.566([2* value])`.
+pub const TAG_MATCHER_SET: u64 = 566;
 
 // ===========================================================================
 // CoRIM Map keys (§11.3 — "CoRIM Map" registry)
@@ -288,6 +296,14 @@ pub const MVAL_KEY_CRYPTOKEYS: i64 = 13;
 pub const MVAL_KEY_INTEGRITY_REGISTERS: i64 = 14;
 /// `measurement-values-map` key: `int-range` (index 15).
 pub const MVAL_KEY_INT_RANGE: i64 = 15;
+/// `bool` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_BOOL: i64 = 16;
+/// `number` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_NUMBER: i64 = 17;
+/// `text` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_TEXT: i64 = 18;
+/// `bytes` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
+pub const MVAL_KEY_BYTES: i64 = 19;
 
 // ===========================================================================
 // Flags Map keys (§11.10 — "CoMID Flags Map" registry)

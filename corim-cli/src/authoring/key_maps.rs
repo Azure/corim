@@ -6,9 +6,6 @@
 //! Each table maps CBOR integer keys to JSON string keys matching
 //! the CoRIM/CoMID/CoSWID JSON format and the CDDL key names.
 
-#[allow(unused_imports)]
-use crate::nostd_prelude::*;
-
 /// Lookup a JSON string key for a given CBOR integer key.
 ///
 /// Returns the string key if found in any registered map, or `None`.

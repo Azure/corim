@@ -36,9 +36,10 @@ fn ref_triple_with_extras(extras: BTreeMap<i64, Value>) -> ReferenceTriple {
         env(),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                extra_entries: extras,
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
@@ -50,9 +51,10 @@ fn evidence_with_extras(extras: BTreeMap<i64, Value>) -> Vec<EvidenceClaim> {
         environment: env(),
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                extra_entries: extras,
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
@@ -75,9 +77,10 @@ fn match_measurement_returns_none_when_reference_has_no_intel_keys() {
     // Reference has only a standard key (11: name) in mval.
     let r = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("x".into()),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("x".into());
+            values
         },
         authorized_by: None,
     };
@@ -115,9 +118,10 @@ fn match_measurement_some_true_when_bare_intel_equal_and_core_matches() {
 
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras;
+            values
         },
         authorized_by: None,
     };
@@ -139,9 +143,10 @@ fn match_measurement_some_false_when_bare_intel_unequal() {
     e_extras.insert(MVAL_TEE_VENDOR, Value::Text("AMD".into()));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -168,9 +173,10 @@ fn match_measurement_some_true_when_numeric_ge_satisfied() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(7));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -195,9 +201,10 @@ fn match_measurement_some_false_when_numeric_ge_violated() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(3));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -223,9 +230,10 @@ fn match_measurement_some_true_when_attributes_bare_equal() {
     e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0xFA, 0xCE]));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -247,9 +255,10 @@ fn match_measurement_some_false_when_attributes_bare_unequal() {
     e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0x00, 0xCE]));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -282,9 +291,10 @@ fn match_measurement_some_true_when_set_member_matches() {
     e_extras.insert(MVAL_TEE_TCBSTATUS, Value::Text("Hardening".into()));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -315,9 +325,10 @@ fn match_measurement_some_false_when_set_not_member_violated() {
     e_extras.insert(MVAL_TEE_ADVISORY_IDS, Value::Text("CVE-2024-1234".into()));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -337,17 +348,19 @@ fn match_measurement_returns_some_false_when_core_fields_disagree() {
 
     let r = MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
-        mval: MeasurementValuesMap {
-            extra_entries: extras.clone(),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras.clone();
+            values
         },
         authorized_by: None,
     };
     let e = MeasurementMap {
         mkey: Some(MeasuredElement::Uint(2)),
-        mval: MeasurementValuesMap {
-            extra_entries: extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = extras;
+            values
         },
         authorized_by: None,
     };
@@ -382,15 +395,55 @@ fn dispatch_through_validate_passes_with_intel_profile() {
         &evidence,
         Some(&p),
         &MatchContext::new(),
-    );
+    )
+    .unwrap();
     assert_eq!(with_profile.len(), 1, "profile-aware match should succeed");
     assert_eq!(with_profile[0].measurements.len(), 1);
+    assert_eq!(with_profile[0].measurements, evidence[0].measurements);
 
     // Sanity: without profile, core also says it matches (it ignores
     // extras), so we can't differentiate solely on this case. Use a
     // FAILING-with-profile case below to prove profile is consulted.
     let no_profile = match_reference_values(&[triple], &evidence);
     assert_eq!(no_profile.len(), 1);
+}
+
+#[test]
+fn dispatch_through_validate_requires_all_profile_measurements() {
+    let profile = IntelProfile::new();
+    let mut reference_extras = BTreeMap::new();
+    reference_extras.insert(
+        MVAL_TEE_ISVSVN,
+        expr_tag(Value::Array(vec![Value::Integer(2), Value::Integer(5)])),
+    );
+    let base = ref_triple_with_extras(reference_extras);
+    let mut first = base.measurements()[0].clone();
+    first.mval.name = Some("first".into());
+    let mut second = first.clone();
+    second.mval.name = Some("second".into());
+    let reference = ReferenceTriple::new(base.environment().clone(), vec![first, second]);
+    for complete in [false, true] {
+        let mut evidence_extras = BTreeMap::new();
+        evidence_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(7));
+        let mut evidence = evidence_with_extras(evidence_extras);
+        evidence[0].measurements[0].mval.name = Some("first".into());
+        if complete {
+            let mut second = evidence[0].measurements[0].clone();
+            second.mval.name = Some("second".into());
+            evidence[0].measurements.push(second);
+        }
+        let matched = match_reference_values_with_profile(
+            std::slice::from_ref(&reference),
+            &evidence,
+            Some(&profile),
+            &MatchContext::new(),
+        )
+        .unwrap();
+        assert_eq!(matched.len(), usize::from(complete));
+        if complete {
+            assert_eq!(matched[0].measurements, evidence[0].measurements);
+        }
+    }
 }
 
 #[test]
@@ -420,7 +473,8 @@ fn dispatch_through_validate_rejects_with_intel_profile() {
 
     // With profile: Intel evaluator catches the violation.
     let with_profile =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert!(
         with_profile.is_empty(),
         "Intel profile should reject the pair"
@@ -442,10 +496,11 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
         env(),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![digest.clone()]),
-                extra_entries: r_extras.clone(),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![digest.clone()]);
+                values.extra_entries = r_extras.clone();
+                values
             },
             authorized_by: None,
         }],
@@ -454,16 +509,18 @@ fn dispatch_through_validate_passes_combining_intel_and_core_digest() {
         environment: env(),
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![digest]),
-                extra_entries: r_extras,
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![digest]);
+                values.extra_entries = r_extras;
+                values
             },
             authorized_by: None,
         }],
     }];
     let claims =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert_eq!(claims.len(), 1);
 }
 
@@ -478,10 +535,11 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
         env(),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(1, vec![0xAAu8; 32])]),
-                extra_entries: extras.clone(),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(1, vec![0xAAu8; 32])]);
+                values.extra_entries = extras.clone();
+                values
             },
             authorized_by: None,
         }],
@@ -490,16 +548,19 @@ fn dispatch_through_validate_rejects_when_core_disagrees() {
         environment: env(),
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(1, vec![0xBBu8; 32])]), // differs
-                extra_entries: extras,
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(1, vec![0xBBu8; 32])]);
+                // differs
+                values.extra_entries = extras;
+                values
             },
             authorized_by: None,
         }],
     }];
     let claims =
-        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new());
+        match_reference_values_with_profile(&[triple], &evidence, Some(&p), &MatchContext::new())
+            .unwrap();
     assert!(claims.is_empty(), "core digest mismatch should reject");
 }
 
@@ -525,9 +586,10 @@ fn match_measurement_int_range_accepts_value_in_window() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(7));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -541,9 +603,10 @@ fn match_measurement_int_range_accepts_value_in_window() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(11));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -571,9 +634,10 @@ fn match_measurement_min_svn_pass_and_fail() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(5));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -586,9 +650,10 @@ fn match_measurement_min_svn_pass_and_fail() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(4));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -624,9 +689,10 @@ fn match_measurement_set_of_digests_member() {
     e_extras.insert(MVAL_TEE_MRTEE, good);
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -662,9 +728,10 @@ fn match_measurement_masked_raw_value_passes_under_mask() {
     e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0xFA, 0x00]));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -678,9 +745,10 @@ fn match_measurement_masked_raw_value_passes_under_mask() {
     e_extras.insert(MVAL_TEE_ATTRIBUTES, Value::Bytes(vec![0x1A, 0x00]));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -710,9 +778,10 @@ fn match_measurement_tcbdate_normalizes_across_encodings() {
     e_extras.insert(MVAL_TEE_TCBDATE, Value::Integer(1735689600));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -748,9 +817,10 @@ fn match_measurement_tcbdate_period_contains_instant() {
     e_extras.insert(MVAL_TEE_TCBDATE, Value::Text("2024-06-01T00:00:00Z".into()));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };
@@ -764,9 +834,10 @@ fn match_measurement_tcbdate_period_contains_instant() {
     e_extras.insert(MVAL_TEE_TCBDATE, Value::Text("2026-01-01T00:00:00Z".into()));
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };

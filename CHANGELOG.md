@@ -8,8 +8,150 @@ versions.
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-10-23
+
+**Crates:** `corim` and `corim-macros` v0.2.1. `corim-cli` follows the
+workspace version but is not published. Consumer MSRV remains Rust 1.85.
+
+### Migration notice
+
+**This release intentionally includes source-breaking changes despite its patch
+version.** Applications upgrading from 0.2.0 must review the following changes:
+
+- Handle the `Result` returned by `baseline::compare`, `compare_headers`, and
+  `match_reference_values_with_profile`. Update custom `Profile` validation
+  hooks to return diagnostic results.
+- Read decoded protected headers through `protected()` and original bytes
+  through `protected_header_bytes()`. Use `CoseSign1Corim::from_parts` or the
+  signing builder instead of constructing or editing independent header fields.
+- Construct `MeasurementValuesMap`, `ProtectedCorimHeaderMap`, and `CwtClaims`
+  through defaults, constructors, or builders, then assign fields; external
+  struct literals are no longer supported.
+- Use `CoseLabel` keys for protected-header extensions, `ClaimKey` keys for
+  `CwtClaims::extra`, and `NumericDate` for CWT expiration/not-before fields.
+  Existing integer builder calls still work.
+- Handle CLI exit **4** for incomplete validation; baseline mismatch retains
+  exit **3** precedence. Partial generation and validated extraction do not
+  write output.
+- Library JSON and CBOR-valued report fields now use the typed lossless codec.
+  Readable, commented CLI templates remain the default; use
+  `convert --lossless` explicitly for raw interchange.
+- URI fields now encode with CBOR tag 32. Legacy bare-text URIs still decode,
+  and original signed protected bytes are preserved.
+
+The separate 0.1.4 maintenance release preserves the existing 0.1 public types
+and normal wire output; it does not adopt these source/API changes.
+
+### Changed
+
+- **Explicit document-validation coverage.** `document::validate` handles
+  signed/unsigned inputs with one parser budget and a `ValidationContext`.
+  Read-only outcomes report time checks, registered-profile checks, unknown tag
+  content and document-level compatibility forms. Existing validation functions
+  retain their compatibility contracts. No API authenticates signatures.
+  CLI partial validation now exits **4**, including skipped clocks and unknown
+  profiles. Generation and `extract --validate` refuse partial output before
+  writing; baseline mismatch remains exit **3** even when coverage is partial.
+- **Protected-header ownership.** Decoded envelopes expose `protected()` and
+  `protected_header_bytes()` instead of independently mutable public fields.
+  `CoseSign1Corim::from_parts` derives the decoded header from original bytes;
+  signing builders remain the path for new protected headers.
+- **Distinct authoring and interchange JSON.** Readable named-field templates,
+  decoded CoMID content, profile aliases and `$comment` / `"//"` annotations
+  remain the default authoring interface. Shipped templates retain their
+  original commented form. `convert --lossless`, library JSON helpers and
+  CBOR-valued report fields use a strict typed-tree codec preserving integer
+  ranges, every float bit, byte-string identity, tags and map-entry pairs.
+  Generation and JSON baselines recognize either format without parser
+  fallback; mixed forms are errors. Lossless conversion retains full signed
+  envelopes; readable signed conversion projects the unsigned payload with
+  informational header metadata. Both paths retain bounded parsing/output and
+  document validation safeguards. Ordinary report metadata stays native JSON.
+- **Wire-model evolution.** `MeasurementValuesMap`,
+  `ProtectedCorimHeaderMap` and `CwtClaims` are non-exhaustive. Construct them
+  through defaults/constructors/builders rather than external struct literals.
+  Exact numeric comparison is shared below timestamp and measurement domains.
+- **One baseline comparison interpretation.** Exact reservation and reported
+  differences use a single private prepared projection, preserving typed
+  identity, multiset, float-bit and ordered-series rules without a generic DSL.
+- **Reproducible release packaging.** Release gates use locked dependencies
+  and pinned Rust/Cargo; verified archives and checksums are retained before
+  authentication. Publication still requires exact archive-checksum agreement
+  and detects repackaging drift.
+
 ### Fixed
 
+- **Lossless protected-header comparison and reporting.** Text COSE labels
+  and fractional CWT `exp` / `nbf` values now survive decoding and re-encoding,
+  so baseline comparisons no longer silently report a match after they change.
+  Protected-header bytes remain unchanged for signature verification.
+  **Source compatibility:** `ProtectedCorimHeaderMap::extra` now uses
+  `CoseLabel` (`Int` / `Text`) keys, and `CwtClaims::exp` / `nbf` now use
+  `NumericDate` (`Int` / `Float`). Existing integer builder calls remain valid;
+  direct field assignments and map access must use `.into()` or typed variants.
+  CLI JSON header/CWT extensions use lossless map nodes, preventing same-looking
+  integer and text labels from colliding.
+- **Nested CBOR map keys caused exponential re-encoding work.** The encoder
+  now writes the key bytes already cached for sorting instead of recursively
+  encoding each key twice. This also protects baseline header and payload
+  conversions. Encoded bytes and the existing map-key ordering are unchanged.
+- **CLI validation could report success for invalid or incomplete documents.**
+  `validate` now reuses library validation for signed/unsigned inputs and
+  baselines, including CoTL and registered-profile checks. Invalid attached
+  payloads, expired signed headers, detached envelopes and hash-only documents
+  cannot report ordinary validation success. JSON failures are structured.
+  `--skip-expiry` remains available as explicit partial validation:
+  runs exit 4 with `valid: null` and `time_validated: false`; structural and
+  profile failures still exit 2. Inspection commands retain their behavior.
+  Empty documents exit 2; input and baseline filesystem failures exit 1, with
+  JSON errors preserved. CoSWID-only and CoTL-only documents are supported;
+  the additive `decode_and_validate_document_at_with_limits` API validates
+  them without changing legacy APIs' CoMID prerequisite. Present-null validity
+  fields are rejected before typed decoding, including with `--skip-expiry`.
+  JSON template conversion also rejects malformed present timestamps rather
+  than silently omitting them. Baseline comparisons containing unsupported
+  non-CoMID tags now exit 2 instead of claiming a match for unexamined content;
+  ordinary tag-only validation remains supported. Oversized target input exits
+  2, consistently with oversized baselines; inspection exit codes are unchanged.
+- **Reference-value appraisal accepted partial matches and returned reference
+  constraints as evidence.** Core and profile-aware matching now require every
+  reference measurement to match within a single evidence claim, then return
+  that claim's complete measurement list in evidence order. Exact SVN conditions
+  no longer match minimum-SVN evidence; minimum-to-minimum SVN comparisons use
+  equality, per draft-ietf-rats-corim-11 §8.2.4.4.5.3. Public signatures and
+  types are unchanged, but callers receive corrected matching results.
+- **CoRIM `uri` values used a nonconformant bare-text encoding.** Profile
+  identifiers, locator hrefs, signer URIs, and entity registration IDs now
+  encode as `#6.32(tstr)` per RFC 8610 Appendix D. Decoders continue to accept
+  legacy bare text emitted by older versions, and `--diagnose` reports legacy
+  bare profile identifiers as warnings. This changes the encoded bytes of
+  documents containing URI values.
+- **Azure profile failed to compile without `std`.** The `profile-azure`
+  feature now imports `String` through the crate's `alloc` prelude. CI
+  checks every first-party profile combination without default features
+  on Rust 1.85, stable, and nightly.
+- **Ambiguous duplicate map keys.** Schema maps now reject repeated
+  integer/text labels instead of silently overwriting values, including
+  skipped extension keys, optional null fields, integrity-register IDs,
+  and COSE header maps. Metadata and CoSWID duplicates cannot become
+  successful opaque fallbacks. Generic `Value` decoding still preserves
+  every pair for inspection.
+- **Typed/extension serialization collisions.** Generated map serializers
+  and CWT claim serializers reject extension keys reserved for modeled
+  fields. Protected headers reject extras that collide with emitted
+  fields, while retaining existing raw-metadata compatibility behavior.
+- **Narrow flat-CWT compatibility exception.** Protected-header decoding
+  permits exactly one of each disjoint pair, in either order: key 1
+  integer algorithm/text issuer; key 2 array crit/text subject; key 4
+  byte-string kid/numeric expiry; key 5 byte-string IV/numeric not-before.
+  Repeated roles, int/float time duplicates, other mixtures, and third
+  occurrences are rejected. This is a decode-only legacy exception, not
+  standard-compliant CBOR. Typed header serialization uses nested CWT
+  claims; envelope re-encoding still preserves original protected bytes.
+- **CBOR input-triggered panics.** Byte/text strings with overflowing
+  declared lengths now return a decode error, and map keys containing
+  integers outside the CBOR range return an encode error instead of
+  panicking. Valid encodings and public API signatures are unchanged.
 - **Baseline comparison skipped CoRIM and CoMID metadata.** `compare`
   only looked at `profile`, `corim-id`, and the triples, so a changed
   `rim-validity`, `entities`, or `dependent-rims`, or a changed CoMID
@@ -22,9 +164,107 @@ versions.
   `x5chain` printed the full certificate hex (~10 KB). Long values are
   now elided in the text report; `--format json` still carries them in
   full.
+- **Baseline comparison skipped TCG bare-tag CoMIDs.** Supported bare
+  byte-string entries now use the same compatibility-aware CoMID decoder
+  as other consumers, so digest and structural changes are reported
+  instead of silently treating both documents as identical.
 
 ### Added
 
+- **Fallible, identity-aware baseline comparison.** `baseline::compare` and
+  `compare_headers` now return `Result<ConformanceReport, ValidationError>`;
+  callers must handle errors before inspecting conformance. Payloads undergo
+  bounded structural validation; unsupported tags and conversion failures no
+  longer disappear from successful reports. UUIDs and repeated keyed entries
+  use typed, one-to-one pairing with exact matches reserved first. Register
+  and digest identities, key representations and algorithms, range forms,
+  bound presence and matcher cardinality are structural. Matcher sets ignore
+  order. Unknown measurement/header/CWT extensions compare recursively by
+  CBOR shape, ignoring map order but retaining array order and multiplicity.
+  Non-finite numeric report values preserve their IEEE bits in JSON. The CLI
+  uses the fallible APIs. Supported TCG CoMIDs remain accepted; clock, profile
+  and trust checks remain separate from comparison.
+  Exact reservation follows the comparison rules for nested unordered fields
+  and float bits, avoiding false differences for reordered duplicate identities,
+  NaN payloads and signed zero. All keyed typed collections, extension maps and
+  matcher sets use indexed key/value matching; unkeyed measurements pair directly
+  by position. Exact keys are prepared before matching, avoiding repeated full
+  comparisons and temporary reports during reservation.
+- **Strict signed-document validation alongside tolerant inspection.**
+  `decode_and_validate_signed_corim_at` and its limits-aware variant check
+  COSE slot types, the exact payload media type, CWT and metadata time windows,
+  and agreement between metadata and flat/nested CWT claims. They validate
+  original fractional CWT times without truncation during comparison, preserve
+  protected-header bytes, and share one parser budget across envelope, header,
+  metadata, payload and tag bodies. Missing detached payloads, hash envelopes
+  without separate authenticated-preimage handling, and opaque CoSWID fallback
+  content cannot produce a successful validation result. Existing decode and
+  payload-validation APIs retain their 0.2.x behavior. These new APIs perform
+  no cryptographic, certificate, critical-header or profile-specific validation.
+- **Generic measurement matchers from the 2026-10-07 CoRIM editor's draft.**
+  Keys 16-19 now have typed boolean, number, text, and byte-string fields.
+  Numeric ranges use tag 565; numeric/text/byte sets use tag 566 and require
+  at least two entries. Bare values match exactly; range/set observations do
+  not match. Numeric matching preserves integer precision, treats NaN as
+  non-matching, and supports infinities. Reversed and NaN-bounded ranges are
+  rejected. Appraisal, diagnostics, baseline reporting, CDDL and CLI templates
+  support the fields. JSON uses explicit representations for byte strings,
+  large integers and non-finite floats rather than losing their types.
+  **Source compatibility:** `MeasurementValuesMap` is non-exhaustive; initialize
+  it with `Default::default()` and assign the desired fields, including
+  `r#bool`, `number`, `text`, and `bytes`.
+  Move keys 16-19 out of `extra_entries` into the typed fields; extras collisions
+  are rejected. Existing encodings are unchanged when the new fields are absent.
+  This is targeted editor-draft support, not a complete migration from draft-11.
+- **Static profile semantics in validation and diagnose.** Registered Azure,
+  PSA, and Intel profiles now reject malformed profile-defined reference
+  values during document validation and before appraisal. The non-aborting
+  diagnose pass also reports registered-profile reference-triple,
+  reference-measurement, and attestation-key-triple errors at their CBOR
+  paths while continuing to collect other issues. Unregistered profiles
+  remain forward-compatible and skip these semantic checks.
+- **Arm CCA endorsements profile and profile-aware validation.** The
+  `profile-cca` feature implements Platform and Realm validation and appraisal
+  for `draft-ydb-rats-cca-endorsements-04`, including environment linkage,
+  measurement cardinality and shape constraints, ROTPK grouping, masked
+  configuration matching, and CPAK RFC 7468 / SubjectPublicKeyInfo validation.
+  New `decode_and_validate*_with_registry` APIs apply registered profile
+  constraints during decoding; the CLI uses the same validation path for
+  `validate` and `generate`. **Breaking:** profile validation hooks return
+  diagnostic `Result`s, and `match_reference_values_with_profile` now returns
+  `Result<Vec<CorroboratedClaim>, ValidationError>`.
+- **Explicit exact and prefix CBOR decoding.** `cbor::decode_exact` rejects
+  trailing bytes; `cbor::decode_prefix` returns the decoded item and a
+  borrowed, unparsed remainder. Both have limits-aware variants and
+  shared-session equivalents. Legacy `decode` / `decode_with_limits`
+  retain first-item behavior in 0.2.x, with documentation recommending
+  migration; no compiler deprecation warnings are added.
+- **Single-item document framing.** CoRIM envelopes, protected headers,
+  metadata, payloads, and tag bodies now reject trailing CBOR data,
+  including through TCG compatibility and CLI/diagnostic paths. Framing
+  failures cannot become successful opaque-content fallbacks. Signatures,
+  certificates, hash payloads, and unknown extension byte strings remain
+  opaque. `check_document_framing` is an inspection preflight, not a
+  replacement for semantic validation; `check_decode_limits` remains
+  resource-only.
+- **Bounded CBOR decoding.** `DecodeLimits` defaults to 16 MiB per input,
+  64 enclosing arrays/maps/tags, 1,000,000 aggregate decoded values, and
+  2,000,000 entries per collection. Depth and collection ceilings cannot
+  be raised; trusted callers may adjust byte/value budgets. Existing
+  decoding APIs now use these defaults; previously accepted oversized or
+  excessively nested inputs are rejected.
+- **Explicit shared decode sessions.** `cbor::decode_with_limits` and
+  `DecodeSession` provide additive resource control without changing
+  `CborCodec` requirements. Failed syntax attempts consume their actual
+  value budget; resource failures remain fatal for the session. Signed,
+  unsigned, protected-header, and payload limits-aware entry points share
+  budgets across their embedded CBOR. Generic Serde decoding does not
+  propagate custom limits into arbitrary nested `Deserialize` calls;
+  use the document/header entry points for those operations.
+- **Bounded CLI reads and diagnostics.** File/stdin inputs are read with
+  a 16 MiB cap. Diagnostic and EDN embedded decodes share resource budgets;
+  limit failures cannot silently become successful opaque-byte fallbacks.
+  Declared hash-envelope payloads remain opaque digests, not CBOR.
 - **`extract --header`.** Extracts the COSE protected header instead of the
   payload — the exact `bstr` contents that go into `Sig_structure1`, so the
   bytes can be re-verified. `--header --json` emits the decoded header using
@@ -52,15 +292,17 @@ versions.
   `signed` object with the protected header (`alg`/`alg_id`,
   `content_type`, CWT `issuer`/`subject`, `corim-meta` `signer_name`, and
   the `kid` / `x5chain` / `x5t` presence flags), the unprotected header,
-  payload, signature sizes, and `signature_verified: false`. A detached
-  signed CoRIM now also honours `-f json` (it previously fell back to the
-  text header view) and reports `payload_decoded: false`.
+  payload, signature sizes,   and `signature_verified: false`. Detached signed CoRIMs return structured
+  JSON validation errors because their payload is unavailable. Use
+  `extract --header --json` to inspect their protected header.
 - **Protected-header baseline comparison.** `corim::baseline::compare_headers`
   compares two signed CoRIMs' COSE protected headers, and
   `ConformanceReport::merge` combines a payload report with a header
   report. `validate --baseline` now compares protected headers when both
-  the baseline and the target are signed (and supports detached,
-  nil-payload signed CoRIMs, comparing the header alone). Structural
+  the baseline and the target are signed and carry complete attached
+  payloads. The library can compare separately decoded headers, including
+  those from detached envelopes, but this is not complete document validation.
+  Structural
   header fields (`alg`, `content-type`, hash-envelope mode, CWT `iss`,
   and the presence of `corim-meta` / `CWT-Claims` / `kid` / `x5chain` /
   `x5bag` / `x5t` / `x5u`) must match; signer name, `sub`, timestamps,
@@ -292,9 +534,8 @@ to the CDDL (Appendix A); the Reference Verifier chapter was renumbered from
   pluggable extension points for CoRIM profiles that introduce
   non-core CBOR tags, profile-specific match semantics, or extra
   measurement-value fields:
-  - New [`Profile`](corim/src/profile.rs) trait with
-    `match_measurement`, `diagnose_extra_mvm_field`, and
-    `match_context` hooks.
+  - New [`Profile`](corim/src/profile.rs) trait with measurement matching,
+    diagnostic rendering, and JSON alias hooks.
   - [`ProfileRegistry`](corim/src/profile.rs) dispatches by
     `ProfileChoice` (URI or OID).
   - [`MatchContext`](corim/src/profile.rs) carries appraisal-time

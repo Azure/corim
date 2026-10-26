@@ -12,7 +12,6 @@
 //! semantics.
 
 use std::fmt::Write as _;
-use std::fs;
 
 use corim::baseline::{
     compare, ConformanceReport, MismatchKind, StructuralMismatch, ValueDifference,
@@ -21,20 +20,55 @@ use corim::cbor::value::Value;
 use corim::types::corim::CorimMap;
 use corim::types::signed::ProtectedCorimHeaderMap;
 
-/// Compare the input against the baseline at `path`. Returns `Ok(true)`
-/// when the input is structurally conformant.
+#[derive(Debug)]
+pub(crate) enum BaselineError {
+    Io(String),
+    Invalid(String),
+}
+
+impl BaselineError {
+    pub(crate) fn exit_code(&self) -> i32 {
+        match self {
+            Self::Io(_) => 1,
+            Self::Invalid(_) => 2,
+        }
+    }
+}
+
+impl std::fmt::Display for BaselineError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Io(message) | Self::Invalid(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl From<String> for BaselineError {
+    fn from(message: String) -> Self {
+        Self::Invalid(message)
+    }
+}
+
+pub(crate) struct BaselineOutcome {
+    pub conformant: bool,
+    pub complete: bool,
+}
+
+/// Compare the input and baseline, retaining validation and conformance status.
 ///
 /// Protected headers are compared only when **both** the baseline and the
-/// target are signed. Payloads are compared whenever both sides carry one
-/// (a detached signed CoRIM has no payload). Prints the report as text or
+/// target are signed. Baselines must have complete validated payloads.
+/// `now: None` skips clock comparisons on the baseline. Prints the report as text or
 /// JSON (`format` is `"text"` or `"json"`).
 pub fn run(
     input_payload: Option<&CorimMap>,
     input_header: Option<&ProtectedCorimHeaderMap>,
     path: &str,
     format: &str,
-) -> Result<bool, String> {
-    let baseline = load_corim(path)?;
+    now: Option<i64>,
+    input_coverage: &corim::document::ValidationCoverage,
+) -> Result<BaselineOutcome, BaselineError> {
+    let baseline = load_corim(path, now)?;
 
     let mut report = ConformanceReport::default();
     let mut compared_header = false;
@@ -42,12 +76,12 @@ pub fn run(
 
     // Header: only when both baseline and target are signed.
     if let (Some(ih), Some(bh)) = (input_header, baseline.header.as_ref()) {
-        report.merge(corim::baseline::compare_headers(ih, bh));
+        report.merge(corim::baseline::compare_headers(ih, bh).map_err(|error| error.to_string())?);
         compared_header = true;
     }
     // Payload: whenever both sides carry one.
     if let (Some(ip), Some(bp)) = (input_payload, baseline.payload.as_ref()) {
-        report.merge(compare(ip, bp));
+        report.merge(compare(ip, bp).map_err(|error| error.to_string())?);
         compared_payload = true;
     }
 
@@ -67,21 +101,25 @@ pub fn run(
             "nothing to compare (baseline: {baseline_desc}; target: {target}). \
              Header comparison needs both sides signed; payload comparison needs \
              both sides to carry a payload."
-        ));
+        )
+        .into());
     }
 
     if format == "json" {
-        println!(
-            "{}",
-            render_json(
-                &report,
-                &baseline_desc,
-                &target,
-                compared_header,
-                compared_payload
-            )
-        );
+        let output = render_json(
+            &report,
+            &baseline_desc,
+            &target,
+            compared_header,
+            compared_payload,
+            input_coverage,
+            &baseline.coverage,
+        )?;
+        println!("{output}");
     } else {
+        if !input_coverage.is_complete() || !baseline.coverage.is_complete() {
+            println!("PARTIAL: some input or baseline validation checks were not performed");
+        }
         println!("Baseline: {baseline_desc}");
         println!("Target:   {target}");
         println!(
@@ -90,7 +128,10 @@ pub fn run(
         );
         render_text(&report);
     }
-    Ok(report.is_conformant())
+    Ok(BaselineOutcome {
+        conformant: report.is_conformant(),
+        complete: input_coverage.is_complete() && baseline.coverage.is_complete(),
+    })
 }
 
 /// A decoded baseline: its optional payload and optional protected header.
@@ -99,6 +140,7 @@ struct LoadedBaseline {
     header: Option<ProtectedCorimHeaderMap>,
     /// Description used when the baseline is unsigned (JSON vs CBOR source).
     source_unsigned_desc: &'static str,
+    coverage: corim::document::ValidationCoverage,
 }
 
 /// Human-readable description of one side's format.
@@ -121,56 +163,42 @@ fn compared_scope(header: bool, payload: bool) -> &'static str {
 
 /// Load a CoRIM from a JSON template, a CBOR CoRIM, or a signed CoRIM,
 /// retaining the protected header (if signed) and payload (if present).
-fn load_corim(path: &str) -> Result<LoadedBaseline, String> {
-    let raw = fs::read(path).map_err(|e| format!("reading baseline {path}: {e}"))?;
+fn load_corim(path: &str, now: Option<i64>) -> Result<LoadedBaseline, BaselineError> {
+    let raw = crate::input::read_file(path).map_err(|error| {
+        let message = format!("reading baseline {path}: {error}");
+        if error.kind() == std::io::ErrorKind::InvalidData {
+            BaselineError::Invalid(message)
+        } else {
+            BaselineError::Io(message)
+        }
+    })?;
     if raw.is_empty() {
-        return Err("baseline is empty".into());
+        return Err(BaselineError::Invalid("baseline is empty".into()));
     }
 
-    if is_json(&raw) {
-        let json: serde_json::Value =
-            serde_json::from_slice(&raw).map_err(|e| format!("parsing baseline JSON: {e}"))?;
-        let bytes = crate::generate::build_corim_from_template(json, None)
-            .map_err(|e| format!("building baseline from JSON template: {e}"))?;
-        let (corim, _) = corim::validate::decode_and_validate(&bytes)
-            .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
-        return Ok(LoadedBaseline {
-            payload: Some(corim),
-            header: None,
-            source_unsigned_desc: "unsigned CoRIM (from JSON template)",
-        });
-    }
-
-    // CBOR. Try decoding as a signed CoRIM first: `decode_signed_corim`
-    // recognizes both the bare `#6.18` tag and the legacy `#6.500`/`#6.502`
-    // wrappers. If it isn't signed, fall back to an unsigned CoRIM.
-    match corim::types::signed::decode_signed_corim(&raw) {
-        Ok(env) => {
-            let payload = match env.payload {
-                Some(p) => {
-                    let (corim, _) = corim::validate::decode_and_validate(&p).map_err(|e| {
-                        format!("baseline signed payload is not a valid CoRIM: {e}")
-                    })?;
-                    Some(corim)
-                }
-                None => None,
-            };
-            Ok(LoadedBaseline {
-                payload,
-                header: Some(env.protected),
-                source_unsigned_desc: "unsigned CoRIM",
-            })
-        }
-        Err(_) => {
-            let (corim, _) = corim::validate::decode_and_validate(&raw)
-                .map_err(|e| format!("baseline is not a valid CoRIM: {e}"))?;
-            Ok(LoadedBaseline {
-                payload: Some(corim),
-                header: None,
-                source_unsigned_desc: "unsigned CoRIM",
-            })
-        }
-    }
+    let json_input = is_json(&raw);
+    let bytes = if json_input {
+        let text =
+            std::str::from_utf8(&raw).map_err(|error| format!("baseline JSON UTF-8: {error}"))?;
+        let json = corim::json::parse_json(text)
+            .map_err(|error| format!("parsing baseline JSON: {error}"))?;
+        crate::generate::encode_document(json, None)
+            .map_err(|error| format!("encoding baseline JSON: {error}"))?
+    } else {
+        raw
+    };
+    let document = crate::validation::document(&bytes, now, &crate::profiles::build_registry())
+        .map_err(|error| format!("baseline is not a valid CoRIM: {error}"))?;
+    Ok(LoadedBaseline {
+        payload: Some(document.payload.corim),
+        header: document.signed.map(|signed| signed.protected().clone()),
+        source_unsigned_desc: if json_input {
+            "unsigned CoRIM (from JSON)"
+        } else {
+            "unsigned CoRIM"
+        },
+        coverage: document.coverage,
+    })
 }
 
 /// A byte buffer is treated as a JSON template if its first non-whitespace
@@ -243,7 +271,9 @@ fn render_json(
     target_desc: &str,
     compared_header: bool,
     compared_payload: bool,
-) -> String {
+    input_coverage: &corim::document::ValidationCoverage,
+    baseline_coverage: &corim::document::ValidationCoverage,
+) -> Result<String, BaselineError> {
     let structural: Vec<serde_json::Value> = report
         .structural_mismatches
         .iter()
@@ -253,9 +283,16 @@ fn render_json(
         .value_differences
         .iter()
         .map(value_diff_json)
-        .collect();
+        .collect::<Result<Vec<_>, _>>()?;
 
     let out = serde_json::json!({
+        "status": if input_coverage.is_complete() && baseline_coverage.is_complete() { "complete" } else { "partial" },
+        "time_validated": matches!(input_coverage.time(), corim::document::TimeCheck::At(_))
+            && matches!(baseline_coverage.time(), corim::document::TimeCheck::At(_)),
+        "coverage": {
+            "input": crate::validation::coverage_json(input_coverage),
+            "baseline": crate::validation::coverage_json(baseline_coverage),
+        },
         "result": result_str(report),
         "conformant": report.is_conformant(),
         "baseline_format": baseline_desc,
@@ -268,7 +305,8 @@ fn render_json(
         "structural_mismatches": structural,
         "value_differences": values,
     });
-    serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".into())
+    serde_json::to_string_pretty(&out)
+        .map_err(|error| format!("serializing baseline report: {error}").into())
 }
 
 fn structural_json(m: &StructuralMismatch) -> serde_json::Value {
@@ -284,13 +322,13 @@ fn structural_json(m: &StructuralMismatch) -> serde_json::Value {
     obj
 }
 
-fn value_diff_json(v: &ValueDifference) -> serde_json::Value {
-    serde_json::json!({
+fn value_diff_json(v: &ValueDifference) -> Result<serde_json::Value, String> {
+    Ok(serde_json::json!({
         "path": corim::baseline::render_path(&v.path),
         "field": v.field,
-        "baseline": value_to_json(&v.baseline),
-        "input": value_to_json(&v.input),
-    })
+        "baseline": corim::json::value_to_json(&v.baseline).map_err(|error| error.to_string())?,
+        "input": corim::json::value_to_json(&v.input).map_err(|error| error.to_string())?,
+    }))
 }
 
 fn mismatch_kind_str(k: &MismatchKind) -> &'static str {
@@ -412,77 +450,6 @@ fn render_capped(v: &Value, c: &mut Capped) {
             c.push("}");
         }
     }
-}
-
-/// Render a CBOR [`Value`] as a compact human string (bytes as hex,
-/// tags as `#6.N(inner)`).
-fn render_value(v: &Value) -> String {
-    match v {
-        Value::Bytes(b) => hex(b),
-        Value::Text(t) => t.clone(),
-        Value::Integer(n) => n.to_string(),
-        Value::Float(f) => f.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".into(),
-        Value::Tag(t, inner) => format!("#6.{t}({})", render_value(inner)),
-        Value::Array(a) => {
-            let items: Vec<String> = a.iter().map(render_value).collect();
-            format!("[{}]", items.join(", "))
-        }
-        Value::Map(m) => {
-            let items: Vec<String> = m
-                .iter()
-                .map(|(k, val)| format!("{}: {}", render_value(k), render_value(val)))
-                .collect();
-            format!("{{{}}}", items.join(", "))
-        }
-    }
-}
-
-/// Render a CBOR [`Value`] into a JSON value (bytes as hex; tags as the
-/// `{"__cbor_tag": N, "__cbor_value": ...}` envelope).
-fn value_to_json(v: &Value) -> serde_json::Value {
-    match v {
-        Value::Bytes(b) => serde_json::Value::String(hex(b)),
-        Value::Text(t) => serde_json::Value::String(t.clone()),
-        Value::Integer(n) => {
-            // `Value::Integer` is an `i128`; `serde_json` numbers only cover
-            // i64/u64, so fall back to a string for out-of-range values
-            // rather than risking a serializer failure.
-            if let Ok(x) = i64::try_from(*n) {
-                serde_json::json!(x)
-            } else if let Ok(x) = u64::try_from(*n) {
-                serde_json::json!(x)
-            } else {
-                serde_json::Value::String(n.to_string())
-            }
-        }
-        Value::Float(f) => serde_json::Number::from_f64(*f)
-            .map(serde_json::Value::Number)
-            .unwrap_or(serde_json::Value::Null),
-        Value::Bool(b) => serde_json::Value::Bool(*b),
-        Value::Null => serde_json::Value::Null,
-        Value::Array(a) => serde_json::Value::Array(a.iter().map(value_to_json).collect()),
-        Value::Tag(t, inner) => serde_json::json!({
-            "__cbor_tag": t,
-            "__cbor_value": value_to_json(inner),
-        }),
-        Value::Map(m) => {
-            let mut obj = serde_json::Map::new();
-            for (k, val) in m {
-                obj.insert(render_value(k), value_to_json(val));
-            }
-            serde_json::Value::Object(obj)
-        }
-    }
-}
-
-fn hex(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 #[cfg(test)]

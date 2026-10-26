@@ -57,7 +57,8 @@ pub struct ExtractArgs {
     #[arg(long, requires = "header")]
     json: bool,
 
-    /// Validate the extracted CoRIM after extraction. Ignored with `--header`.
+    /// Require complete validation of an unsigned payload before writing.
+    /// Partial validation exits 4 without output. Ignored with `--header`.
     #[arg(long)]
     validate: bool,
 }
@@ -66,14 +67,37 @@ pub struct ExtractArgs {
 pub fn run_extract(args: ExtractArgs) {
     if let Err(e) = run_extract_impl(args) {
         eprintln!("Error: {e}");
-        process::exit(1);
+        process::exit(match e {
+            ExtractError::Partial(_) => crate::validation::PARTIAL_EXIT_CODE,
+            ExtractError::Failure(_) => 1,
+        });
     }
 }
 
-fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
-    let bytes = read_input(args.file.as_deref())?;
+#[derive(Debug)]
+enum ExtractError {
+    Failure(String),
+    Partial(String),
+}
+
+impl From<String> for ExtractError {
+    fn from(message: String) -> Self {
+        Self::Failure(message)
+    }
+}
+
+impl std::fmt::Display for ExtractError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Failure(message) | Self::Partial(message) => formatter.write_str(message),
+        }
+    }
+}
+
+fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
+    let bytes = crate::input::read_document(args.file.as_deref())?;
     if bytes.is_empty() {
-        return Err("input is empty".into());
+        return Err(ExtractError::Failure("input is empty".into()));
     }
 
     let envelope =
@@ -82,10 +106,11 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
     if args.header {
         if args.json {
             let rendered = crate::jsonfmt::protected_header(
-                &envelope.protected,
-                envelope.protected_header_bytes.len(),
+                envelope.protected(),
+                envelope.protected_header_bytes().len(),
                 "",
-            );
+            )
+            .map_err(|error| error.to_string())?;
             write_output(
                 args.output.as_deref(),
                 format!("{rendered}\n").as_bytes(),
@@ -94,7 +119,7 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
         } else {
             write_output(
                 args.output.as_deref(),
-                &envelope.protected_header_bytes,
+                envelope.protected_header_bytes(),
                 "protected header",
             )?;
         }
@@ -109,8 +134,21 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), String> {
     })?;
 
     if args.validate {
-        corim::validate::decode_and_validate(&payload)
-            .map_err(|e| format!("extracted CoRIM failed validation: {e}"))?;
+        let registry = crate::profiles::build_registry();
+        let document =
+            crate::validation::document(&payload, Some(crate::validation::now()?), &registry)
+                .map_err(|error| format!("extracted CoRIM failed validation: {error}"))?;
+        if document.signed.is_some() {
+            return Err(ExtractError::Failure(
+                "extracted payload must be an unsigned CoRIM, not a signed envelope".into(),
+            ));
+        }
+        if !document.coverage.is_complete() {
+            return Err(ExtractError::Partial(format!(
+                "extracted CoRIM validation is partial: {}",
+                crate::validation::coverage_json(&document.coverage),
+            )));
+        }
     }
 
     write_output(args.output.as_deref(), &payload, "CoRIM payload")?;
@@ -217,16 +255,23 @@ pub fn run_sign(args: SignArgs) {
 }
 
 fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
-    let unsigned =
-        fs::read(&args.unsigned).map_err(|e| format!("reading {}: {e}", args.unsigned))?;
+    let unsigned = crate::input::read_file(&args.unsigned)
+        .map_err(|e| format!("reading {}: {e}", args.unsigned))?;
     if unsigned.is_empty() {
         return Err("unsigned CoRIM is empty".into());
     }
 
+    // Enforce document framing on the original bytes without adding semantic
+    // validation to the signing workflow or rewriting the signed payload.
+    corim::validate::check_document_framing(&unsigned, &corim::cbor::DecodeLimits::default())
+        .map_err(|e| format!("unsigned CoRIM framing: {e}"))?;
+
     let alg = parse_alg(&args.alg)?;
 
     let aad = match &args.external_aad {
-        Some(p) => fs::read(p).map_err(|e| format!("reading external-aad {p}: {e}"))?,
+        Some(p) => {
+            crate::input::read_file(p).map_err(|e| format!("reading external-aad {p}: {e}"))?
+        }
         None => Vec::new(),
     };
 
@@ -278,9 +323,10 @@ fn run_prepare_impl(args: PrepareArgs) -> Result<(), String> {
 }
 
 fn run_finalize_impl(args: FinalizeArgs) -> Result<(), String> {
-    let staging = fs::read(&args.staging).map_err(|e| format!("reading {}: {e}", args.staging))?;
-    let signature =
-        fs::read(&args.signature).map_err(|e| format!("reading {}: {e}", args.signature))?;
+    let staging = crate::input::read_file(&args.staging)
+        .map_err(|e| format!("reading {}: {e}", args.staging))?;
+    let signature = crate::input::read_file(&args.signature)
+        .map_err(|e| format!("reading {}: {e}", args.signature))?;
     if signature.is_empty() {
         return Err("signature file is empty".into());
     }
@@ -335,7 +381,7 @@ fn parse_alg(s: &str) -> Result<i64, String> {
 fn load_certs(paths: &[String]) -> Result<Vec<Vec<u8>>, String> {
     let mut out = Vec::new();
     for p in paths {
-        let raw = fs::read(p).map_err(|e| format!("reading cert {p}: {e}"))?;
+        let raw = crate::input::read_file(p).map_err(|e| format!("reading cert {p}: {e}"))?;
         if raw.is_empty() {
             return Err(format!("cert file {p} is empty"));
         }
@@ -379,21 +425,6 @@ fn parse_pem_certs(text: &str) -> Result<Vec<Vec<u8>>, String> {
         rest = &after[end + END.len()..];
     }
     Ok(certs)
-}
-
-/// Read from a file path, or stdin when `None` or `"-"`.
-fn read_input(path: Option<&str>) -> Result<Vec<u8>, String> {
-    match path {
-        Some(p) if p != "-" => fs::read(p).map_err(|e| format!("reading {p}: {e}")),
-        _ => {
-            use std::io::Read;
-            let mut buf = Vec::new();
-            io::stdin()
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("reading stdin: {e}"))?;
-            Ok(buf)
-        }
-    }
 }
 
 /// Write bytes to a file path, or stdout when `None` or `"-"`. `what` names

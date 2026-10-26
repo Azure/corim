@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, staging]
+    branches: [main, staging, release/v0.2.x]
   pull_request:
-    branches: [main]
+    branches: [main, release/v0.2.x]
 
 permissions:
   contents: read
@@ -14,11 +14,11 @@ env:
 
 jobs:
   build:
-    name: Build & Test
+    name: Build & Test (${{ matrix.rust }})
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        rust: [stable, nightly]
+        rust: ['1.85.0', stable, nightly]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -37,17 +37,37 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ matrix.rust }}-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build (workspace, all features)
-        run: cargo build --workspace --all-features
+        run: cargo build --workspace --all-features --locked
 
       - name: Test (workspace, all features)
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --locked
 
-      # Library-only no_std build. corim-cli requires std, so scope to -p corim.
-      - name: Build (corim, no-default-features, no_std + alloc)
-        run: cargo build -p corim --no-default-features
-
-      - name: Build (corim, no-default-features + profile-intel)
-        run: cargo build -p corim --no-default-features --features profile-intel
+      # Keep these library-only: the CLI enables std through feature unification.
+      # Build every profile subset so one profile cannot hide another's missing imports.
+      - name: Build (corim, no_std + alloc, every profile combination)
+        shell: bash
+        run: |
+          for features in \
+            "" \
+            "profile-intel" \
+            "profile-azure" \
+            "profile-psa" \
+            "profile-intel,profile-azure" \
+            "profile-intel,profile-psa" \
+            "profile-azure,profile-psa" \
+            "profile-intel,profile-azure,profile-psa" \
+            "profile-cca" \
+            "profile-cca,profile-intel" \
+            "profile-cca,profile-azure" \
+            "profile-cca,profile-psa" \
+            "profile-cca,profile-intel,profile-azure" \
+            "profile-cca,profile-intel,profile-psa" \
+            "profile-cca,profile-azure,profile-psa" \
+            "profile-cca,profile-intel,profile-azure,profile-psa"; do
+            echo "::group::no_std profiles: ${features:-none}"
+            cargo build -p corim --no-default-features --features "$features" --locked
+            echo "::endgroup::"
+          done
 
   fmt:
     name: Formatting
@@ -62,6 +82,11 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+      - name: Test release packaging and publishing without uploads
+        run: |
+          bash scripts/tests/publish-crate-tests.sh
+          bash scripts/tests/release-packaging-tests.sh
 
   clippy:
     name: Clippy

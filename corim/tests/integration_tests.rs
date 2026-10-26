@@ -131,10 +131,11 @@ mod measurement_tests {
 
     #[test]
     fn measurement_values_map_with_digests() {
-        let mval = MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            digests: Some(vec![Digest::new(7, vec![0xBB; 48])]),
-            ..MeasurementValuesMap::default()
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values.digests = Some(vec![Digest::new(7, vec![0xBB; 48])]);
+            values
         };
 
         let bytes = cbor::encode(&mval).unwrap();
@@ -148,9 +149,10 @@ mod measurement_tests {
             mkey: Some(corim::types::common::MeasuredElement::Text(
                 "MEASUREMENT".into(),
             )),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xCC; 48])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xCC; 48])]);
+                values
             },
             authorized_by: None,
         };
@@ -191,9 +193,10 @@ mod builder_tests {
     fn make_ref_measurement(mkey: &str, digest: Vec<u8>) -> MeasurementMap {
         MeasurementMap {
             mkey: Some(MeasuredElement::Text(mkey.into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, digest)]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, digest)]);
+                values
             },
             authorized_by: None,
         }
@@ -245,9 +248,10 @@ mod builder_tests {
                 vec![make_ref_measurement("firmware", vec![0xAA; 48])],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -349,9 +353,10 @@ mod validation_tests {
     fn make_measurement(mkey: &str, digest: Vec<u8>) -> MeasurementMap {
         MeasurementMap {
             mkey: Some(MeasuredElement::Text(mkey.into())),
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, digest)]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, digest)]);
+                values
             },
             authorized_by: None,
         }
@@ -369,9 +374,10 @@ mod validation_tests {
                 vec![make_measurement("firmware", vec![0xAA; 48])],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -473,9 +479,10 @@ mod validation_tests {
             environment: env.clone(),
             measurements: vec![MeasurementMap {
                 mkey: Some(MeasuredElement::Text("firmware".into())),
-                mval: MeasurementValuesMap {
-                    digests: Some(vec![Digest::new(1, vec![0xAA; 32])]), // SHA-256 (different alg)
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.digests = Some(vec![Digest::new(1, vec![0xAA; 32])]);
+                    values
                 },
                 authorized_by: None,
             }],
@@ -514,9 +521,10 @@ mod validation_tests {
                     vec![make_measurement("firmware", vec![0xAA; 48])],
                     vec![MeasurementMap {
                         mkey: None,
-                        mval: MeasurementValuesMap {
-                            svn: Some(SvnChoice::ExactValue(1)),
-                            ..MeasurementValuesMap::default()
+                        mval: {
+                            let mut values = MeasurementValuesMap::default();
+                            values.svn = Some(SvnChoice::ExactValue(1));
+                            values
                         },
                         authorized_by: None,
                     }],
@@ -525,9 +533,10 @@ mod validation_tests {
                     vec![make_measurement("firmware", vec![0xBB; 48])],
                     vec![MeasurementMap {
                         mkey: None,
-                        mval: MeasurementValuesMap {
-                            svn: Some(SvnChoice::ExactValue(2)),
-                            ..MeasurementValuesMap::default()
+                        mval: {
+                            let mut values = MeasurementValuesMap::default();
+                            values.svn = Some(SvnChoice::ExactValue(2));
+                            values
                         },
                         authorized_by: None,
                     }],
@@ -565,9 +574,10 @@ mod validation_tests {
                 vec![make_measurement("firmware", vec![0xAA; 48])],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -678,9 +688,10 @@ mod typed_triple_tests {
         let env = make_env();
         let meas = MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+                values
             },
             authorized_by: None,
         };
@@ -804,9 +815,10 @@ mod measurement_extension_tests {
 
     #[test]
     fn mac_addr_eui48_round_trip() {
-        let mval = MeasurementValuesMap {
-            mac_addr: Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])),
-            ..MeasurementValuesMap::default()
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.mac_addr = Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
+            values
         };
 
         let bytes = cbor::encode(&mval).unwrap();
@@ -816,9 +828,10 @@ mod measurement_extension_tests {
 
     #[test]
     fn ip_addr_v4_round_trip() {
-        let mval = MeasurementValuesMap {
-            ip_addr: Some(IpAddr::V4([192, 168, 1, 1])),
-            ..MeasurementValuesMap::default()
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.ip_addr = Some(IpAddr::V4([192, 168, 1, 1]));
+            values
         };
 
         let bytes = cbor::encode(&mval).unwrap();
@@ -828,12 +841,13 @@ mod measurement_extension_tests {
 
     #[test]
     fn int_range_round_trip() {
-        let mval = MeasurementValuesMap {
-            int_range: Some(IntRangeChoice::Range {
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.int_range = Some(IntRangeChoice::Range {
                 min: Some(0),
                 max: Some(100),
-            }),
-            ..MeasurementValuesMap::default()
+            });
+            values
         };
 
         let bytes = cbor::encode(&mval).unwrap();
@@ -843,12 +857,13 @@ mod measurement_extension_tests {
 
     #[test]
     fn int_range_unbounded_round_trip() {
-        let mval = MeasurementValuesMap {
-            int_range: Some(IntRangeChoice::Range {
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.int_range = Some(IntRangeChoice::Range {
                 min: None,
                 max: Some(50),
-            }),
-            ..MeasurementValuesMap::default()
+            });
+            values
         };
 
         let bytes = cbor::encode(&mval).unwrap();
@@ -864,9 +879,10 @@ mod bytes_encoding_test {
 
     #[test]
     fn ueid_encodes_as_bstr_not_array() {
-        let mval = MeasurementValuesMap {
-            ueid: Some(vec![0x02, 0xDE, 0xAD]),
-            ..MeasurementValuesMap::default()
+        let mval = {
+            let mut values = MeasurementValuesMap::default();
+            values.ueid = Some(vec![0x02, 0xDE, 0xAD]);
+            values
         };
         let bytes = cbor::encode(&mval).unwrap();
         // Decode as Value and check the ueid field is Bytes, not Array

@@ -15,13 +15,15 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::cbor;
 use crate::error::ValidationError;
-use crate::profile::{MatchContext, Profile};
+use crate::profile::{MatchContext, Profile, ProfileRegistry};
 use crate::types::comid::ComidTag;
 use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
 use crate::types::measurement::{Digest, MeasurementMap, SvnChoice};
-use crate::types::tags::TAG_CORIM;
+use crate::types::tags::{
+    CORIM_KEY_RIM_VALIDITY, COTL_KEY_VALIDITY, TAG_CORIM, VALIDITY_KEY_NOT_BEFORE,
+};
 use crate::types::triples::{
     ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple,
 };
@@ -37,10 +39,39 @@ use crate::Validate;
 /// untrusted input.
 pub const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
 
+/// Check resource budgets across a CoRIM's embedded CBOR (RFC 8949 §10).
+///
+/// This resource-only pass is intended for diagnostic/inspection consumers:
+/// malformed CBOR or invalid document structure is NOT rejected here. Use
+/// validation APIs for semantic validation. Limit failures are always fatal.
+/// Outer data, protected headers, corim-meta, and inline payload/tag bodies
+/// share one value budget; signatures, certificates and hashes stay opaque.
+pub fn check_decode_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document(bytes)
+}
+
+/// Check single-item framing at known document and embedded-CBOR boundaries.
+///
+/// Unlike [`check_decode_limits`], rejects trailing bytes after a successfully
+/// parsed item (RFC 8949 §3), and duplicate integer/text labels in schema maps
+/// (RFC 8949 §5.6), retaining the protected-header flat-CWT legacy exception.
+/// Enforces the same resource limits. Other syntax
+/// and semantic errors are intentionally left to validation/diagnostic APIs.
+/// Opaque signatures, certificates and declared hash payloads are not decoded.
+pub fn check_document_framing(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<(), crate::DecodeError> {
+    cbor::DecodeBudget::new(limits)?.inspect_document_framing(bytes)
+}
+
 /// Result of decoding and validating a CoRIM document.
 ///
 /// Contains the decoded `CorimMap` and all extracted/validated tags.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedCorim {
     /// The decoded top-level CoRIM map.
     pub corim: CorimMap,
@@ -74,6 +105,25 @@ pub fn decode_and_validate(bytes: &[u8]) -> Result<(CorimMap, Vec<ComidTag>), Va
     decode_and_validate_at(bytes, now)
 }
 
+/// Decode and validate a CoRIM, including constraints defined by its
+/// registered profile.
+///
+/// Unknown profiles remain forward-compatible: when the CoRIM has no profile,
+/// or its identifier is absent from `registry`, only core validation runs.
+#[cfg(feature = "std")]
+pub fn decode_and_validate_with_registry(
+    bytes: &[u8],
+    registry: &ProfileRegistry,
+) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_at_with_registry(bytes, now, registry)
+}
+
 /// Decode and validate a CoRIM with an explicit "now" timestamp.
 ///
 /// Same as [`decode_and_validate`] but uses the provided `now_epoch_secs`
@@ -83,6 +133,17 @@ pub fn decode_and_validate_at(
     now_epoch_secs: i64,
 ) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
     let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    Ok((validated.corim, validated.comids))
+}
+
+/// Decode and validate a CoRIM with an explicit timestamp and profile registry.
+pub fn decode_and_validate_at_with_registry(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    registry: &ProfileRegistry,
+) -> Result<(CorimMap, Vec<ComidTag>), ValidationError> {
+    let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    validate_corim_profile(&validated.corim, &validated.comids, registry)?;
     Ok((validated.corim, validated.comids))
 }
 
@@ -96,11 +157,21 @@ fn validate_comid(comid: &ComidTag) -> Result<(), ValidationError> {
 /// Checks:
 /// - `tags-list` is non-empty
 /// - `tl-validity` is within the current time window
-fn validate_cotl(cotl: &ConciseTlTag, now_epoch_secs: i64) -> Result<(), ValidationError> {
+fn validate_cotl(cotl: &ConciseTlTag, now_epoch_secs: Option<i64>) -> Result<(), ValidationError> {
     if cotl.tags_list.is_empty() {
         return Err(ValidationError::EmptyTagsList);
     }
 
+    if let Some(not_before) = cotl.tl_validity.not_before {
+        if not_before.epoch_secs() > cotl.tl_validity.not_after.epoch_secs() {
+            return Err(ValidationError::Invalid(
+                "CoTL validity window is reversed".into(),
+            ));
+        }
+    }
+    let Some(now_epoch_secs) = now_epoch_secs else {
+        return Ok(());
+    };
     // Check CoTL validity window
     if let Some(nb) = cotl.tl_validity.not_before {
         if now_epoch_secs < nb.epoch_secs() {
@@ -129,12 +200,92 @@ pub fn decode_and_validate_full(bytes: &[u8]) -> Result<ValidatedCorim, Validati
     decode_and_validate_full_at(bytes, now)
 }
 
+/// Decode and validate all CoRIM tag types, including constraints defined by
+/// the document's registered profile.
+#[cfg(feature = "std")]
+pub fn decode_and_validate_full_with_registry(
+    bytes: &[u8],
+    registry: &ProfileRegistry,
+) -> Result<ValidatedCorim, ValidationError> {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| ValidationError::Clock(e.to_string()))?
+        .as_secs();
+    let now = i64::try_from(secs)
+        .map_err(|_| ValidationError::Clock("system clock beyond i64 range".into()))?;
+    decode_and_validate_full_at_with_registry(bytes, now, registry)
+}
+
 /// Decode and validate a CoRIM with an explicit timestamp, returning all tag types.
 pub fn decode_and_validate_full_at(
     bytes: &[u8],
     now_epoch_secs: i64,
 ) -> Result<ValidatedCorim, ValidationError> {
     decode_and_validate_full_impl(bytes, now_epoch_secs)
+}
+
+/// Decode and validate all CoRIM tag types with an explicit timestamp and
+/// profile registry.
+pub fn decode_and_validate_full_at_with_registry(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    registry: &ProfileRegistry,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_full_impl(bytes, now_epoch_secs)?;
+    validate_corim_profile(&validated.corim, &validated.comids, registry)?;
+    Ok(validated)
+}
+
+/// Validate profile-defined constraints over decoded CoMID triples.
+///
+/// This is useful when the caller decoded a signed CoRIM envelope separately
+/// and therefore cannot use [`decode_and_validate_with_registry`].
+pub fn validate_corim_profile(
+    corim: &CorimMap,
+    comids: &[ComidTag],
+    registry: &ProfileRegistry,
+) -> Result<(), ValidationError> {
+    let Some(profile_id) = corim.profile.as_ref() else {
+        return Ok(());
+    };
+    let Some(profile) = registry.get(profile_id) else {
+        return Ok(());
+    };
+
+    for (comid_index, comid) in comids.iter().enumerate() {
+        if let Some(triples) = &comid.triples.reference_triples {
+            for (triple_index, triple) in triples.iter().enumerate() {
+                if let Some(issue) = crate::profile::reference_validation_issues(profile, triple)
+                    .into_iter()
+                    .next()
+                {
+                    let location = match issue.measurement_index {
+                        Some(index) => format!(".measurements[{index}]"),
+                        None => String::new(),
+                    };
+                    return Err(ValidationError::Invalid(format!(
+                        "profile {profile_id}, comids[{comid_index}].reference-triples\
+                         [{triple_index}]{location}: {}",
+                        issue.error
+                    )));
+                }
+            }
+        }
+        if let Some(triples) = &comid.triples.attest_key_triples {
+            for (triple_index, triple) in triples.iter().enumerate() {
+                profile
+                    .validate_attest_key_triple(triple)
+                    .map_err(|error| {
+                        ValidationError::Invalid(format!(
+                            "profile {profile_id}, comids[{comid_index}].attest-key-triples\
+                         [{triple_index}]: {error}"
+                        ))
+                    })?;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Internal unified implementation — decodes all tags in a single pass.
@@ -148,39 +299,231 @@ fn decode_and_validate_full_impl(
             max: MAX_PAYLOAD_SIZE,
         });
     }
-    // Decode interop: peel legacy `#6.500` / `#6.502` outer wrappers if
-    // present (TCG Endorsement spec / NVIDIA producers). See
-    // `crate::compat::peel_tcg_wrappers`.
-    let peeled = crate::compat::peel_tcg_wrappers(bytes).map_err(ValidationError::Decode)?;
-    let bytes = peeled.as_bytes();
-    // Decode interop: if the input is a bare `corim-map` (no #6.501 wrapper),
-    // synthesize the wrapper so strict decode succeeds. Same producer family
-    // as above (TCG-style implementations omit the inner tag because the
-    // outer #6.500/#6.502 historically provided disambiguation).
-    let wrapped = crate::compat::wrap_bare_corim_map(bytes);
-    let bytes = wrapped.as_bytes();
-    // Decode the tag-501 wrapped CoRIM
-    let tagged: cbor::value::Tagged<CorimMap> =
-        cbor::decode(bytes).map_err(ValidationError::Decode)?;
-    if tagged.tag != TAG_CORIM {
-        return Err(ValidationError::Decode(
-            crate::error::DecodeError::UnexpectedTag {
-                expected: TAG_CORIM,
-                found: tagged.tag,
-            },
+    decode_and_validate_full_at_with_limits(bytes, now_epoch_secs, &cbor::DecodeLimits::default())
+}
+
+/// Decode and validate with an explicit clock and resource limits (RFC 8949 §10).
+/// The outer map and every embedded tag share one aggregate value budget.
+/// Resource failures return `ValidationError::Decode(DecodeError::LimitExceeded)`.
+/// Legacy validation APIs use default limits but retain `PayloadTooLarge` for
+/// oversized outer input.
+pub fn decode_and_validate_full_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let mut budget = cbor::DecodeBudget::new(limits)?;
+    decode_and_validate_budget(bytes, now_epoch_secs, &mut budget)
+}
+
+pub(crate) fn decode_and_validate_budget(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_budget_with_time(bytes, Some(now_epoch_secs), budget)?;
+    if validated.comids.is_empty() {
+        return Err(ValidationError::NoComidTags);
+    }
+    Ok(validated)
+}
+
+/// Validate a complete unsigned document with an explicit clock and limits.
+///
+/// Per draft-ietf-rats-corim-11 Section 4.1, the non-empty tags array may
+/// contain any supported tag type; a CoMID is not required. Unlike the legacy
+/// [`decode_and_validate_full_at_with_limits`], opaque CoSWID content is an
+/// error. Apply registered profile validation separately. This does not
+/// establish authenticity (RFC 9334 Section 8).
+pub fn decode_and_validate_document_at_with_limits(
+    bytes: &[u8],
+    now_epoch_secs: i64,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_document_impl(bytes, Some(now_epoch_secs), limits)
+}
+
+fn decode_and_validate_document_impl(
+    bytes: &[u8],
+    now_epoch_secs: Option<i64>,
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    let validated = decode_and_validate_budget_with_time(
+        bytes,
+        now_epoch_secs,
+        &mut cbor::DecodeBudget::new(limits)?,
+    )?;
+    validated.corim.valid().map_err(ValidationError::Invalid)?;
+    if validated.coswid_opaque_count != 0 {
+        return Err(ValidationError::Invalid(
+            "cannot validate opaque CoSWID content".into(),
         ));
     }
-    let corim = tagged.value;
+    Ok(validated)
+}
+
+/// Validate CoRIM structure without checking time validity (partial validation).
+///
+/// All tag decoding, structural rules and parser limits still apply. Reversed
+/// validity windows and opaque CoSWID content are rejected. A CoMID is not
+/// required. Callers must explicitly report that temporal
+/// validity was not checked and apply any registered profile validation separately.
+/// This does not establish freshness or authenticity (RFC 9334 Section 8).
+pub fn decode_and_validate_structure_with_limits(
+    bytes: &[u8],
+    limits: &cbor::DecodeLimits,
+) -> Result<ValidatedCorim, ValidationError> {
+    decode_and_validate_document_impl(bytes, None, limits)
+}
+
+fn check_validity_shape(
+    map: &cbor::value::Value,
+    validity_key: i64,
+    name: &str,
+) -> Result<(), ValidationError> {
+    use cbor::value::Value;
+    let Value::Map(entries) = map else {
+        return Ok(());
+    };
+    let Some((_, validity)) = entries
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(validity_key.into()))
+    else {
+        return Ok(());
+    };
+    let Value::Map(fields) = validity else {
+        return Err(ValidationError::Invalid(format!(
+            "{name} must be a validity map"
+        )));
+    };
+    if fields.iter().any(|(key, value)| {
+        *key == Value::Integer(VALIDITY_KEY_NOT_BEFORE.into()) && matches!(value, Value::Null)
+    }) {
+        return Err(ValidationError::Invalid(format!(
+            "{name} validity not-before must not be null"
+        )));
+    }
+    Ok(())
+}
+
+pub(crate) fn decode_and_validate_budget_with_time(
+    bytes: &[u8],
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    budget.check_input(bytes)?;
+    let value = budget.decode_value_exact(bytes)?;
+    validate_parsed_corim(value, now_epoch_secs, budget)
+}
+
+pub(crate) fn validate_parsed_corim(
+    value: cbor::value::Value,
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<ValidatedCorim, ValidationError> {
+    let prepared = prepare_parsed_corim(value, budget)?;
+    validate_prepared_corim(prepared, now_epoch_secs)
+}
+
+type ParsedTagBody = Option<Result<cbor::value::Value, crate::DecodeError>>;
+
+fn parse_tag_bodies(
+    map: &cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<Vec<ParsedTagBody>, crate::DecodeError> {
+    use crate::types::tags::{CORIM_KEY_TAGS, TAG_COMID, TAG_COSWID, TAG_COTL};
+    use cbor::value::Value;
+    let Value::Map(fields) = map else {
+        return Ok(Vec::new());
+    };
+    let Some((_, Value::Array(tags))) = fields
+        .iter()
+        .find(|(key, _)| *key == Value::Integer(CORIM_KEY_TAGS.into()))
+    else {
+        return Ok(Vec::new());
+    };
+    let mut bodies = Vec::with_capacity(tags.len());
+    for tag in tags {
+        let bytes = match tag {
+            Value::Tag(TAG_COMID | TAG_COSWID | TAG_COTL, inner) => match inner.as_ref() {
+                Value::Bytes(bytes) => Some(bytes),
+                _ => None,
+            },
+            Value::Bytes(bytes) => Some(bytes),
+            _ => None,
+        };
+        let parsed = if let Some(bytes) = bytes {
+            let parsed = budget.decode_value_exact(bytes);
+            budget.check()?;
+            match parsed {
+                Err(error @ crate::DecodeError::TrailingData { .. }) => return Err(error),
+                Ok(ref value) => cbor::map_keys::check(value)?,
+                _ => {}
+            }
+            Some(parsed)
+        } else {
+            None
+        };
+        bodies.push(parsed);
+    }
+    Ok(bodies)
+}
+
+pub(crate) struct PreparedCorim {
+    map: cbor::value::Value,
+    bodies: Vec<ParsedTagBody>,
+}
+
+pub(crate) fn prepare_parsed_corim(
+    value: cbor::value::Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<PreparedCorim, ValidationError> {
+    let value = crate::compat::peel_value(value);
+    let map = match value {
+        cbor::value::Value::Tag(TAG_CORIM, inner) => *inner,
+        map @ cbor::value::Value::Map(_) => map,
+        cbor::value::Value::Tag(found, _) => {
+            return Err(crate::DecodeError::UnexpectedTag {
+                expected: TAG_CORIM,
+                found,
+            }
+            .into())
+        }
+        _ => return Err(crate::DecodeError::InvalidStructure("expected CoRIM map".into()).into()),
+    };
+    cbor::map_keys::check(&map)?;
+    let bodies = parse_tag_bodies(&map, budget)?;
+    Ok(PreparedCorim { map, bodies })
+}
+
+pub(crate) fn validate_prepared_corim(
+    prepared: PreparedCorim,
+    now_epoch_secs: Option<i64>,
+) -> Result<ValidatedCorim, ValidationError> {
+    let PreparedCorim { map, bodies } = prepared;
+    check_validity_shape(&map, CORIM_KEY_RIM_VALIDITY, "rim-validity")?;
+    let corim: CorimMap =
+        cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
 
     // Check rim-validity
     if let Some(ref validity) = corim.rim_validity {
-        if let Some(nb) = validity.not_before {
-            if now_epoch_secs < nb.epoch_secs() {
-                return Err(ValidationError::NotYetValid);
-            }
+        if validity
+            .not_before
+            .is_some_and(|value| value.epoch_secs() > validity.not_after.epoch_secs())
+        {
+            return Err(ValidationError::Invalid(
+                "CoRIM validity window is reversed".into(),
+            ));
         }
-        if validity.not_after.epoch_secs() < now_epoch_secs {
-            return Err(ValidationError::Expired);
+        if let Some(now_epoch_secs) = now_epoch_secs {
+            if let Some(nb) = validity.not_before {
+                if now_epoch_secs < nb.epoch_secs() {
+                    return Err(ValidationError::NotYetValid);
+                }
+            }
+            if validity.not_after.epoch_secs() < now_epoch_secs {
+                return Err(ValidationError::Expired);
+            }
         }
     }
 
@@ -189,37 +532,47 @@ fn decode_and_validate_full_impl(
     let mut cotls = Vec::new();
     let mut coswids = Vec::new();
     let mut coswid_opaque_count = 0usize;
-    for tag in &corim.tags {
+    for (tag, body) in corim.tags.iter().zip(bodies) {
         match tag {
-            ConciseTagChoice::Comid(comid_bytes) => {
-                let comid: ComidTag = cbor::decode(comid_bytes).map_err(ValidationError::Decode)?;
+            ConciseTagChoice::Comid(_) => {
+                let value = required_tag_body(body)??;
+                let comid: ComidTag =
+                    cbor::from_parsed_value(value).map_err(crate::DecodeError::Deserialization)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
             }
-            ConciseTagChoice::Cotl(cotl_bytes) => {
+            ConciseTagChoice::Cotl(_) => {
+                let map = required_tag_body(body)??;
+                check_validity_shape(&map, COTL_KEY_VALIDITY, "tl-validity")?;
                 let cotl: ConciseTlTag =
-                    cbor::decode(cotl_bytes).map_err(ValidationError::Decode)?;
+                    cbor::from_parsed_value(map).map_err(crate::DecodeError::Deserialization)?;
                 validate_cotl(&cotl, now_epoch_secs)?;
                 cotls.push(cotl);
             }
-            ConciseTagChoice::Coswid(coswid_bytes) => {
+            ConciseTagChoice::Coswid(_) => {
                 // Try structured decode; fall back to opaque count
-                match cbor::decode::<ConciseSwidTag>(coswid_bytes) {
+                match required_tag_body(body)?.and_then(|value| {
+                    cbor::from_parsed_value::<ConciseSwidTag>(value)
+                        .map_err(crate::DecodeError::Deserialization)
+                }) {
                     Ok(coswid) => {
                         coswid.valid().map_err(ValidationError::Invalid)?;
                         coswids.push(coswid);
                     }
+                    Err(e @ crate::DecodeError::LimitExceeded { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::TrailingData { .. }) => return Err(e.into()),
+                    Err(e @ crate::DecodeError::DuplicateKey { .. }) => return Err(e.into()),
                     Err(_) => coswid_opaque_count += 1,
                 }
             }
-            ConciseTagChoice::BareBstr(bytes) => {
+            ConciseTagChoice::BareBstr(_) => {
                 // TCG-style interop: producers (e.g. NVIDIA) emit `tags[]`
                 // entries as bare `bstr` whose contents are either a
                 // `#6.506`-wrapped CoMID or a bare CoMID map. Use the
                 // tag-tolerant compat decoder; failure here is fatal because
                 // we have no other interpretation for a bare bstr in this
                 // position.
-                let comid = crate::compat::decode_comid_from_tcg_bstr(bytes)
+                let comid = crate::compat::decode_parsed_comid(required_tag_body(body)??)
                     .map_err(ValidationError::Decode)?;
                 validate_comid(&comid)?;
                 comids.push(comid);
@@ -230,8 +583,10 @@ fn decode_and_validate_full_impl(
         }
     }
 
-    if comids.is_empty() {
-        return Err(ValidationError::NoComidTags);
+    fn required_tag_body(
+        body: ParsedTagBody,
+    ) -> Result<Result<cbor::value::Value, crate::DecodeError>, crate::DecodeError> {
+        body.ok_or_else(|| crate::DecodeError::InvalidStructure("missing parsed tag body".into()))
     }
 
     Ok(ValidatedCorim {
@@ -252,7 +607,8 @@ fn decode_and_validate_full_impl(
 pub struct CorroboratedClaim {
     /// The environment that was matched.
     pub environment: EnvironmentMap,
-    /// The measurement(s) that matched.
+    /// The complete matched evidence measurement list, not reference constraints.
+    /// Per draft-ietf-rats-corim-11 §8.2.4.2.1.
     pub measurements: Vec<MeasurementMap>,
 }
 
@@ -262,6 +618,13 @@ pub struct CorroboratedClaim {
 /// §8.2.4.4.1 (environment) and §8.2.4.4.5.4 (digests):
 /// - Absent condition field = wildcard
 /// - All common algorithms must agree
+///
+/// Every reference measurement must match within the same evidence claim
+/// (draft-ietf-rats-corim-11 §8.2.4.4.3). An empty reference list does not match.
+/// On success, the result retains the reference environment and copies the
+/// complete evidence measurement list, including additional measurements, in
+/// evidence order (§8.2.3.7.2 and §8.2.4.2.1). Each matching reference/evidence
+/// pair produces one result; separate evidence claims are not combined.
 pub fn match_reference_values(
     ref_triples: &[ReferenceTriple],
     evidence: &[EvidenceClaim],
@@ -274,17 +637,15 @@ pub fn match_reference_values(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches(ref_meas, &ev.measurements) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions
+                    .iter()
+                    .all(|reference| measurement_matches(reference, &ev.measurements))
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
@@ -305,7 +666,10 @@ pub struct EvidenceClaim {
 /// Like [`match_reference_values`] but consults a profile's
 /// [`Profile::match_measurement`] hook for each candidate
 /// (reference, evidence) measurement pair before falling back to the
-/// crate's default exact-match logic.
+/// crate's core comparison rules, including matcher conditions for keys 16-19.
+/// All reference measurements must match within one evidence claim; successful
+/// results copy that claim's complete measurement list, as in
+/// [`match_reference_values`] (draft-ietf-rats-corim-11 §8.2.4.2.1).
 ///
 /// Per-pair semantics:
 /// - `Some(true)` from the profile — the pair is treated as matching
@@ -315,16 +679,24 @@ pub struct EvidenceClaim {
 /// - `None` from the profile — defer to the default per-pair logic
 ///   (the same comparison performed by [`match_reference_values`]).
 ///
-/// The profile is consulted independently for each (reference, evidence)
-/// pair within a triple. Pass `None` for `profile` to get behavior
-/// identical to [`match_reference_values`].
+/// Before any per-pair matching, the profile's
+/// [`Profile::validate_reference_triple`] hook is called once for each
+/// reference triple, followed by
+/// [`Profile::validate_reference_measurement`] for every measurement in that
+/// triple. For each candidate evidence claim,
+/// [`Profile::validate_evidence_claim`] is also called before generic
+/// environment matching. Any validation failure is returned as
+/// [`ValidationError::Invalid`] rather than being treated as an ordinary
+/// non-match. Profiles with no reference- or evidence-validation rules behave
+/// as if only per-pair matching were customized. Pass `None` for `profile` to
+/// get behavior identical to [`match_reference_values`].
 ///
 /// Profile lookup is the caller's responsibility:
 ///
 /// ```ignore
 /// let profile = registry.get(corim.profile.as_ref()?);
 /// let ctx = MatchContext::system_now();
-/// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx);
+/// let claims = match_reference_values_with_profile(&triples, &evidence, profile, &ctx)?;
 /// ```
 ///
 /// The `P: ?Sized + Profile` bound lets callers pass any of:
@@ -337,8 +709,30 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     evidence: &[EvidenceClaim],
     profile: Option<&P>,
     ctx: &MatchContext,
-) -> Vec<CorroboratedClaim> {
+) -> Result<Vec<CorroboratedClaim>, ValidationError> {
     let mut corroborated = Vec::new();
+
+    if let Some(profile) = profile {
+        for triple in ref_triples {
+            if let Some(issue) = crate::profile::reference_validation_issues(profile, triple)
+                .into_iter()
+                .next()
+            {
+                let location = match issue.measurement_index {
+                    Some(index) => format!(" measurement[{index}]"),
+                    None => String::new(),
+                };
+                return Err(ValidationError::Invalid(format!(
+                    "profile {} reference triple{location}: {}",
+                    profile.identifier(),
+                    issue.error
+                )));
+            }
+        }
+        if !ref_triples.is_empty() {
+            validate_profile_evidence(evidence, profile)?;
+        }
+    }
 
     for triple in ref_triples {
         for ev in evidence {
@@ -346,23 +740,21 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
                 continue;
             }
 
-            let mut matched_measurements = Vec::new();
-            for ref_meas in triple.measurements() {
-                if measurement_matches_with_profile(ref_meas, &ev.measurements, profile, ctx) {
-                    matched_measurements.push(ref_meas.clone());
-                }
-            }
-
-            if !matched_measurements.is_empty() {
+            let conditions = triple.measurements();
+            if !conditions.is_empty()
+                && conditions.iter().all(|reference| {
+                    measurement_matches_with_profile(reference, &ev.measurements, profile, ctx)
+                })
+            {
                 corroborated.push(CorroboratedClaim {
                     environment: triple.environment().clone(),
-                    measurements: matched_measurements,
+                    measurements: ev.measurements.clone(),
                 });
             }
         }
     }
 
-    corroborated
+    Ok(corroborated)
 }
 
 /// Profile-aware analogue of [`measurement_matches`]: for each evidence
@@ -414,9 +806,11 @@ pub fn apply_endorsement_series(
 }
 
 /// Like [`apply_endorsement_series`] but consults a profile's
-/// [`Profile::match_measurement`] hook when comparing each series
-/// `condition` entry against evidence. Per-pair semantics are identical
-/// to those of [`match_reference_values_with_profile`].
+/// [`Profile::validate_evidence_claim`] hook before generic environment
+/// matching and [`Profile::match_measurement`] hook when comparing each
+/// series `condition` entry against evidence. Measurement-pair matching
+/// semantics are identical to those of
+/// [`match_reference_values_with_profile`].
 ///
 /// Pass `None::<&dyn Profile>` for `profile` to get behavior identical
 /// to [`apply_endorsement_series`].
@@ -428,13 +822,21 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
 
+    if let Some(profile) = profile {
+        if !ces_triples.is_empty() {
+            validate_profile_evidence(evidence, profile)?;
+        }
+    }
+
     for triple in ces_triples {
         let condition = triple.common_condition();
 
-        let matching_evidence: Vec<_> = evidence
-            .iter()
-            .filter(|ev| environment_matches(&condition.environment, &ev.environment))
-            .collect();
+        let mut matching_evidence = Vec::new();
+        for evidence_claim in evidence {
+            if environment_matches(&condition.environment, &evidence_claim.environment) {
+                matching_evidence.push(evidence_claim);
+            }
+        }
 
         if matching_evidence.is_empty() {
             continue;
@@ -455,6 +857,21 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     }
 
     Ok(endorsed)
+}
+
+fn validate_profile_evidence<P: ?Sized + Profile>(
+    evidence: &[EvidenceClaim],
+    profile: &P,
+) -> Result<(), ValidationError> {
+    for claim in evidence {
+        profile.validate_evidence_claim(claim).map_err(|error| {
+            ValidationError::Invalid(format!(
+                "profile {} evidence claim: {error}",
+                profile.identifier()
+            ))
+        })?;
+    }
+    Ok(())
 }
 
 /// Validate that all series entries use the same `mkey`s (§5.1.8.1.1).
@@ -515,7 +932,8 @@ fn find_matching_series<P: ?Sized + Profile>(
 // SVN comparison (§8.2.4.4.5.3)
 // ---------------------------------------------------------------------------
 
-/// Compare an SVN value against evidence.
+/// Compare an SVN condition against an exact numeric evidence SVN.
+/// Per draft-ietf-rats-corim-11 §8.2.4.4.5.3.
 ///
 /// - `ExactValue(n)`: evidence SVN must equal `n`
 /// - `MinValue(n)`: evidence SVN must be `>= n`
@@ -599,6 +1017,15 @@ fn class_matches(
 /// - `name` (key 11) — exact match
 /// - `integrity-registers` (key 14) — exact match
 /// - `int-range` (key 15) — exact match
+/// - `bool` (key 16) - exact boolean match
+/// - `number` (key 17) - numeric equality, inclusive range, or set membership
+/// - `text` (key 18) - exact text or set membership
+/// - `bytes` (key 19) - exact bytes or set membership
+///
+/// Keys 16-19 follow the editor's draft (2026-10-07), Sections
+/// 8.3.4.4.5.9-12. Number/text/bytes observations must be exact values, not
+/// sets or ranges. Missing required observations and invalid matchers do not
+/// match; NaN never matches and infinities compare normally.
 ///
 /// Note: `cryptokeys` (key 13) is not compared — it carries authorized
 /// keys, not a measurement value to match against evidence. Profile-defined
@@ -613,13 +1040,49 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 
 /// Per-pair core matching primitive: tests whether a single reference
 /// measurement matches a single evidence measurement under the crate's
-/// default exact-match semantics. Used by both the loop in
+/// core comparison rules: equality for ordinary fields, typed SVN comparison,
+/// and exact/range/set conditions for the generic measurement matchers at
+/// keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12).
+/// Used by both the loop in
 /// [`measurement_matches`] and by the profile-aware fallback path in
 /// [`measurement_matches_with_profile`].
 ///
 /// Public companion: [`core_fields_match`] (same logic, stable name for
 /// out-of-crate [`Profile`][crate::profile::Profile] implementations).
 fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementMap) -> bool {
+    if reference.mval.r#bool.is_some() && reference.mval.r#bool != ev_meas.mval.r#bool {
+        return false;
+    }
+    if let Some(condition) = &reference.mval.number {
+        if !ev_meas
+            .mval
+            .number
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
+    if let Some(condition) = &reference.mval.text {
+        if !ev_meas
+            .mval
+            .text
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
+    if let Some(condition) = &reference.mval.bytes {
+        if !ev_meas
+            .mval
+            .bytes
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
     // Match mkey if specified in reference
     if let Some(ref ref_mkey) = reference.mkey {
         match &ev_meas.mkey {
@@ -642,10 +1105,14 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
     // Match SVN if present in reference (§8.2.4.4.5.3)
     if let Some(ref ref_svn) = reference.mval.svn {
         if let Some(ref ev_svn) = ev_meas.mval.svn {
-            let ev_val = match ev_svn {
-                SvnChoice::ExactValue(n) | SvnChoice::MinValue(n) => *n,
+            let matches = match (ref_svn, ev_svn) {
+                (_, SvnChoice::ExactValue(observed)) => svn_matches(ref_svn, *observed),
+                (SvnChoice::MinValue(condition), SvnChoice::MinValue(observed)) => {
+                    condition == observed
+                }
+                (SvnChoice::ExactValue(_), SvnChoice::MinValue(_)) => false,
             };
-            if !svn_matches(ref_svn, ev_val) {
+            if !matches {
                 return false;
             }
         } else {
@@ -716,8 +1183,7 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 }
 
 /// Tests whether a reference measurement's core (non-extension) fields
-/// agree with an evidence measurement under the crate's default
-/// exact-match semantics.
+/// satisfy the crate's core comparison rules against an evidence measurement.
 ///
 /// This is the stable public entry point for the per-pair comparison
 /// performed internally by [`match_reference_values`]. It is intended for
@@ -726,8 +1192,18 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries])
 /// but want to delegate the structural fields (`mkey`, `digests`, `svn`,
 /// `version`, `name`, `flags`, `raw-value`, `mac-addr`, `ip-addr`,
-/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`)
+/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`,
+/// `bool`, `number`, `text`, `bytes`)
 /// to the crate's default matcher.
+///
+/// For keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12),
+/// booleans match exactly; number conditions support equality, inclusive
+/// ranges and set membership; text and byte conditions support equality and
+/// set membership. Number/text/bytes observations must be exact values, not
+/// sets or ranges. Missing observations or invalid matchers return `false`.
+/// Numeric comparisons preserve integer precision across integer/float types;
+/// NaN never matches and infinities compare normally. A field absent from the
+/// reference imposes no condition on the corresponding evidence field.
 ///
 /// Note: this function does NOT inspect
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries].

@@ -3,7 +3,7 @@
 
 [package]
 name = "corim"
-version = "0.2.0"
+version = "0.2.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Concise Reference Integrity Manifest (CoRIM) — CBOR-based encoding of Endorsements and Reference Values for Remote Attestation (RATS)."
@@ -37,9 +37,15 @@ profile-azure = []
 # First-party Arm PSA profile: the `psa-cert-num` (key 100)
 # measurement-values-map extension from draft-ietf-rats-corim-11.
 profile-psa = []
+# First-party Arm CCA endorsements profile.
+# Implements draft-ydb-rats-cca-endorsements-04 validation and appraisal
+# semantics for CCA Platform and Realm endorsements.
+profile-cca = ["dep:base64", "dep:spki"]
 
 [dependencies]
+base64 = { version = "0.22", default-features = false, features = ["alloc"], optional = true }
 corim-macros.workspace = true
 serde.workspace = true
-serde_json = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true, features = ["unbounded_depth"] }
+spki = { version = "0.7", default-features = false, optional = true }
 thiserror.workspace = true

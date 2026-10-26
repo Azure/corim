@@ -86,8 +86,14 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     };
     let extras_entries = if let Some(ref extras_ident) = struct_attrs.extras {
+        let modeled_keys: Vec<_> = fields.iter().map(|f| f.attrs.key).collect();
         quote! {
             for (__k, __v) in self.#extras_ident.iter() {
+                if [#(#modeled_keys),*].contains(__k) {
+                    return Err(serde::ser::Error::custom(format!(
+                        "extra map key {__k} collides with a modeled field"
+                    )));
+                }
                 map.serialize_entry(__k, __v)?;
             }
         }
@@ -101,7 +107,17 @@ pub fn expand_serialize(input: &DeriveInput) -> syn::Result<TokenStream> {
         .map(|f| {
             let ident = &f.ident;
             let key = f.attrs.key;
-            if f.attrs.optional && f.attrs.bytes {
+            if f.attrs.uri && f.attrs.optional {
+                quote! {
+                    if let Some(ref val) = self.#ident {
+                        map.serialize_entry(&#key, &crate::types::uri::UriRef(val))?;
+                    }
+                }
+            } else if f.attrs.uri {
+                quote! {
+                    map.serialize_entry(&#key, &crate::types::uri::UriRef(&self.#ident))?;
+                }
+            } else if f.attrs.optional && f.attrs.bytes {
                 // Optional bytes field: serialize as CBOR bstr
                 quote! {
                     if let Some(ref val) = self.#ident {

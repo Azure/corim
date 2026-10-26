@@ -606,7 +606,9 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
                         }
                         _ => return Err(serde::de::Error::custom("digests must be an array")),
                     };
-                    map.insert(key, digests);
+                    if map.insert(key, digests).is_some() {
+                        return Err(serde::de::Error::custom("duplicate integrity register id"));
+                    }
                 }
                 Ok(IntegrityRegisters(map))
             }
@@ -630,6 +632,7 @@ impl<'de> Deserialize<'de> for IntegrityRegisters {
 /// semantics to extra entries; profile-aware consumers interpret them.
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
 #[cbor(non_empty, extras = "extra_entries")]
+#[non_exhaustive]
 pub struct MeasurementValuesMap {
     /// `version` (key 0).
     #[cbor(key = 0, optional)]
@@ -673,6 +676,18 @@ pub struct MeasurementValuesMap {
     /// `int-range` (key 15).
     #[cbor(key = 15, optional)]
     pub int_range: Option<IntRangeChoice>,
+    /// `bool` (key 16), editor's draft (2026-10-07) Section 5.1.4.5.2.
+    #[cbor(key = 16, optional, non_null)]
+    pub r#bool: Option<super::matcher::BoolMatcher>,
+    /// `number` (key 17), editor's draft (2026-10-07) Section 5.1.4.5.2.
+    #[cbor(key = 17, optional, non_null)]
+    pub number: Option<super::matcher::NumberMatcher>,
+    /// `text` (key 18), editor's draft (2026-10-07) Section 5.1.4.5.2.
+    #[cbor(key = 18, optional, non_null)]
+    pub text: Option<super::matcher::TextMatcher>,
+    /// `bytes` (key 19), editor's draft (2026-10-07) Section 5.1.4.5.2.
+    #[cbor(key = 19, optional, non_null)]
+    pub bytes: Option<super::matcher::BytesMatcher>,
     /// Profile-defined extension entries. Keyed by the raw integer CBOR
     /// map key; values are preserved as opaque [`Value`] trees. Populated
     /// by the deserializer for any integer key not matched by the fields
@@ -703,6 +718,10 @@ impl MeasurementValuesMap {
             cryptokeys: None,
             integrity_registers: None,
             int_range: None,
+            r#bool: None,
+            number: None,
+            text: None,
+            bytes: None,
             extra_entries: BTreeMap::new(),
         }
     }
@@ -734,11 +753,24 @@ impl Validate for MeasurementValuesMap {
             && self.cryptokeys.is_none()
             && self.integrity_registers.is_none()
             && self.int_range.is_none()
+            && self.r#bool.is_none()
+            && self.number.is_none()
+            && self.text.is_none()
+            && self.bytes.is_none()
             && self.extra_entries.is_empty()
         {
             return Err("no measurement value set".into());
         }
         // Validate digests if present: at least one digest required
+        if let Some(value) = &self.number {
+            value.valid()?;
+        }
+        if let Some(value) = &self.text {
+            value.valid()?;
+        }
+        if let Some(value) = &self.bytes {
+            value.valid()?;
+        }
         if let Some(ref digests) = self.digests {
             if digests.is_empty() {
                 return Err("digests list must not be empty".into());

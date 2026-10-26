@@ -138,6 +138,18 @@ fn match_returns_false_when_cert_num_value_is_invalid() {
 }
 
 #[test]
+fn static_validation_rejects_invalid_cert_num() {
+    let profile = PsaProfile::new();
+    let measurement = measurement_with(Some("not-a-cert-num"), Some(1));
+
+    let error = profile
+        .validate_reference_measurement(&measurement)
+        .unwrap_err();
+    assert!(error.contains("psa-cert-num"));
+    assert!(error.contains("not-a-cert-num"));
+}
+
+#[test]
 fn diagnose_renders_expected_labels() {
     let profile = PsaProfile::new();
 

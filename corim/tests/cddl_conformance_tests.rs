@@ -63,9 +63,10 @@ fn make_env() -> EnvironmentMap {
 fn make_meas(mkey: &str) -> MeasurementMap {
     MeasurementMap {
         mkey: Some(MeasuredElement::Text(mkey.into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            values
         },
         authorized_by: None,
     }
@@ -747,14 +748,15 @@ fn measurement_values_map_all_14_fields() {
         vec![Digest::new(7, vec![0x11; 48])],
     );
 
-    round_trip(&MeasurementValuesMap {
-        version: Some(VersionMap {
+    round_trip(&{
+        let mut values = MeasurementValuesMap::default();
+        values.version = Some(VersionMap {
             version: "2.0".into(),
             version_scheme: Some(VERSION_SCHEME_SEMVER),
-        }),
-        svn: Some(SvnChoice::MinValue(3)),
-        digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-        flags: Some(FlagsMap {
+        });
+        values.svn = Some(SvnChoice::MinValue(3));
+        values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+        values.flags = Some(FlagsMap {
             is_configured: Some(true),
             is_secure: Some(true),
             is_recovery: None,
@@ -766,21 +768,21 @@ fn measurement_values_map_all_14_fields() {
             is_tcb: Some(true),
             is_confidentiality_protected: None,
             is_runtime_updatable: None,
-        }),
-        raw_value: Some(RawValueChoice::Bytes(vec![0xDE, 0xAD])),
-        mac_addr: Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55])),
-        ip_addr: Some(IpAddr::V4([192, 168, 1, 1])),
-        serial_number: Some("SN-12345".into()),
-        ueid: Some(vec![0x01; 17]),
-        uuid: Some(vec![0x02; 16]),
-        name: Some("firmware-component".into()),
-        cryptokeys: Some(vec![CryptoKey::PkixBase64Key("MIIBIj...".into())]),
-        integrity_registers: Some(IntegrityRegisters(regs)),
-        int_range: Some(IntRangeChoice::Range {
+        });
+        values.raw_value = Some(RawValueChoice::Bytes(vec![0xDE, 0xAD]));
+        values.mac_addr = Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
+        values.ip_addr = Some(IpAddr::V4([192, 168, 1, 1]));
+        values.serial_number = Some("SN-12345".into());
+        values.ueid = Some(vec![0x01; 17]);
+        values.uuid = Some(vec![0x02; 16]);
+        values.name = Some("firmware-component".into());
+        values.cryptokeys = Some(vec![CryptoKey::PkixBase64Key("MIIBIj...".into())]);
+        values.integrity_registers = Some(IntegrityRegisters(regs));
+        values.int_range = Some(IntRangeChoice::Range {
             min: Some(0),
             max: Some(100),
-        }),
-        extra_entries: BTreeMap::new(),
+        });
+        values
     });
 }
 
@@ -792,9 +794,10 @@ fn measurement_values_map_all_14_fields() {
 fn measurement_map_with_authorized_by() {
     round_trip(&MeasurementMap {
         mkey: Some(MeasuredElement::Uint(7)),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xEE; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xEE; 48])]);
+            values
         },
         authorized_by: Some(vec![CryptoKey::PkixBase64Key("key-data".into())]),
     });
@@ -805,9 +808,10 @@ fn measurement_map_anonymous() {
     // No mkey = "anonymous" measurement per §5.1.4.5.1
     round_trip(&MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     });
@@ -989,9 +993,10 @@ fn conditional_endorsement_series_triple() {
             vec![make_meas("fw")],
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(5)),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(5));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -1281,9 +1286,10 @@ fn end_to_end_build_encode_decode_validate() {
             env.clone(),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::MinValue(3)),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::MinValue(3));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -1303,9 +1309,10 @@ fn end_to_end_build_encode_decode_validate() {
                 vec![make_meas("fw")],
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(5)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(5));
+                        values
                     },
                     authorized_by: None,
                 }],

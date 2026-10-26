@@ -12,10 +12,11 @@ use corim::cbor::encode;
 use corim::cbor::value::{Tagged, Value};
 use corim::diagnose::inspect;
 use corim::profile::intel::{
-    IntelProfile, INTEL_PROFILE_OID_DER, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ISVSVN,
-    TAG_INTEL_EXPRESSION, TAG_INTEL_SET_TSTR_EXPRESSION,
+    IntelProfile, INTEL_PROFILE_OID_DER, MVAL_TEE_ADVISORY_IDS, MVAL_TEE_ISVSVN, MVAL_TEE_MRTEE,
+    TAG_INTEL_EXPRESSION, TAG_INTEL_SET_DIGEST_EXPRESSION, TAG_INTEL_SET_TSTR_EXPRESSION,
 };
-use corim::profile::ProfileRegistry;
+use corim::profile::{Profile, ProfileRegistry};
+use corim::types::measurement::{MeasurementMap, MeasurementValuesMap};
 use corim::types::tags::{TAG_COMID, TAG_CORIM, TAG_OID};
 
 fn build_corim_with_expressions() -> Vec<u8> {
@@ -174,10 +175,66 @@ fn diagnose_falls_back_for_malformed_expression() {
     registry.register(Box::new(IntelProfile::new()));
     let report = inspect(&bytes, &registry);
 
-    let issue = report
+    let label = report
         .issues()
         .iter()
         .find(|i| i.path().ends_with("{-73}"))
         .expect("issue for -73");
-    assert_eq!(issue.message(), "tee.isvsvn = #6.60010(…)");
+    assert_eq!(label.message(), "tee.isvsvn = #6.60010(…)");
+    assert!(
+        report
+            .issues()
+            .iter()
+            .any(|issue| issue.message().contains("wrong arity")),
+        "expected semantic validation error, got: {:#?}",
+        report.issues()
+    );
+}
+
+#[test]
+fn static_validation_rejects_malformed_expression() {
+    let profile = IntelProfile::new();
+    let mut mval = MeasurementValuesMap::default();
+    mval.extra_entries.insert(
+        MVAL_TEE_ISVSVN,
+        Value::Tag(TAG_INTEL_EXPRESSION, Box::new(Value::Array(vec![]))),
+    );
+    let measurement = MeasurementMap {
+        mkey: None,
+        mval,
+        authorized_by: None,
+    };
+
+    let error = profile
+        .validate_reference_measurement(&measurement)
+        .unwrap_err();
+    assert!(error.contains("tee.isvsvn"));
+    assert!(error.contains("wrong arity"));
+}
+
+#[test]
+fn static_validation_rejects_malformed_digest_set_member() {
+    let profile = IntelProfile::new();
+    let mut mval = MeasurementValuesMap::default();
+    mval.extra_entries.insert(
+        MVAL_TEE_MRTEE,
+        Value::Tag(
+            TAG_INTEL_SET_DIGEST_EXPRESSION,
+            Box::new(Value::Array(vec![
+                Value::Integer(6),
+                Value::Array(vec![Value::Array(vec![Value::Integer(1)])]),
+            ])),
+        ),
+    );
+    let measurement = MeasurementMap {
+        mkey: None,
+        mval,
+        authorized_by: None,
+    };
+
+    let error = profile
+        .validate_reference_measurement(&measurement)
+        .unwrap_err();
+    assert!(error.contains("tee.mrtee"));
+    assert!(error.contains("set-digest member"));
 }

@@ -40,8 +40,12 @@ pub use x509::{
 
 pub mod cwt;
 pub use cwt::{
-    ClaimKey, CwtClaims, CWT_CLAIM_EXP, CWT_CLAIM_IAT, CWT_CLAIM_ISS, CWT_CLAIM_NBF, CWT_CLAIM_SUB,
+    ClaimKey, CwtClaims, NumericDate, CWT_CLAIM_EXP, CWT_CLAIM_IAT, CWT_CLAIM_ISS, CWT_CLAIM_NBF,
+    CWT_CLAIM_SUB,
 };
+
+pub mod label;
+pub use label::Label as CoseLabel;
 
 pub mod header;
 pub use header::{
@@ -52,9 +56,17 @@ pub use header::{
 
 pub mod envelope;
 pub use envelope::{
-    build_sig_structure1, decode_signed_corim, encode_signed_corim, validate_signed_corim_payload,
-    validate_signed_corim_payload_detached, CoseSign1Corim,
+    build_sig_structure1, decode_signed_corim, decode_signed_corim_with_limits,
+    encode_signed_corim, validate_signed_corim_payload, validate_signed_corim_payload_detached,
+    validate_signed_corim_payload_detached_with_limits, validate_signed_corim_payload_with_limits,
+    CoseSign1Corim,
 };
 
 pub mod builder;
 pub use builder::SignedCorimBuilder;
+
+pub mod validation;
+pub use validation::{
+    decode_and_validate_signed_corim_at, decode_and_validate_signed_corim_at_with_limits,
+    decode_and_validate_signed_corim_structure_with_limits,
+};

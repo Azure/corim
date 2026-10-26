@@ -31,9 +31,10 @@ fn main() {
 
     let meas = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            values
         },
         authorized_by: None,
     };

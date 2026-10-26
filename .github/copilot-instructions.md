@@ -93,14 +93,14 @@ deliberate, not derived from "this line is uncovered".
 ## Project overview
 
 A Rust implementation of Concise Reference Integrity Manifest (CoRIM) per
-[draft-ietf-rats-corim-10](https://www.ietf.org/archive/id/draft-ietf-rats-corim-10.html).
+[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
 Three crates in a workspace: `corim` (library), `corim-macros` (proc-macro
 derives), `corim-cli` (CLI tool). Zero external CBOR dependencies — uses an
 in-house minimal encoder/decoder.
 
 ## Specification references
 
-- **Primary spec**: draft-ietf-rats-corim-10 (CoRIM, CoMID, CoTL)
+- **Primary spec**: draft-ietf-rats-corim-11 (CoRIM, CoMID, CoTL)
 - **CBOR**: RFC 8949 (STD 94), deterministic encoding per §4.2.1
 - **COSE**: RFC 9052 (STD 96), specifically COSE_Sign1 (§4)
 - **CoSWID**: RFC 9393
@@ -571,14 +571,14 @@ The `--diagnose` walker emits a `[warn ]` issue at `$` and recurses
 into the inner value so the user gets full diagnostics.
 
 This relaxation is **decode-only** — `SignedCorimBuilder` and
-`CorimBuilder` always emit draft-10 wire format (no `#6.500`, no
+`CorimBuilder` always emit draft-11 wire format (no `#6.500`, no
 `#6.502`). Builder tests and round-trip tests verify this.
 
 #### Bare (untagged) `corim-map` payload
 
 The pre-PR-#337 CDDL allowed `payload: bstr .cbor (tagged-corim-map /
 corim-map)` because the outer `#6.502` provided context. The IETF
-draft-10 now requires `tagged-corim-map = #6.501(corim-map)`, but
+draft-11 requires `tagged-corim-map = #6.501(corim-map)`, but
 TCG-style producers (including NVIDIA) still emit the bare form.
 
 [`crate::compat::wrap_bare_corim_map`](../corim/src/compat.rs) prefixes
@@ -627,13 +627,11 @@ encode path.
 
 #### Tag-32 wrapping on URIs (RFC 8949 §3.4.5.3)
 
-CoRIM `corim-locator-map.href` is typed as `uri / [+ uri]`. The CoRIM
-CDDL doesn't pin down the wire form of `uri`, but per RFC 8949
-§3.4.5.3, URIs are conventionally encoded as `#6.32(text)`. NVIDIA
-producers emit the tagged form; some other producers emit a bare
-`text`. The `CorimLocatorHref` deserializer accepts both. This is a
-spec-compliance fix, not a TCG-specific relaxation — encoders still
-emit bare `text` for compatibility with our existing test corpus.
+RFC 8610 Appendix D defines the CDDL `uri` control type as
+`#6.32(tstr)`. CoRIM profile identifiers, locator hrefs, signer URIs,
+and entity registration IDs therefore encode with tag 32. Their
+decoders also accept legacy bare `text` emitted by older versions of
+this crate and other producers; this tolerance is decode-only.
 
 [p337]: https://github.com/ietf-rats-wg/draft-ietf-rats-corim/pull/337
 [i333]: https://github.com/ietf-rats-wg/draft-ietf-rats-corim/issues/333

@@ -11,14 +11,14 @@
 //! (`draft-cds-rats-intel-corim-profile`, OID
 //! `2.16.840.1.113741.1.16.1`).
 //!
-//! The `corim` core crate is profile-agnostic: it preserves
-//! profile-defined keys verbatim via the
+//! The core data model remains profile-agnostic: it preserves profile-defined
+//! keys verbatim via the
 //! [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
-//! field but does **not** interpret or appraise them. Profile-aware
-//! semantics live in dedicated modules that implement the [`Profile`](crate::profile::Profile)
-//! trait and register an instance with a [`ProfileRegistry`](crate::profile::ProfileRegistry). The
-//! registry is then passed to the validate/diagnose entry points that
-//! accept it.
+//! field without interpreting them. Profile-aware validation, appraisal,
+//! diagnostics, and template aliases live in dedicated modules that implement
+//! the [`Profile`](crate::profile::Profile) trait. Applications register those
+//! implementations with a [`ProfileRegistry`](crate::profile::ProfileRegistry)
+//! and pass the registry to profile-aware entry points.
 //!
 //! # First-party profiles
 //!
@@ -27,9 +27,10 @@
 //!
 //! | Feature           | Module                                        | Spec                                    |
 //! |-------------------|-----------------------------------------------|-----------------------------------------|
-//! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-03` |
+//! | `profile-intel`   | [`intel`](crate::profile::intel)              | `draft-cds-rats-intel-corim-profile-07` |
 //! | `profile-azure`   | `azure` (feature-gated)                       | Azure `tcbstatus` example extension     |
 //! | `profile-psa`     | `psa` (feature-gated)                         | Arm PSA `psa-cert-num` (draft-corim-11) |
+//! | `profile-cca`     | `cca` (feature-gated)                         | Arm CCA endorsements (draft-ydb-rats-cca-endorsements-04) |
 //!
 //! Third-party profiles are first-class — the [`Profile`](crate::profile::Profile) trait is
 //! public and stable, and out-of-tree crates may publish their own
@@ -61,7 +62,8 @@
 //!
 //! # Writing your own profile
 //!
-//! Three trait methods govern profile behaviour. Only
+//! Profile hooks govern matching, validation, diagnostics, and template
+//! aliases. Only
 //! [`Profile::identifier`](crate::profile::Profile::identifier) is required;
 //! the others carry no-op defaults and can be left out if not needed.
 //!
@@ -111,7 +113,20 @@
 //! running without a clock can still appraise the non-time keys. See
 //! `intel::eval` for one implementation of this policy.
 //!
-//! ## 3. `diagnose_mval_entry` (optional, for `--diagnose`)
+//! ## 3. Reference and evidence validation (optional)
+//!
+//! Override [`Profile::validate_reference_measurement`](crate::profile::Profile::validate_reference_measurement)
+//! for syntax or semantic constraints on one profile-defined reference value.
+//! Override [`Profile::validate_reference_triple`](crate::profile::Profile::validate_reference_triple),
+//! [`Profile::validate_attest_key_triple`](crate::profile::Profile::validate_attest_key_triple),
+//! or [`Profile::validate_evidence_claim`](crate::profile::Profile::validate_evidence_claim)
+//! when profile requirements span a complete triple or evidence claim rather
+//! than one measurement pair.
+//! Validation failures carry diagnostic text and are returned by profile-aware
+//! document validation and appraisal APIs instead of being treated as ordinary
+//! non-matches.
+//!
+//! ## 4. `diagnose_mval_entry` (optional, for `--diagnose`)
 //!
 //! Override to provide human-readable labels for profile-defined
 //! integer keys in the `--diagnose` walker output. The walker calls
@@ -157,6 +172,7 @@ use crate::cbor::value::Value;
 use crate::types::common::CborTime;
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
+use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
 
 /// First-party Intel CoRIM profile (`draft-cds-rats-intel-corim-profile`).
 ///
@@ -184,6 +200,18 @@ pub mod azure;
 #[cfg(feature = "profile-psa")]
 #[cfg_attr(docsrs, doc(cfg(feature = "profile-psa")))]
 pub mod psa;
+
+/// Arm CCA endorsements profile support for
+/// `draft-ydb-rats-cca-endorsements-04`.
+///
+/// The module recognizes CCA Platform / Realm profile URIs and measurement
+/// keys, validates CCA-specific measurement shapes and environment subject
+/// identifiers, enforces triple-level cardinality and linkage constraints,
+/// and adds matching semantics for CCA cryptokeys and masked configuration
+/// reference values that the generic matcher deliberately does not handle.
+#[cfg(feature = "profile-cca")]
+#[cfg_attr(docsrs, doc(cfg(feature = "profile-cca")))]
+pub mod cca;
 
 // ---------------------------------------------------------------------------
 // MatchContext
@@ -288,6 +316,65 @@ pub trait Profile {
         None
     }
 
+    /// Validate profile-specific constraints over a whole reference triple
+    /// during document validation and before per-measurement appraisal.
+    ///
+    /// Use this when the profile has requirements that cannot be checked from
+    /// one `(reference, evidence)` measurement pair alone — a mandatory
+    /// measurement that must appear somewhere in the triple, a cardinality
+    /// constraint across measurements, or a constraint on the triple's
+    /// [`environment`][crate::types::triples::ReferenceTriple::environment]
+    /// such as a profile-defined subject identifier that must be present
+    /// and consistent with the measurements. Return a diagnostic error for
+    /// a malformed triple. Profiles without triple-level requirements can
+    /// use the default implementation.
+    fn validate_reference_triple(&self, _triple: &ReferenceTriple) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Validate profile-specific constraints over one reference measurement.
+    ///
+    /// Called for every measurement in a reference triple after
+    /// [`Profile::validate_reference_triple`]. Use this for profile extension
+    /// values whose syntax can be checked without evidence, such as enum,
+    /// regular-expression, or operator-shaped reference values.
+    ///
+    /// Profile-aware document validation, appraisal, and diagnostic inspection
+    /// invoke this hook. The default accepts every measurement.
+    fn validate_reference_measurement(&self, _measurement: &MeasurementMap) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Validate profile-specific constraints over an attestation-key
+    /// triple.
+    ///
+    /// Use this when the profile places stricter requirements on
+    /// `attest-key-triple-record` than the generic
+    /// [`AttestKeyTriple::valid`][crate::types::triples::AttestKeyTriple]
+    /// check (a non-empty key list) — for example a profile-defined subject
+    /// identifier that must be present on the triple's environment, or a
+    /// constraint on the number or encoding of the verification keys.
+    /// Return a diagnostic error for a malformed triple. Profiles without
+    /// attestation-key requirements can use the default implementation.
+    fn validate_attest_key_triple(&self, _triple: &AttestKeyTriple) -> Result<(), String> {
+        Ok(())
+    }
+
+    /// Validate profile-specific constraints over one evidence claim before
+    /// it is matched against any reference triple.
+    ///
+    /// Use this when evidence produced for a profile must satisfy identity or
+    /// shape requirements that are stricter than the generic CoRIM environment
+    /// matching rules. Return a diagnostic error for a malformed claim.
+    /// Profiles without evidence-level requirements can use the default
+    /// implementation.
+    fn validate_evidence_claim(
+        &self,
+        _claim: &crate::validate::EvidenceClaim,
+    ) -> Result<(), String> {
+        Ok(())
+    }
+
     /// Render an `extra_entries` key/value pair for `--diagnose` output.
     ///
     /// Called by the diagnose walker when it encounters a profile-defined
@@ -328,6 +415,33 @@ pub trait Profile {
     fn mval_json_name(&self, _key: i64) -> Option<&'static str> {
         None
     }
+}
+
+pub(crate) struct ReferenceValidationIssue {
+    pub measurement_index: Option<usize>,
+    pub error: String,
+}
+
+pub(crate) fn reference_validation_issues<P: ?Sized + Profile>(
+    profile: &P,
+    triple: &ReferenceTriple,
+) -> Vec<ReferenceValidationIssue> {
+    let mut issues = Vec::new();
+    if let Err(error) = profile.validate_reference_triple(triple) {
+        issues.push(ReferenceValidationIssue {
+            measurement_index: None,
+            error,
+        });
+    }
+    for (measurement_index, measurement) in triple.measurements().iter().enumerate() {
+        if let Err(error) = profile.validate_reference_measurement(measurement) {
+            issues.push(ReferenceValidationIssue {
+                measurement_index: Some(measurement_index),
+                error,
+            });
+        }
+    }
+    issues
 }
 
 /// Type alias for owned, thread-safe boxed profiles stored in a

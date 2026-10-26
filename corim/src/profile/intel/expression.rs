@@ -153,7 +153,7 @@ pub enum Numeric {
 /// per-shape `from_body` constructors when the tag has already been
 /// stripped.
 ///
-/// The five variants correspond to the five tag shapes listed at the
+/// The six variants correspond to the six tag shapes listed at the
 /// top of the module.
 #[derive(Clone, Debug, PartialEq)]
 #[non_exhaustive]
@@ -167,9 +167,8 @@ pub enum Expression {
         value: Numeric,
     },
     /// `#6.60020([ op∈{mem,nmem}, [* digest] ])` — set-of-digests
-    /// membership (v07 §8.2.3). Each digest is preserved verbatim
-    /// as a CBOR value so the per-digest CDDL shape
-    /// (`[alg: int / text, val: bytes]`) is not coupled to this enum.
+    /// membership (v07 §8.2.3). Each digest is validated as
+    /// `[alg: int / text, val: bytes]` and preserved as a CBOR value.
     SetOfDigests {
         /// Membership operator.
         op: SetOp,
@@ -266,7 +265,12 @@ impl Expression {
         let items = expect_array_n(body, 2)?;
         let op = set_op(&items[0])?;
         let members = match &items[1] {
-            Value::Array(a) => a.clone(),
+            Value::Array(a) => {
+                if a.iter().any(|member| !is_digest(member)) {
+                    return Err(ExpressionDecodeError::SetDigestMemberMalformed);
+                }
+                a.clone()
+            }
             _ => return Err(ExpressionDecodeError::SetOperandNotArray),
         };
         Ok(Self::SetOfDigests { op, members })
@@ -386,6 +390,20 @@ fn numeric_value(v: &Value) -> Result<Numeric, ExpressionDecodeError> {
     }
 }
 
+fn is_digest(value: &Value) -> bool {
+    let Value::Array(parts) = value else {
+        return false;
+    };
+    if parts.len() != 2 || !matches!(parts[1], Value::Bytes(_)) {
+        return false;
+    }
+    match &parts[0] {
+        Value::Integer(n) => i64::try_from(*n).is_ok(),
+        Value::Text(_) => true,
+        _ => false,
+    }
+}
+
 // -- Error type. ------------------------------------------------------------
 
 /// Error returned by [`Expression::from_tag`] when a CBOR value does
@@ -397,7 +415,7 @@ pub enum ExpressionDecodeError {
     /// Input was not a CBOR tag.
     NotTagged,
     /// Input was a CBOR tag but the number was not one of
-    /// `{60010, 60020, 60021, 564, 553}`.
+    /// `{60010, 60020, 60021, 563, 564, 553}`.
     WrongTag(u64),
     /// The tag body was not a CBOR array (where one was required).
     NotArray,
@@ -412,6 +430,8 @@ pub enum ExpressionDecodeError {
     UnknownOperator(i64),
     /// A set expression's operand was not an array.
     SetOperandNotArray,
+    /// A `set-digest-type` member was not `[int / text, bytes]`.
+    SetDigestMemberMalformed,
     /// A `set-tstr-type` member was not a text string.
     SetTstrMemberNotText,
     /// A numeric operand had a type other than integer or float
@@ -435,7 +455,7 @@ impl core::fmt::Display for ExpressionDecodeError {
             Self::NotTagged => write!(f, "expected an Intel expression CBOR tag"),
             Self::WrongTag(n) => write!(
                 f,
-                "expected tag 60010 / 60020 / 60021 / 564 / 553, got tag {}",
+                "expected tag 60010 / 60020 / 60021 / 563 / 564 / 553, got tag {}",
                 n
             ),
             Self::NotArray => write!(f, "expression tag body must be a CBOR array"),
@@ -444,6 +464,9 @@ impl core::fmt::Display for ExpressionDecodeError {
             Self::OperatorOutOfRange(n) => write!(f, "operator code {} does not fit in i64", n),
             Self::UnknownOperator(n) => write!(f, "operator code {} not permitted by this tag", n),
             Self::SetOperandNotArray => write!(f, "set operand must be an array"),
+            Self::SetDigestMemberMalformed => {
+                write!(f, "set-digest member must be [int / text, bytes]")
+            }
             Self::SetTstrMemberNotText => write!(f, "set-tstr member must be a text string"),
             Self::NumericOperandWrongType => {
                 write!(f, "numeric operand must be an integer or float")
@@ -661,6 +684,28 @@ mod tests {
             other => panic!("expected SetOfDigests, got {:?}", other),
         }
         assert_eq!(display_expression(&e), "member (1 digest)");
+    }
+
+    #[test]
+    fn set_digest_rejects_malformed_members() {
+        let malformed_members = [
+            Value::Integer(1),
+            Value::Array(vec![Value::Integer(1)]),
+            Value::Array(vec![Value::Bool(true), Value::Bytes(vec![0u8; 32])]),
+            Value::Array(vec![Value::Integer(1), Value::Text("not-bytes".into())]),
+            Value::Array(vec![
+                Value::Integer(i128::from(i64::MAX) + 1),
+                Value::Bytes(vec![0u8; 32]),
+            ]),
+        ];
+
+        for malformed_member in malformed_members {
+            let expression = set_digest_expr(vec![
+                Value::Integer(OP_MEMBER as i128),
+                Value::Array(vec![malformed_member]),
+            ]);
+            assert!(Expression::from_tag(&expression).is_err());
+        }
     }
 
     // -- int-range -----------------------------------------------------------

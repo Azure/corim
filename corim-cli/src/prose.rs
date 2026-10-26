@@ -3,7 +3,7 @@
 
 //! Context-aware prose <-> integer-key rewriting for CoMID JSON templates.
 //!
-//! The core crate's `corim::json` layer maps CBOR integer map keys to
+//! The CLI-private authoring value converter maps CBOR integer map keys to
 //! JSON string keys mechanically, without knowing *which* CDDL map it is
 //! looking at. Because low keys (0..30) overlap across map types (e.g.
 //! `"version"` is key 1 in `tag-identity-map` but key 0 in
@@ -225,15 +225,105 @@ fn root_ctx(root: Root) -> Ctx {
 }
 
 /// Rewrite a JSON tree from prose keys to integer-string keys for the
-/// given root kind, so it can be handed to the core JSON layer.
+/// given root kind, for the CLI-private semantic value converter.
 pub fn to_int_keys(value: &Value, root: Root) -> Value {
     convert(value, root_ctx(root), Dir::ToInt)
+}
+
+/// Checked authoring rewrite: refuse aliases that would overwrite a key
+/// and record fields that positional lowering would silently discard.
+pub fn try_to_int_keys(value: &Value, root: Root) -> Result<Value, String> {
+    check_shape(value, root_ctx(root), Dir::ToInt)?;
+    Ok(to_int_keys(value, root))
+}
+
+/// Checked inverse authoring rewrite.
+pub fn try_to_prose_keys(value: &Value, root: Root) -> Result<Value, String> {
+    check_shape(value, root_ctx(root), Dir::ToProse)?;
+    Ok(to_prose_keys(value, root))
+}
+
+fn check_shape(value: &Value, ctx: Ctx, dir: Dir) -> Result<(), String> {
+    match (shape(ctx), value) {
+        (Shape::Map(fields), Value::Object(map)) => {
+            let mut names = std::collections::BTreeSet::new();
+            for (key, child) in map {
+                let (name, slot) =
+                    resolve(fields, key, dir).unwrap_or_else(|| (key.clone(), one(Ctx::Leaf)));
+                if !names.insert(name) {
+                    return Err(format!("conflicting prose and integer keys at {key}"));
+                }
+                // Optional timestamp coercion must not turn explicit null
+                // or malformed values into an absent field.
+                if matches!(ctx, Ctx::Validity)
+                    && fields.iter().any(|(integer, name, _)| {
+                        key == name || key.parse::<i64>().ok() == Some(*integer)
+                    })
+                {
+                    let epoch = child.as_i64().or_else(|| {
+                        let object = child.as_object()?;
+                        if object.len() != 2
+                            || object.get("__cbor_tag")?.as_u64()
+                                != Some(corim::types::tags::TAG_EPOCH_TIME)
+                        {
+                            return None;
+                        }
+                        object.get("__cbor_value")?.as_i64()
+                    });
+                    if epoch.is_none() {
+                        return Err(format!(
+                            "validity {key} must be an epoch integer or #6.1 tag envelope"
+                        ));
+                    }
+                }
+                check_slot(child, slot, dir)?;
+            }
+        }
+        (Shape::Record(fields), Value::Object(map)) if matches!(dir, Dir::ToInt) => {
+            for (key, child) in map {
+                let field = fields
+                    .iter()
+                    .find(|f| f.name == key)
+                    .ok_or_else(|| format!("unknown readable record field {key}"))?;
+                check_slot(child, field.slot, dir)?;
+            }
+        }
+        (Shape::Record(fields), Value::Array(items)) => {
+            if items.len() > fields.len() {
+                return Err(
+                    "record has unrepresentable extra elements; use convert --lossless".into(),
+                );
+            }
+            for (child, field) in items.iter().zip(fields) {
+                check_slot(child, field.slot, dir)?;
+            }
+        }
+        (Shape::Tuple(slots), Value::Array(items)) => {
+            for (child, slot) in items.iter().zip(slots) {
+                check_slot(child, *slot, dir)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn check_slot(value: &Value, slot: Slot, dir: Dir) -> Result<(), String> {
+    if slot.list {
+        if let Value::Array(items) = value {
+            for item in items {
+                check_shape(item, slot.ctx, dir)?;
+            }
+            return Ok(());
+        }
+    }
+    check_shape(value, slot.ctx, dir)
 }
 
 /// Coerce base64 text at bare-`bstr` positions of a decoded CBOR value
 /// into byte strings, starting from the given root kind.
 ///
-/// The core `corim::json` layer maps every JSON string to CBOR text, so
+/// The authoring value converter maps plain JSON strings to CBOR text, so
 /// bare `bstr` fields (digest values, `ueid`, `uuid`, `mac-addr`,
 /// `ip-addr`, integrity-register digests) arrive as `Value::Text(base64)`
 /// and fail to deserialize. This walks the value tree with the same
@@ -242,13 +332,13 @@ pub fn to_int_keys(value: &Value, root: Root) -> Value {
 /// inner bytes of type-choice tags the core layer leaves as text
 /// (`oid`, `cose-key`, thumbprints, `masked-raw-value`, DER certs).
 ///
-/// Call this on the CBOR value produced by `corim::json::json_to_value`
+/// Call this on the CBOR value produced by the authoring value converter
 /// before `corim::cbor::value::from_value`.
 pub fn coerce_bytes(value: &mut CborValue, root: Root) {
     coerce(value, root_ctx(root));
 }
 
-/// Rewrite a JSON tree (as emitted by `corim::json::value_to_json`) from
+/// Rewrite a semantic authoring JSON tree from
 /// integer-string keys to prose keys for the given root kind. Inverse of
 /// [`to_int_keys`]; used by the `convert` command to emit
 /// generate-ready templates.
@@ -453,11 +543,11 @@ fn coerce(v: &mut CborValue, ctx: Ctx) {
 
 fn coerce_slot(v: &mut CborValue, slot: Slot) {
     // A `DigestOrList` slot is a single digest `[alg, bstr]` or a list of
-    // such digests. Disambiguate: if the first element is an integer
-    // (the alg), it is a single digest; otherwise a list.
+    // such digests. The algorithm is an integer or text (EAT
+    // measurement digest), whereas a digest list starts with an array.
     if let Ctx::DigestOrList = slot.ctx {
         if let CborValue::Array(a) = v {
-            let single = matches!(a.first(), Some(CborValue::Integer(_)));
+            let single = matches!(a.first(), Some(CborValue::Integer(_) | CborValue::Text(_)));
             if single {
                 coerce(v, Ctx::Digest);
             } else {
@@ -480,7 +570,7 @@ fn coerce_slot(v: &mut CborValue, slot: Slot) {
 }
 
 /// Decode standard (padded) base64, matching the encoding emitted by
-/// `corim::json::to_json` for byte strings. Returns `None` on malformed
+/// the authoring converter for byte strings. Returns `None` on malformed
 /// input, in which case the caller leaves the value as text (and the
 /// downstream decode reports a precise type error).
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
@@ -532,7 +622,7 @@ fn resolve(
 
 /// The hand-maintained schema mirroring the CDDL key tables. Kept in one
 /// place so the mapping is auditable against
-/// `corim/src/json/key_maps.rs`.
+/// the CLI-private authoring key tables.
 fn shape(ctx: Ctx) -> Shape {
     match ctx {
         // -- concise-mid-tag --
@@ -661,6 +751,14 @@ const MVAL: &[(i64, &str, Slot)] = &[
     (13, "cryptokeys", many(Ctx::Leaf)),
     (14, "integrity-registers", one(Ctx::IntegrityRegisters)),
     (15, "int-range", one(Ctx::Leaf)),
+    (corim::types::tags::MVAL_KEY_BOOL, "bool", one(Ctx::Leaf)),
+    (
+        corim::types::tags::MVAL_KEY_NUMBER,
+        "number",
+        one(Ctx::Leaf),
+    ),
+    (corim::types::tags::MVAL_KEY_TEXT, "text", one(Ctx::Leaf)),
+    (corim::types::tags::MVAL_KEY_BYTES, "bytes", one(Ctx::Leaf)),
 ];
 
 const VERSION: &[(i64, &str, Slot)] = &[
@@ -929,16 +1027,22 @@ mod tests {
     /// surrounding structure intact.
     #[test]
     fn coerce_bytes_decodes_digest_value() {
-        // Build the int-keyed CoMID and convert to a CBOR value.
-        let prose = json!({
-            "tag-identity": { "id": "c1" },
-            "triples": { "reference-triples": [
-                [ { "class": { "vendor": "ACME" } },
-                  [ { "value": { "digests": [ [ 7, "3q2+7w==" ] ] } } ] ]
-            ] }
-        });
-        let ints = to_int_keys(&prose, Root::Comid);
-        let mut cbor_val = corim::json::json_to_value(&ints);
+        use corim::types::tags::{
+            COMID_KEY_TRIPLES, MEAS_KEY_MVAL, MVAL_KEY_DIGESTS, TRIPLES_KEY_REFERENCE,
+        };
+        let map = |key: i64, value| CborValue::Map(vec![(CborValue::Integer(key.into()), value)]);
+        let digest = CborValue::Array(vec![
+            CborValue::Integer(7),
+            CborValue::Text("3q2+7w==".into()),
+        ]);
+        let mval = map(MVAL_KEY_DIGESTS, CborValue::Array(vec![digest]));
+        let measurement = map(MEAS_KEY_MVAL, mval);
+        let triple = CborValue::Array(vec![
+            CborValue::Map(vec![]),
+            CborValue::Array(vec![measurement]),
+        ]);
+        let triples = map(TRIPLES_KEY_REFERENCE, CborValue::Array(vec![triple]));
+        let mut cbor_val = map(COMID_KEY_TRIPLES, triples);
         coerce_bytes(&mut cbor_val, Root::Comid);
 
         // Navigate: comid[4 triples][0 ref-triples][0][1 measurements][0]

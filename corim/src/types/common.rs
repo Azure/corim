@@ -174,8 +174,8 @@ pub struct EntityMap {
     /// `entity-name` (key 0): name of the entity.
     #[cbor(key = 0)]
     pub entity_name: String,
-    /// `reg-id` (key 1): optional URI for the organization.
-    #[cbor(key = 1, optional)]
+    /// `reg-id` (key 1): optional `#6.32(tstr)` URI for the organization.
+    #[cbor(key = 1, optional, uri)]
     pub reg_id: Option<String>,
     /// `role` (key 2): list of roles.
     #[cbor(key = 2)]

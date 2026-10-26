@@ -4,7 +4,7 @@
 //! Tests for `corim::baseline::compare_headers` — protected-header
 //! structural conformance of signed CoRIMs.
 
-use corim::baseline::{compare_headers, render_path, MismatchKind, PathSegment};
+use corim::baseline::{render_path, MismatchKind, PathSegment};
 use corim::cbor::value::Value;
 use corim::types::corim::{CorimMetaMap, CorimSignerMap};
 use corim::types::signed::{
@@ -13,6 +13,156 @@ use corim::types::signed::{
 
 fn header() -> ProtectedCorimHeaderMapBuilder {
     ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Es256).content_type("application/rim+cbor")
+}
+
+fn decoded_header_with(
+    extension: Option<Value>,
+    expiration: Option<Value>,
+) -> ProtectedCorimHeaderMap {
+    use corim::types::signed::{COSE_HEADER_CWT_CLAIMS, CWT_CLAIM_EXP};
+    let header = header().cwt_claims(CwtClaims::new("issuer")).build();
+    let Value::Map(mut fields) = corim::cbor::value::to_value(&header).unwrap() else {
+        panic!("header map");
+    };
+    if let Some(extension) = extension {
+        fields.push((Value::Text("vendor".into()), extension));
+    }
+    if let Some(expiration) = expiration {
+        let (_, Value::Map(claims)) = fields
+            .iter_mut()
+            .find(|(key, _)| *key == Value::Integer(COSE_HEADER_CWT_CLAIMS.into()))
+            .unwrap()
+        else {
+            panic!("claims map");
+        };
+        claims.push((Value::Integer(CWT_CLAIM_EXP.into()), expiration));
+    }
+    corim::cbor::decode_exact(&corim::cbor::encode(&Value::Map(fields)).unwrap()).unwrap()
+}
+
+#[test]
+fn text_header_extension_changes_are_not_lost() {
+    let baseline = decoded_header_with(Some(Value::Integer(1)), None);
+    let input = decoded_header_with(Some(Value::Text("changed".into())), None);
+    let report = compare_headers(&input, &baseline);
+    assert!(!report.is_conformant(), "{report:?}");
+}
+
+#[test]
+fn fractional_cwt_expiration_changes_are_not_lost() {
+    let baseline = decoded_header_with(None, Some(Value::Float(2_000_000_000.25)));
+    let input = decoded_header_with(None, Some(Value::Float(2_000_000_000.75)));
+    let report = compare_headers(&input, &baseline);
+    assert_eq!(report.value_differences.len(), 1, "{report:?}");
+    assert_eq!(
+        report.value_differences[0].baseline,
+        Value::Float(2_000_000_000.25)
+    );
+    assert_eq!(
+        report.value_differences[0].input,
+        Value::Float(2_000_000_000.75)
+    );
+}
+
+#[test]
+fn numeric_dates_round_trip_without_truncation_or_saturation() {
+    use corim::types::signed::NumericDate;
+    for value in [
+        NumericDate::Int(i64::MIN),
+        NumericDate::Int(i64::MAX),
+        NumericDate::Float(-0.0),
+        NumericDate::Float(-0.75),
+        NumericDate::Float(2_000_000_000.25),
+    ] {
+        let bytes = corim::cbor::encode(&value).unwrap();
+        let decoded: NumericDate = corim::cbor::decode_exact(&bytes).unwrap();
+        assert_eq!(corim::cbor::encode(&decoded).unwrap(), bytes);
+    }
+    for value in [
+        f64::NAN,
+        f64::INFINITY,
+        f64::NEG_INFINITY,
+        9_223_372_036_854_775_808.0,
+        -18_446_744_073_709_551_616.0,
+    ] {
+        assert!(corim::cbor::encode(&NumericDate::Float(value)).is_err());
+        let bytes = corim::cbor::encode(&Value::Float(value)).unwrap();
+        assert!(corim::cbor::decode_exact::<NumericDate>(&bytes).is_err());
+    }
+    for value in [
+        Value::Null,
+        Value::Bool(true),
+        Value::Text("1".into()),
+        Value::Integer(i128::MAX),
+    ] {
+        assert!(
+            corim::cbor::value::from_value::<NumericDate>(&value).is_err(),
+            "{value:?}"
+        );
+    }
+}
+
+#[test]
+fn text_and_integer_header_labels_round_trip_independently() {
+    use corim::types::signed::{decode_signed_corim, CoseLabel, NumericDate, SignedCorimBuilder};
+    let claims = CwtClaims::new("issuer")
+        .with_nbf(NumericDate::Float(-0.75))
+        .with_exp(NumericDate::Float(2_000_000_000.25));
+    let mut builder = SignedCorimBuilder::new(CoseAlgorithm::Es256, vec![])
+        .set_cwt_claims(claims.clone())
+        .add_protected(10001, Value::Integer(1));
+    let before = builder.to_be_signed(&[]).unwrap();
+    builder = builder.add_protected("10001", Value::Text("text".into()));
+    assert_ne!(builder.to_be_signed(&[]).unwrap(), before);
+    let envelope =
+        decode_signed_corim(&builder.build_with_signature(vec![0; 64]).unwrap()).unwrap();
+    assert_eq!(envelope.protected().cwt_claims, Some(claims));
+    assert_eq!(
+        envelope.protected().extra.get(&CoseLabel::Int(10001)),
+        Some(&Value::Integer(1))
+    );
+    assert_eq!(
+        envelope
+            .protected()
+            .extra
+            .get(&CoseLabel::Text("10001".into())),
+        Some(&Value::Text("text".into()))
+    );
+    assert_eq!(
+        corim::cbor::encode(&envelope.protected()).unwrap(),
+        envelope.protected_header_bytes()
+    );
+}
+
+#[test]
+fn header_labels_accept_only_integer_or_text_keys() {
+    use corim::types::signed::CoseLabel;
+    for label in [CoseLabel::Int(10001), CoseLabel::Text("10001".into())] {
+        let bytes = corim::cbor::encode(&label).unwrap();
+        assert_eq!(
+            corim::cbor::decode_exact::<CoseLabel>(&bytes).unwrap(),
+            label
+        );
+    }
+    for value in [
+        Value::Integer(i128::MAX),
+        Value::Null,
+        Value::Bool(true),
+        Value::Array(vec![]),
+        Value::Bytes(vec![]),
+    ] {
+        assert!(
+            corim::cbor::value::from_value::<CoseLabel>(&value).is_err(),
+            "{value:?}"
+        );
+    }
+}
+
+fn compare_headers(
+    input: &ProtectedCorimHeaderMap,
+    baseline: &ProtectedCorimHeaderMap,
+) -> corim::baseline::ConformanceReport {
+    corim::baseline::compare_headers(input, baseline).unwrap()
 }
 
 fn meta(name: &str) -> CorimMetaMap {
@@ -27,6 +177,102 @@ fn meta(name: &str) -> CorimMetaMap {
 
 fn has_field(paths: &[Vec<PathSegment>], field: &'static str) -> bool {
     paths.iter().any(|p| p.contains(&PathSegment::Field(field)))
+}
+
+#[test]
+fn nested_map_keys_in_header_extensions_compare_without_reencoding_explosion() {
+    use corim::cbor::{self, constants};
+    let mut bytes = vec![(constants::MAJOR_MAP << 5) | 1; 40];
+    bytes.extend(vec![constants::BYTE_NULL; 41]);
+    let extension: Value = cbor::decode_exact(&bytes).unwrap();
+    let baseline = header().extra(10001, extension).build();
+    let report = compare_headers(&baseline, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    assert_eq!(bytes.pop(), Some(constants::BYTE_NULL));
+    bytes.push(constants::BYTE_TRUE);
+    let changed = header()
+        .extra(10001, cbor::decode_exact(&bytes).unwrap())
+        .build();
+    assert!(!compare_headers(&changed, &baseline).is_conformant());
+}
+
+#[test]
+fn header_extensions_compare_shape_and_reject_invalid_cbor() {
+    let baseline = header()
+        .extra(10001, Value::Array(vec![Value::Integer(1)]))
+        .build();
+    let changed = header()
+        .extra(10001, Value::Array(vec![Value::Text("1".into())]))
+        .build();
+    assert!(!compare_headers(&changed, &baseline).is_conformant());
+    let invalid = header().extra(10001, Value::Integer(i128::MAX)).build();
+    assert!(corim::baseline::compare_headers(&invalid, &invalid).is_err());
+    assert!(corim::baseline::compare_headers(&invalid, &baseline).is_err());
+    assert!(corim::baseline::compare_headers(&baseline, &invalid).is_err());
+}
+
+#[test]
+fn large_extension_map_comparison_preserves_all_entries() {
+    let entries: Vec<_> = (0..100_000)
+        .map(|index| (Value::Integer(index), Value::Integer(index)))
+        .collect();
+    let mut reversed = entries.clone();
+    reversed.reverse();
+    let baseline = header().extra(10001, Value::Map(entries)).build();
+    let input = header().extra(10001, Value::Map(reversed)).build();
+    let report = compare_headers(&input, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+}
+
+#[test]
+fn indexed_extension_keys_preserve_recursive_identity_and_multiplicity() {
+    let key = Value::Map(vec![
+        (Value::Text("a".into()), Value::Integer(1)),
+        (Value::Text("b".into()), Value::Integer(2)),
+    ]);
+    let Value::Map(mut reordered_key) = key.clone() else {
+        panic!("map key");
+    };
+    reordered_key.reverse();
+    let reordered_key = Value::Map(reordered_key);
+    let baseline_entries = vec![
+        (key.clone(), Value::Float(0.0)),
+        (key.clone(), Value::Float(-0.0)),
+    ];
+    let baseline = header().extra(10001, Value::Map(baseline_entries)).build();
+    let input = header()
+        .extra(
+            10001,
+            Value::Map(vec![
+                (reordered_key.clone(), Value::Float(-0.0)),
+                (reordered_key.clone(), Value::Float(0.0)),
+            ]),
+        )
+        .build();
+    let report = compare_headers(&input, &baseline);
+    assert!(report.is_conformant());
+    assert!(report.value_differences.is_empty());
+    let missing = header()
+        .extra(
+            10001,
+            Value::Map(vec![(reordered_key.clone(), Value::Float(0.0))]),
+        )
+        .build();
+    assert!(!compare_headers(&missing, &baseline).is_conformant());
+    let changed = header()
+        .extra(
+            10001,
+            Value::Map(vec![
+                (key, Value::Float(1.0)),
+                (reordered_key, Value::Float(0.0)),
+            ]),
+        )
+        .build();
+    let report = compare_headers(&changed, &baseline);
+    assert!(report.is_conformant());
+    assert_eq!(report.value_differences.len(), 1);
 }
 
 #[test]
@@ -152,7 +398,7 @@ fn extension_key_absent_in_input_is_reported_even_when_baseline_is_null() {
     let i = header().build();
     let r = compare_headers(&i, &b);
     assert!(
-        r.value_differences
+        r.structural_mismatches
             .iter()
             .any(|v| render_path(&v.path) == "$.protected-header.header-extension[9]"),
         "a baseline extension key (even a null one) missing from the input is a difference"
@@ -173,7 +419,7 @@ fn text_claim_key_path_is_escaped() {
         let b = header().cwt_claims(claims).build();
         let i = header().cwt_claims(CwtClaims::new("iss")).build();
         let r = compare_headers(&i, &b);
-        r.value_differences
+        r.structural_mismatches
             .iter()
             .map(|v| render_path(&v.path))
             .find(|p| p.contains("cwt-extension"))

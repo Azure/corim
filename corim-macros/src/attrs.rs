@@ -28,9 +28,14 @@ pub struct FieldAttrs {
     pub key: i64,
     /// Whether the field is optional (`Option<T>`).
     pub optional: bool,
+    /// Deserialize a present optional field as its inner type, not `Option<T>`.
+    pub non_null: bool,
     /// Whether to serialize the field as CBOR bstr (bytes) instead of array.
     /// Use for `Vec<u8>` fields that represent byte strings.
     pub bytes: bool,
+    /// Whether to serialize the string field as the CDDL `uri` type
+    /// (`#6.32(tstr)`) while accepting legacy bare text on decode.
+    pub uri: bool,
 }
 
 impl StructAttrs {
@@ -71,7 +76,9 @@ impl FieldAttrs {
     pub fn from_attrs(attrs: &[Attribute]) -> syn::Result<Option<Self>> {
         let mut key: Option<i64> = None;
         let mut optional = false;
+        let mut non_null = false;
         let mut bytes = false;
+        let mut uri = false;
 
         for attr in attrs {
             if !attr.path().is_ident("cbor") {
@@ -87,8 +94,14 @@ impl FieldAttrs {
                 } else if meta.path.is_ident("optional") {
                     optional = true;
                     Ok(())
+                } else if meta.path.is_ident("non_null") {
+                    non_null = true;
+                    Ok(())
                 } else if meta.path.is_ident("bytes") {
                     bytes = true;
+                    Ok(())
+                } else if meta.path.is_ident("uri") {
+                    uri = true;
                     Ok(())
                 } else {
                     Err(meta.error("unknown cbor field attribute"))
@@ -97,14 +110,32 @@ impl FieldAttrs {
         }
 
         match key {
+            _ if non_null && (!optional || key.is_none()) => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(non_null)] requires #[cbor(key = ..., optional)]",
+            )),
+            Some(_k) if bytes && uri => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(bytes)] and #[cbor(uri)] cannot be combined",
+            )),
             Some(k) => Ok(Some(FieldAttrs {
                 key: k,
                 optional,
+                non_null,
                 bytes,
+                uri,
             })),
             None if optional => Err(syn::Error::new_spanned(
                 &attrs[0],
                 "#[cbor(optional)] requires #[cbor(key = ...)]",
+            )),
+            None if bytes => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(bytes)] requires #[cbor(key = ...)]",
+            )),
+            None if uri => Err(syn::Error::new_spanned(
+                &attrs[0],
+                "#[cbor(uri)] requires #[cbor(key = ...)]",
             )),
             None => Ok(None),
         }
@@ -167,4 +198,57 @@ pub fn parse_fields(data: &syn::DataStruct) -> syn::Result<Vec<CborField>> {
     }
 
     Ok(fields)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::FieldAttrs;
+    use syn::parse_quote;
+
+    #[test]
+    fn non_null_modifier_requires_optional_keyed_field() {
+        for field in [
+            parse_quote! { #[cbor(non_null)] value: Option<bool> },
+            parse_quote! { #[cbor(optional, non_null)] value: Option<bool> },
+            parse_quote! { #[cbor(key = 1, non_null)] value: bool },
+        ] {
+            let field: syn::Field = field;
+            assert!(FieldAttrs::from_attrs(&field.attrs).is_err());
+        }
+        let field: syn::Field = parse_quote! {
+            #[cbor(key = 1, optional, non_null)] value: Option<bool>
+        };
+        assert!(
+            FieldAttrs::from_attrs(&field.attrs)
+                .unwrap()
+                .unwrap()
+                .non_null
+        );
+    }
+
+    #[test]
+    fn uri_modifier_requires_key() {
+        let field: syn::Field = parse_quote! {
+            #[cbor(uri)]
+            value: String
+        };
+
+        let error = FieldAttrs::from_attrs(&field.attrs).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("#[cbor(uri)] requires #[cbor(key = ...)]"));
+    }
+
+    #[test]
+    fn bytes_modifier_requires_key() {
+        let field: syn::Field = parse_quote! {
+            #[cbor(bytes)]
+            value: Vec<u8>
+        };
+
+        let error = FieldAttrs::from_attrs(&field.attrs).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("#[cbor(bytes)] requires #[cbor(key = ...)]"));
+    }
 }

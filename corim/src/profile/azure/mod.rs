@@ -10,6 +10,7 @@
 //! - `OutOfDate`
 
 use crate::cbor::value::Value;
+use crate::nostd_prelude::*;
 use crate::profile::{MatchContext, Profile};
 use crate::types::corim::ProfileChoice;
 use crate::types::measurement::MeasurementMap;
@@ -92,6 +93,18 @@ impl Profile for AzureProfile {
         }
 
         Some(crate::validate::core_fields_match(reference, evidence))
+    }
+
+    fn validate_reference_measurement(&self, measurement: &MeasurementMap) -> Result<(), String> {
+        let Some(value) = measurement.mval.extra_entries.get(&MVAL_TCBSTATUS) else {
+            return Ok(());
+        };
+        if TcbStatus::parse(value).is_none() {
+            return Err(format!(
+                "tcbstatus must be \"UpToDate\" or \"OutOfDate\", found {value:?}"
+            ));
+        }
+        Ok(())
     }
 
     fn diagnose_mval_entry(&self, key: i64, value: &Value) -> Option<String> {

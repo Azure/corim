@@ -14,10 +14,13 @@ pub mod common;
 pub mod corim;
 pub mod coswid;
 pub mod environment;
+pub mod matcher;
 pub mod measurement;
+mod numeric;
 pub mod signed;
 pub mod tags;
 pub mod triples;
+pub(crate) mod uri;
 
 // Selective re-exports of the most commonly used types.
 // Users can always access the full set via the submodules (e.g., `types::common::*`).
@@ -32,13 +35,14 @@ pub use self::corim::{
 };
 pub use self::coswid::{ConciseSwidTag, SwidEntity, SwidLink};
 pub use self::environment::{ClassMap, EnvironmentMap};
+pub use self::matcher::{BoolMatcher, BytesMatcher, Number, NumberMatcher, TextMatcher};
 pub use self::measurement::{
     Digest, DigestAlg, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr,
     MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,
 };
 pub use self::signed::{
-    CoseAlgorithm, CoseCertHash, CoseSign1Corim, CoseX509, CwtClaims, ProtectedCorimHeaderMap,
-    ProtectedCorimHeaderMapBuilder, SignedCorimBuilder,
+    CoseAlgorithm, CoseCertHash, CoseLabel, CoseSign1Corim, CoseX509, CwtClaims, NumericDate,
+    ProtectedCorimHeaderMap, ProtectedCorimHeaderMapBuilder, SignedCorimBuilder,
 };
 pub use self::triples::{
     AttestKeyTriple, CesCommonCondition, ConditionalEndorsementSeriesTriple,

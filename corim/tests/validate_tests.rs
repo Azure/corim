@@ -106,18 +106,20 @@ fn mval_empty_is_invalid() {
 
 #[test]
 fn mval_with_digests_is_valid() {
-    let mval = MeasurementValuesMap {
-        digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+        values
     };
     assert!(mval.valid().is_ok());
 }
 
 #[test]
 fn mval_with_empty_digests_is_invalid() {
-    let mval = MeasurementValuesMap {
-        digests: Some(vec![]),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.digests = Some(vec![]);
+        values
     };
     let err = mval.valid().unwrap_err();
     assert!(err.contains("digests list must not be empty"), "got: {err}");
@@ -125,30 +127,33 @@ fn mval_with_empty_digests_is_invalid() {
 
 #[test]
 fn mval_with_svn_is_valid() {
-    let mval = MeasurementValuesMap {
-        svn: Some(SvnChoice::ExactValue(42)),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.svn = Some(SvnChoice::ExactValue(42));
+        values
     };
     assert!(mval.valid().is_ok());
 }
 
 #[test]
 fn mval_with_version_is_valid() {
-    let mval = MeasurementValuesMap {
-        version: Some(VersionMap {
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.version = Some(VersionMap {
             version: "1.0".into(),
             version_scheme: None,
-        }),
-        ..MeasurementValuesMap::default()
+        });
+        values
     };
     assert!(mval.valid().is_ok());
 }
 
 #[test]
 fn mval_with_name_is_valid() {
-    let mval = MeasurementValuesMap {
-        name: Some("test-component".into()),
-        ..MeasurementValuesMap::default()
+    let mval = {
+        let mut values = MeasurementValuesMap::default();
+        values.name = Some("test-component".into());
+        values
     };
     assert!(mval.valid().is_ok());
 }
@@ -161,9 +166,10 @@ fn mval_with_name_is_valid() {
 fn measurement_map_valid() {
     let m = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            values
         },
         authorized_by: None,
     };
@@ -191,9 +197,10 @@ fn reference_triple_valid() {
         EnvironmentMap::for_class("ACME", "Widget"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                values
             },
             authorized_by: None,
         }],
@@ -211,9 +218,10 @@ fn reference_triple_empty_env_is_invalid() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -460,9 +468,10 @@ fn comid_tag_valid() {
                 EnvironmentMap::for_class("ACME", "Widget"),
                 vec![MeasurementMap {
                     mkey: None,
-                    mval: MeasurementValuesMap {
-                        svn: Some(SvnChoice::ExactValue(1)),
-                        ..MeasurementValuesMap::default()
+                    mval: {
+                        let mut values = MeasurementValuesMap::default();
+                        values.svn = Some(SvnChoice::ExactValue(1));
+                        values
                     },
                     authorized_by: None,
                 }],
@@ -629,9 +638,10 @@ fn conditional_endorsement_triple_valid() {
     let env = EnvironmentMap::for_class("ACME", "Widget");
     let meas = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -647,9 +657,10 @@ fn conditional_endorsement_triple_empty_conditions_is_invalid() {
     let env = EnvironmentMap::for_class("ACME", "Widget");
     let meas = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -668,9 +679,10 @@ fn stateful_env_record_valid() {
         EnvironmentMap::for_class("ACME", "Widget"),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -688,9 +700,10 @@ fn stateful_env_record_empty_env_is_invalid() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -720,9 +733,10 @@ fn endorsed_triple_empty_env_invalid() {
         },
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..MeasurementValuesMap::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -795,9 +809,10 @@ fn conditional_endorsement_triple_invalid_condition() {
     let env = EnvironmentMap::for_class("A", "B");
     let meas = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -821,9 +836,10 @@ fn conditional_endorsement_triple_empty_endorsements() {
     let env = EnvironmentMap::for_class("A", "B");
     let meas = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -837,9 +853,10 @@ fn conditional_endorsement_triple_invalid_endorsement() {
     let env = EnvironmentMap::for_class("A", "B");
     let meas = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -977,9 +994,10 @@ fn one_ref_triple_for_comid() -> TriplesMap {
             EnvironmentMap::for_class("V", "M"),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(1)),
-                    ..MeasurementValuesMap::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(1));
+                    values
                 },
                 authorized_by: None,
             }],
@@ -1053,9 +1071,10 @@ fn tag_identity_version_or_default() {
 fn one_meas_with_svn(svn: u64) -> Vec<MeasurementMap> {
     vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(svn)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(svn));
+            values
         },
         authorized_by: None,
     }]
@@ -1074,6 +1093,138 @@ fn match_reference_values_no_env_match() {
     assert!(corim::validate::match_reference_values(&[ref_triple], &evidence).is_empty());
 }
 
+fn appraisal_results(
+    references: &[ReferenceTriple],
+    evidence: &[corim::validate::EvidenceClaim],
+) -> [Vec<corim::validate::CorroboratedClaim>; 2] {
+    [
+        corim::validate::match_reference_values(references, evidence),
+        corim::validate::match_reference_values_with_profile::<dyn corim::profile::Profile>(
+            references,
+            evidence,
+            None,
+            &corim::profile::MatchContext::new(),
+        )
+        .unwrap(),
+    ]
+}
+
+#[test]
+fn appraisal_requires_every_reference_measurement_in_one_evidence_claim() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let mut measurements = one_meas_with_svn(1);
+    measurements[0].mkey = Some(MeasuredElement::Uint(1));
+    let mut second = one_meas_with_svn(2).remove(0);
+    second.mkey = Some(MeasuredElement::Uint(2));
+    measurements.push(second);
+    let reference = ReferenceTriple::new(environment.clone(), measurements.clone());
+    for count in 0..=measurements.len() {
+        let evidence = corim::validate::EvidenceClaim {
+            environment: environment.clone(),
+            measurements: measurements[..count].to_vec(),
+        };
+        for result in appraisal_results(std::slice::from_ref(&reference), &[evidence]) {
+            assert_eq!(
+                result.len(),
+                usize::from(count == measurements.len()),
+                "count={count}"
+            );
+        }
+    }
+    let split: Vec<_> = measurements
+        .into_iter()
+        .map(|measurement| corim::validate::EvidenceClaim {
+            environment: environment.clone(),
+            measurements: vec![measurement],
+        })
+        .collect();
+    for result in appraisal_results(&[reference], &split) {
+        assert!(
+            result.is_empty(),
+            "separate partial evidence claims cannot satisfy one condition"
+        );
+    }
+}
+
+#[test]
+fn appraisal_copies_the_complete_matched_evidence_measurement_list() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let mut condition = one_meas_with_svn(5).remove(0);
+    condition.mkey = Some(MeasuredElement::Uint(1));
+    condition.mval.svn = Some(SvnChoice::MinValue(5));
+    let reference = ReferenceTriple::new(environment.clone(), vec![condition]);
+    let mut observed = one_meas_with_svn(7).remove(0);
+    observed.mkey = Some(MeasuredElement::Uint(1));
+    observed.mval.name = Some("observed".into());
+    let mut extra = one_meas_with_svn(0).remove(0);
+    extra.mkey = Some(MeasuredElement::Uint(2));
+    let evidence = corim::validate::EvidenceClaim {
+        environment: environment.clone(),
+        measurements: vec![extra, observed],
+    };
+    for result in appraisal_results(&[reference], std::slice::from_ref(&evidence)) {
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].environment, environment);
+        assert_eq!(result[0].measurements, evidence.measurements);
+    }
+}
+
+#[test]
+fn appraisal_svn_comparison_preserves_evidence_variant() {
+    use SvnChoice::{ExactValue, MinValue};
+    for (condition, observed, expected) in [
+        (ExactValue(5), ExactValue(5), true),
+        (ExactValue(5), ExactValue(6), false),
+        (ExactValue(5), ExactValue(4), false),
+        (MinValue(5), ExactValue(4), false),
+        (MinValue(5), ExactValue(5), true),
+        (MinValue(5), ExactValue(6), true),
+        (ExactValue(5), MinValue(5), false),
+        (MinValue(5), MinValue(4), false),
+        (MinValue(5), MinValue(5), true),
+        (MinValue(5), MinValue(6), false),
+        (MinValue(0), ExactValue(u64::MAX), true),
+        (ExactValue(u64::MAX), MinValue(u64::MAX), false),
+        (MinValue(u64::MAX), MinValue(u64::MAX), true),
+    ] {
+        let mut reference = one_meas_with_svn(0).remove(0);
+        reference.mval.svn = Some(condition.clone());
+        let mut measurement = one_meas_with_svn(0).remove(0);
+        measurement.mval.svn = Some(observed.clone());
+        assert_eq!(
+            corim::validate::core_fields_match(&reference, &measurement),
+            expected,
+            "condition={condition:?}, observed={observed:?}"
+        );
+        let environment = EnvironmentMap::for_class("V", "M");
+        let triple = ReferenceTriple::new(environment.clone(), vec![reference]);
+        let evidence = corim::validate::EvidenceClaim {
+            environment,
+            measurements: vec![measurement],
+        };
+        for result in appraisal_results(&[triple], &[evidence]) {
+            assert_eq!(
+                !result.is_empty(),
+                expected,
+                "condition={condition:?}, observed={observed:?}"
+            );
+        }
+    }
+}
+
+#[test]
+fn appraisal_empty_reference_measurements_do_not_corroborate() {
+    let environment = EnvironmentMap::for_class("V", "M");
+    let reference = ReferenceTriple::new(environment.clone(), vec![]);
+    let evidence = corim::validate::EvidenceClaim {
+        environment,
+        measurements: one_meas_with_svn(1),
+    };
+    for result in appraisal_results(&[reference], &[evidence]) {
+        assert!(result.is_empty());
+    }
+}
+
 #[test]
 fn match_reference_values_no_measurement_match() {
     let env = EnvironmentMap::for_class("ACME", "Widget");
@@ -1081,9 +1232,10 @@ fn match_reference_values_no_measurement_match() {
         env.clone(),
         vec![MeasurementMap {
             mkey: Some(MeasuredElement::Uint(99)),
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -1092,9 +1244,10 @@ fn match_reference_values_no_measurement_match() {
         environment: env,
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Uint(1)),
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -1109,9 +1262,10 @@ fn match_reference_values_digest_mismatch_same_alg() {
         env.clone(),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                values
             },
             authorized_by: None,
         }],
@@ -1120,9 +1274,10 @@ fn match_reference_values_digest_mismatch_same_alg() {
         environment: env,
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xBB; 32])]),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xBB; 32])]);
+                values
             },
             authorized_by: None,
         }],
@@ -1137,9 +1292,10 @@ fn match_reference_evidence_lacks_digests() {
         env.clone(),
         vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                values
             },
             authorized_by: None,
         }],
@@ -1159,9 +1315,10 @@ fn match_reference_evidence_lacks_svn() {
         environment: env,
         measurements: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                digests: Some(vec![Digest::new(7, vec![0xAA; 32])]),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.digests = Some(vec![Digest::new(7, vec![0xAA; 32])]);
+                values
             },
             authorized_by: None,
         }],
@@ -1185,9 +1342,10 @@ fn apply_endorsement_series_no_env_match() {
             one_meas_with_svn(1),
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    name: Some("endorsed".into()),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("endorsed".into());
+                    values
                 },
                 authorized_by: None,
             }],
@@ -1214,17 +1372,19 @@ fn apply_endorsement_series_no_selection_match() {
         vec![ConditionalSeriesRecord::new(
             vec![MeasurementMap {
                 mkey: Some(MeasuredElement::Uint(99)),
-                mval: MeasurementValuesMap {
-                    svn: Some(SvnChoice::ExactValue(100)),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(SvnChoice::ExactValue(100));
+                    values
                 },
                 authorized_by: None,
             }],
             vec![MeasurementMap {
                 mkey: None,
-                mval: MeasurementValuesMap {
-                    name: Some("e".into()),
-                    ..Default::default()
+                mval: {
+                    let mut values = MeasurementValuesMap::default();
+                    values.name = Some("e".into());
+                    values
                 },
                 authorized_by: None,
             }],
@@ -1234,9 +1394,10 @@ fn apply_endorsement_series_no_selection_match() {
         environment: env,
         measurements: vec![MeasurementMap {
             mkey: Some(MeasuredElement::Uint(1)),
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -1251,17 +1412,19 @@ fn appraisal_context_records_endorsement_phase_entries() {
     let env = EnvironmentMap::for_class("V", "M");
     let meas_sel = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
     let meas_add = vec![MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("endorsed-value".into()),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("endorsed-value".into());
+            values
         },
         authorized_by: None,
     }];
@@ -1296,9 +1459,10 @@ fn ces_condition_round_trip_with_authorized_by() {
         environment: EnvironmentMap::for_class("V", "M"),
         claims_list: vec![MeasurementMap {
             mkey: None,
-            mval: MeasurementValuesMap {
-                svn: Some(SvnChoice::ExactValue(1)),
-                ..Default::default()
+            mval: {
+                let mut values = MeasurementValuesMap::default();
+                values.svn = Some(SvnChoice::ExactValue(1));
+                values
             },
             authorized_by: None,
         }],
@@ -1327,9 +1491,10 @@ fn ces_triple_accessor_methods() {
     let env = EnvironmentMap::for_class("V", "M");
     let meas = vec![MeasurementMap {
         mkey: Some(MeasuredElement::Uint(1)),
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(1)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(1));
+            values
         },
         authorized_by: None,
     }];
@@ -1432,9 +1597,10 @@ fn domain_membership_accessor_methods() {
 fn core_fields_match_matches_on_equal_svn() {
     let r = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            svn: Some(SvnChoice::ExactValue(5)),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.svn = Some(SvnChoice::ExactValue(5));
+            values
         },
         authorized_by: None,
     };
@@ -1446,17 +1612,19 @@ fn core_fields_match_matches_on_equal_svn() {
 fn core_fields_match_rejects_on_unequal_name() {
     let r = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("alpha".into()),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("alpha".into());
+            values
         },
         authorized_by: None,
     };
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("beta".into()),
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("beta".into());
+            values
         },
         authorized_by: None,
     };
@@ -1474,19 +1642,21 @@ fn core_fields_match_ignores_extra_entries() {
 
     let r = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("x".into()),
-            extra_entries: r_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("x".into());
+            values.extra_entries = r_extras;
+            values
         },
         authorized_by: None,
     };
     let e = MeasurementMap {
         mkey: None,
-        mval: MeasurementValuesMap {
-            name: Some("x".into()),
-            extra_entries: e_extras,
-            ..Default::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.name = Some("x".into());
+            values.extra_entries = e_extras;
+            values
         },
         authorized_by: None,
     };

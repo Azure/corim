@@ -6,8 +6,9 @@
 //! This module contains relaxations applied **before** strict decoding so
 //! that real-world CoRIM files that were produced against early drafts or
 //! the TCG Endorsement spec can still be parsed. None of these helpers
-//! affect encoding — encoding always emits draft-ietf-rats-corim-11
-//! wire format.
+//! affect builder encoding — builders emit draft-ietf-rats-corim-11 wire format.
+//! Lossless transcoding can retain existing producer encodings; it must not
+//! normalize authenticated byte strings.
 //!
 //! See the README "Decode interop relaxations" section for the complete
 //! list of relaxations and their justifications.
@@ -68,8 +69,10 @@ pub fn peel_tcg_wrappers(bytes: &[u8]) -> Result<PeelOutcome<'_>, DecodeError> {
         return Ok(PeelOutcome::Unchanged(bytes));
     }
 
-    let mut v: Value = cbor::decode(bytes)
-        .map_err(|e| DecodeError::Deserialization(format!("peel: cannot decode CBOR: {}", e)))?;
+    let mut v: Value = cbor::decode_exact(bytes).map_err(|e| match e {
+        e @ (DecodeError::TrailingData { .. } | DecodeError::LimitExceeded { .. }) => e,
+        other => DecodeError::Deserialization(format!("peel: cannot decode CBOR: {other}")),
+    })?;
 
     let mut peeled = false;
     loop {
@@ -134,6 +137,14 @@ impl<'a> Borrow<[u8]> for PeelOutcome<'a> {
 /// Tag 500 encodes as `0xD9 0x01 0xF4`; tag 502 as `0xD9 0x01 0xF6`.
 fn starts_with_legacy_tag(bytes: &[u8]) -> bool {
     matches!(bytes, [0xD9, 0x01, 0xF4, ..] | [0xD9, 0x01, 0xF6, ..])
+}
+
+/// Peel already-parsed legacy wrappers without re-decoding or resetting limits.
+pub(crate) fn peel_value(mut value: Value) -> Value {
+    while let Value::Tag(TAG_LEGACY_TOP | TAG_LEGACY_SIGNED, inner) = value {
+        value = *inner;
+    }
+    value
 }
 
 // ===========================================================================
@@ -286,12 +297,28 @@ impl<'a> Borrow<[u8]> for WrapOutcome<'a> {
 pub fn decode_comid_from_tcg_bstr(
     bytes: &[u8],
 ) -> Result<crate::types::comid::ComidTag, DecodeError> {
-    use crate::types::tags::TAG_COMID;
+    decode_comid_with_budget(
+        bytes,
+        &mut cbor::DecodeBudget::new(&cbor::DecodeLimits::default())?,
+    )
+}
 
+pub(crate) fn decode_comid_with_budget(
+    bytes: &[u8],
+    budget: &mut cbor::DecodeBudget,
+) -> Result<crate::types::comid::ComidTag, DecodeError> {
     // Decode the bytes as a generic CBOR Value so we can inspect the wire
     // shape without committing to a specific schema.
-    let v: Value = cbor::decode(bytes)
-        .map_err(|e| DecodeError::Deserialization(format!("decode_comid_from_tcg_bstr: {}", e)))?;
+    let v = budget.decode_value_exact(bytes).map_err(|e| match e {
+        e @ (DecodeError::LimitExceeded { .. } | DecodeError::TrailingData { .. }) => e,
+        other => DecodeError::Deserialization(format!("decode_comid_from_tcg_bstr: {other}")),
+    })?;
+
+    decode_parsed_comid(v)
+}
+
+pub(crate) fn decode_parsed_comid(v: Value) -> Result<crate::types::comid::ComidTag, DecodeError> {
+    use crate::types::tags::TAG_COMID;
 
     // Two accepted shapes:
     //   1. Tag(506, Map(...)) — TCG-style with inner #6.506 tag wrapper.
@@ -324,15 +351,9 @@ pub fn decode_comid_from_tcg_bstr(
         }
     };
 
-    // Re-encode the inner map and feed it to the strict ComidTag decoder,
-    // which expects a CBOR map at the top (no leading tag).
-    let map_bytes = cbor::encode(&map_value).map_err(|e| {
-        DecodeError::InvalidStructure(format!(
-            "decode_comid_from_tcg_bstr: re-encode failed: {}",
-            e
-        ))
-    })?;
-    cbor::decode(&map_bytes).map_err(|e| {
+    // Deserialize the already-budgeted map without a second CBOR parse.
+    cbor::map_keys::check(&map_value)?;
+    cbor::from_parsed_value(map_value).map_err(|e| {
         DecodeError::Deserialization(format!(
             "decode_comid_from_tcg_bstr: ComidTag decode: {}",
             e

@@ -28,9 +28,10 @@ fn main() {
     // Create a measurement with a SHA-384 digest
     let measurement = MeasurementMap {
         mkey: Some(MeasuredElement::Text("firmware".into())),
-        mval: MeasurementValuesMap {
-            digests: Some(vec![Digest::new(7, vec![0xAA; 48])]),
-            ..MeasurementValuesMap::default()
+        mval: {
+            let mut values = MeasurementValuesMap::default();
+            values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
+            values
         },
         authorized_by: None,
     };

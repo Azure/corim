@@ -3,7 +3,7 @@
 
 //! Serde `Deserializer` that replays a [`Value`] tree.
 
-use crate::cbor::value::Value;
+use crate::cbor::value::{integer_argument, Value};
 #[allow(unused_imports)]
 use crate::nostd_prelude::*;
 use serde::de::{self, DeserializeSeed, MapAccess, SeqAccess, Visitor};
@@ -51,10 +51,11 @@ impl<'de> de::Deserializer<'de> for ValueDeserializer {
     fn deserialize_any<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self.0 {
             Value::Integer(n) => {
-                if n >= 0 && n <= u64::MAX as i128 {
-                    visitor.visit_u64(n as u64)
-                } else if n >= i64::MIN as i128 {
-                    visitor.visit_i64(n as i64)
+                integer_argument(n).map_err(Error)?;
+                if let Ok(n) = u64::try_from(n) {
+                    visitor.visit_u64(n)
+                } else if let Ok(n) = i64::try_from(n) {
+                    visitor.visit_i64(n)
                 } else {
                     visitor.visit_i128(n)
                 }
