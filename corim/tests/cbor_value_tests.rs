@@ -19,6 +19,32 @@ use corim::types::environment::*;
 use corim::types::measurement::*;
 use std::collections::BTreeMap;
 
+#[test]
+fn nested_map_keys_encode_cached_bytes_without_retraversal() {
+    use corim::cbor::constants;
+    for depth in [1, 8, 40] {
+        let mut bytes = vec![(constants::MAJOR_MAP << 5) | 1; depth];
+        bytes.extend(vec![constants::BYTE_NULL; depth + 1]);
+        let key: Value = cbor::decode_exact(&bytes).unwrap();
+        assert_eq!(cbor::encode(&key).unwrap(), bytes);
+        let mut expected = vec![(constants::MAJOR_MAP << 5) | 2, 0, constants::BYTE_TRUE];
+        expected.extend_from_slice(&bytes);
+        expected.push(constants::BYTE_NULL);
+        for entries in [
+            vec![
+                (key.clone(), Value::Null),
+                (Value::Integer(0), Value::Bool(true)),
+            ],
+            vec![
+                (Value::Integer(0), Value::Bool(true)),
+                (key.clone(), Value::Null),
+            ],
+        ] {
+            assert_eq!(cbor::encode(&Value::Map(entries)).unwrap(), expected);
+        }
+    }
+}
+
 // ===========================================================================
 // Value::into_* accessors
 // ===========================================================================
