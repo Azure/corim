@@ -35,7 +35,7 @@ pub use self::corim::{
 };
 pub use self::coswid::{ConciseSwidTag, SwidEntity, SwidLink};
 pub use self::environment::{ClassMap, EnvironmentMap};
-pub use self::matcher::{BoolMatcher, BytesMatcher, Number, NumberMatcher, TextMatcher};
+pub use self::matcher::{BoolMatcher, BytesMatcher, FloatMatcher, IntegerMatcher, TextMatcher};
 pub use self::measurement::{
     Digest, DigestAlg, FlagsMap, IntRangeChoice, IntegrityRegisters, IpAddr, MacAddr,
     MeasurementMap, MeasurementValuesMap, RawValueChoice, SvnChoice,

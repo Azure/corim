@@ -432,11 +432,12 @@ fn int_range_positive_inf() {
 }
 
 #[test]
-fn int_range_both_inf() {
-    round_trip(&IntRangeChoice::Range {
+fn int_range_both_inf_is_malformed() {
+    assert!(cbor::encode(&IntRangeChoice::Range {
         min: None,
         max: None,
-    });
+    })
+    .is_err());
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -74,6 +74,7 @@ use crate::types::tags::{
     TRIPLES_KEY_REFERENCE,
 };
 use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
+use crate::Validate;
 
 use core::fmt;
 
@@ -1471,8 +1472,28 @@ fn inspect_triples_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
                 }
             }
             TRIPLES_KEY_COND_ENDORSEMENT_SERIES | TRIPLES_KEY_COND_ENDORSEMENT => {
-                // Series shape is exotic; just type-check the outer array.
-                if !matches!(v, Value::Array(_)) {
+                if let Value::Array(records) = v {
+                    for (index, record) in records.into_iter().enumerate() {
+                        // Typed validation distinguishes condition matchers from
+                        // bare endorsement assertions (draft-12 §5.1.4.9).
+                        let result = if key == TRIPLES_KEY_COND_ENDORSEMENT_SERIES {
+                            cbor::from_parsed_value::<
+                                crate::types::ConditionalEndorsementSeriesTriple,
+                            >(record)
+                            .map_err(|error| error.to_string())
+                            .and_then(|triple| triple.valid())
+                        } else {
+                            cbor::from_parsed_value::<crate::types::ConditionalEndorsementTriple>(
+                                record,
+                            )
+                            .map_err(|error| error.to_string())
+                            .and_then(|triple| triple.valid())
+                        };
+                        if let Err(error) = result {
+                            ins.err(format!("{path}[{index}]"), error);
+                        }
+                    }
+                } else {
                     ins.err(
                         path,
                         format!(
@@ -1583,6 +1604,11 @@ fn inspect_env_measurements_triples(
                         } else {
                             None
                         };
+                        if let Ok(measurement) = cbor::value::from_value::<MeasurementMap>(&m) {
+                            if let Err(error) = measurement.mval.valid_assertion() {
+                                ins.err(&path, error);
+                            }
+                        }
                         inspect_measurement_map(ins, &path, m);
                         if let Some(measurement) = typed_measurement.as_ref() {
                             inspect_profile_reference_measurement(ins, &path, measurement);
@@ -1948,8 +1974,10 @@ fn inspect_measurement_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
 // ===========================================================================
 
 fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
-    use crate::types::matcher::{BytesMatcher, NumberMatcher, TextMatcher};
-    use crate::types::tags::{MVAL_KEY_BOOL, MVAL_KEY_BYTES, MVAL_KEY_NUMBER, MVAL_KEY_TEXT};
+    use crate::types::matcher::{BytesMatcher, FloatMatcher, IntegerMatcher, TextMatcher};
+    use crate::types::tags::{
+        MVAL_KEY_BOOL, MVAL_KEY_BYTES, MVAL_KEY_FLOAT, MVAL_KEY_INTEGER, MVAL_KEY_TEXT,
+    };
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -2130,22 +2158,25 @@ fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: V
                 }
             }
             MVAL_KEY_INT_RANGE => {
-                if !matches!(v, Value::Array(_)) {
-                    ins.err(
-                        path,
-                        format!("int-range (key 15) must be array, found {}", value_kind(&v)),
-                    );
+                if let Err(error) =
+                    crate::cbor::from_parsed_value::<crate::types::IntRangeChoice>(v)
+                {
+                    ins.err(path, format!("int-range (key 15): {error}"));
                 }
             }
-            MVAL_KEY_BOOL | MVAL_KEY_NUMBER | MVAL_KEY_TEXT | MVAL_KEY_BYTES => {
+            MVAL_KEY_BOOL | MVAL_KEY_INTEGER | MVAL_KEY_FLOAT | MVAL_KEY_TEXT | MVAL_KEY_BYTES => {
                 let (name, result) = match key {
                     MVAL_KEY_BOOL => (
                         "bool",
                         crate::cbor::from_parsed_value::<bool>(v).map(|_| ()),
                     ),
-                    MVAL_KEY_NUMBER => (
-                        "number",
-                        crate::cbor::from_parsed_value::<NumberMatcher>(v).map(|_| ()),
+                    MVAL_KEY_INTEGER => (
+                        "integer",
+                        crate::cbor::from_parsed_value::<IntegerMatcher>(v).map(|_| ()),
+                    ),
+                    MVAL_KEY_FLOAT => (
+                        "float",
+                        crate::cbor::from_parsed_value::<FloatMatcher>(v).map(|_| ()),
                     ),
                     MVAL_KEY_TEXT => (
                         "text",
