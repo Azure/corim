@@ -218,7 +218,7 @@ fn convert_round_trip_measurement_matchers_and_float_bits() {
             Box::new(Value::Array(vec![Value::Integer(1), Value::Float(1.5)])),
         ),
         Value::Tag(
-            TAG_NUMBER_RANGE,
+            TAG_NUMERIC_RANGE,
             Box::new(Value::Array(vec![Value::Null, Value::Float(f64::INFINITY)])),
         ),
         Value::Float(f64::from_bits(0x7ff8_0000_0000_1234)),
@@ -332,7 +332,7 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
         let mval = Value::Map(vec![
             (key(MVAL_KEY_BOOL), Value::Bool(false)),
             (
-                key(MVAL_KEY_NUMBER),
+                key(MVAL_KEY_INTEGER),
                 if invalid {
                     Value::Tag(
                         TAG_MATCHER_SET,
@@ -398,7 +398,7 @@ fn matcher_cli_diagnoses_bad_shapes_and_displays_valid_fields() {
             );
             if !invalid && mode.is_none() {
                 let text = String::from_utf8(output.stdout).unwrap();
-                for field in ["bool: false", "number:", "text:", "bytes:"] {
+                for field in ["bool: false", "integer:", "text:", "bytes:"] {
                     assert!(text.contains(field), "{text}");
                 }
             }

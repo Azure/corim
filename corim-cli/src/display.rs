@@ -426,8 +426,11 @@ fn print_measurement(
     if let Some(value) = mv.r#bool {
         println!("{}bool: {}", mi, value);
     }
-    if let Some(value) = &mv.number {
-        println!("{}number: {:?}", mi, value);
+    if let Some(value) = &mv.integer {
+        println!("{}integer: {:?}", mi, value);
+    }
+    if let Some(value) = &mv.float {
+        println!("{}float: {:?}", mi, value);
     }
     if let Some(value) = &mv.text {
         println!("{}text: {:?}", mi, value);
