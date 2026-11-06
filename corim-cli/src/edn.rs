@@ -20,7 +20,7 @@ use corim::error::DecodeError;
 use corim::types::signed::{COSE_HEADER_CORIM_META, COSE_HEADER_PAYLOAD_HASH_ALG};
 use corim::types::tags::{
     CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED, TAG_LEGACY_TOP,
-    TAG_SIGNED_CORIM,
+    TAG_MULTI_SIGNED_CORIM, TAG_SIGNED_CORIM,
 };
 
 /// Render a CBOR byte string as EDN. The decoder is the same one used by
@@ -53,6 +53,9 @@ enum Ctx {
     /// Inside a `#6.18(array)` — elements 0 (protected) and 2 (payload)
     /// are bstr-wrapped CBOR.
     CoseSign1Array,
+    CoseSignArray,
+    Signatures,
+    Signature,
     /// Inside a CBOR map that is itself the decoded COSE protected
     /// header (i.e. element 0 of a `#6.18` array). Key 8 (`corim-meta`)
     /// is bstr-wrapped CBOR.
@@ -164,32 +167,36 @@ impl Renderer {
         for (i, item) in items.iter().enumerate() {
             indent(out, depth + 1);
             match (ctx, i, item) {
-                (Ctx::CoseSign1Array, 0, Value::Bytes(b)) => match self.decode(b, nesting + 2) {
-                    Ok(header) => {
-                        if let Value::Map(fields) = &header {
-                            hash_payload = fields.iter().any(|(k, _)| {
-                                k == &Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))
-                            });
+                (Ctx::CoseSign1Array | Ctx::CoseSignArray | Ctx::Signature, 0, Value::Bytes(b)) => {
+                    match self.decode(b, nesting + 2) {
+                        Ok(header) => {
+                            if let Value::Map(fields) = &header {
+                                hash_payload = fields.iter().any(|(k, _)| {
+                                    k == &Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))
+                                });
+                            }
+                            out.push_str("<<");
+                            self.write_value(
+                                &header,
+                                depth + 1,
+                                nesting + 2,
+                                Ctx::ProtectedHeaderMap,
+                                out,
+                            )?;
+                            out.push_str(">>");
                         }
-                        out.push_str("<<");
-                        self.write_value(
-                            &header,
-                            depth + 1,
-                            nesting + 2,
-                            Ctx::ProtectedHeaderMap,
-                            out,
-                        )?;
-                        out.push_str(">>");
+                        Err(e @ DecodeError::LimitExceeded { .. })
+                        | Err(e @ DecodeError::TrailingData { .. }) => return Err(e),
+                        Err(_) => write_hex(b, out),
                     }
-                    Err(e @ DecodeError::LimitExceeded { .. })
-                    | Err(e @ DecodeError::TrailingData { .. }) => return Err(e),
-                    Err(_) => write_hex(b, out),
-                },
-                (Ctx::CoseSign1Array, 2, Value::Bytes(b)) if !hash_payload => {
+                }
+                (Ctx::CoseSign1Array | Ctx::CoseSignArray, 2, Value::Bytes(b)) if !hash_payload => {
                     self.write_embedded_bstr(b, depth + 1, nesting + 1, Ctx::Document, out)?;
                 }
                 _ => {
                     let child_ctx = match ctx {
+                        Ctx::CoseSignArray if i == 3 => Ctx::Signatures,
+                        Ctx::Signatures => Ctx::Signature,
                         Ctx::TagArray => Ctx::TagEntry,
                         Ctx::Top | Ctx::Document => Ctx::Top,
                         _ => Ctx::Opaque,
@@ -286,6 +293,9 @@ impl Renderer {
                 Value::Array(_),
             ) => {
                 self.write_value(inner, depth, nesting + 1, Ctx::CoseSign1Array, out)?;
+            }
+            (Ctx::Top | Ctx::Document, TAG_MULTI_SIGNED_CORIM, Value::Array(_)) => {
+                self.write_value(inner, depth, nesting + 1, Ctx::CoseSignArray, out)?;
             }
             _ => {
                 let child_ctx = if ctx == Ctx::TagEntry {

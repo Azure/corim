@@ -26,8 +26,8 @@ use base64::Engine;
 use clap::{Parser, Subcommand};
 
 use corim::types::signed::{
-    decode_signed_corim, encode_signed_corim, CoseAlgorithm, CoseX509, CwtClaims,
-    SignedCorimBuilder,
+    decode_signed_corim, decode_signed_envelope, encode_signed_corim, CoseAlgorithm, CoseX509,
+    CwtClaims, SignedCorimBuilder,
 };
 
 // ---------------------------------------------------------------------------
@@ -37,7 +37,7 @@ use corim::types::signed::{
 /// Arguments for the `extract` subcommand.
 #[derive(Parser)]
 pub struct ExtractArgs {
-    /// Path to the signed CoRIM (`#6.18` COSE_Sign1). Use "-" or omit for stdin.
+    /// Path to a signed CoRIM (COSE_Sign1 or COSE_Sign). Use "-" or omit for stdin.
     #[arg(value_name = "SIGNED")]
     file: Option<String>,
 
@@ -56,6 +56,10 @@ pub struct ExtractArgs {
     /// With `--header`, emit the decoded header as JSON instead of raw CBOR.
     #[arg(long, requires = "header")]
     json: bool,
+
+    /// With --header, select a COSE_Sign signature entry instead of the body.
+    #[arg(long, requires = "header", value_name = "INDEX")]
+    signature_index: Option<usize>,
 
     /// Require complete validation of an unsigned payload before writing.
     /// Partial validation exits 4 without output. Ignored with `--header`.
@@ -101,32 +105,40 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
     }
 
     let envelope =
-        decode_signed_corim(&bytes).map_err(|e| format!("decoding signed CoRIM: {e}"))?;
+        decode_signed_envelope(&bytes).map_err(|e| format!("decoding signed CoRIM: {e}"))?;
 
     if args.header {
+        let (header, header_bytes) = if let Some(index) = args.signature_index {
+            let corim::types::signed::SignedEnvelope::Sign(multi) = &envelope else {
+                return Err(
+                    "signature-index requires a multi-signature COSE_Sign envelope"
+                        .to_string()
+                        .into(),
+                );
+            };
+            let signature = multi
+                .signatures()
+                .get(index)
+                .ok_or_else(|| format!("signature index {index} out of range"))?;
+            (signature.protected(), signature.protected_header_bytes())
+        } else {
+            (envelope.protected(), envelope.protected_header_bytes())
+        };
         if args.json {
-            let rendered = crate::jsonfmt::protected_header(
-                envelope.protected(),
-                envelope.protected_header_bytes().len(),
-                "",
-            )
-            .map_err(|error| error.to_string())?;
+            let rendered = crate::jsonfmt::protected_header(header, header_bytes.len(), "")
+                .map_err(|error| error.to_string())?;
             write_output(
                 args.output.as_deref(),
                 format!("{rendered}\n").as_bytes(),
                 "protected header (JSON)",
             )?;
         } else {
-            write_output(
-                args.output.as_deref(),
-                envelope.protected_header_bytes(),
-                "protected header",
-            )?;
+            write_output(args.output.as_deref(), header_bytes, "protected header")?;
         }
         return Ok(());
     }
 
-    let payload = envelope.payload.ok_or_else(|| {
+    let payload = envelope.payload().ok_or_else(|| {
         "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is transported \
          separately and cannot be extracted from this envelope (use --header to \
          extract the protected header instead)"
@@ -136,7 +148,7 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
     if args.validate {
         let registry = crate::profiles::build_registry();
         let document =
-            crate::validation::document(&payload, Some(crate::validation::now()?), &registry)
+            crate::validation::document(payload, Some(crate::validation::now()?), &registry)
                 .map_err(|error| format!("extracted CoRIM failed validation: {error}"))?;
         if document.signed.is_some() {
             return Err(ExtractError::Failure(
@@ -151,7 +163,7 @@ fn run_extract_impl(args: ExtractArgs) -> Result<(), ExtractError> {
         }
     }
 
-    write_output(args.output.as_deref(), &payload, "CoRIM payload")?;
+    write_output(args.output.as_deref(), payload, "CoRIM payload")?;
     Ok(())
 }
 

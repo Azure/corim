@@ -59,24 +59,48 @@ fn project(bytes: &[u8]) -> Result<JsonValue, String> {
     let payload;
     let wrapped;
     let mut protected_header = None;
-    let inner: &[u8] = if peeled.as_bytes().first() == Some(&0xD2) {
-        let env = corim::types::signed::decode_signed_corim(peeled.as_bytes())
+    let outer: corim::cbor::value::Value = corim::cbor::decode_exact(peeled.as_bytes())
+        .map_err(|error| format!("decoding document: {error}"))?;
+    let inner: &[u8] = if matches!(
+        outer,
+        corim::cbor::value::Value::Tag(
+            corim::types::tags::TAG_SIGNED_CORIM | corim::types::tags::TAG_MULTI_SIGNED_CORIM,
+            _
+        )
+    ) {
+        let env = corim::types::signed::decode_signed_envelope(peeled.as_bytes())
             .map_err(|e| format!("input looks like a signed CoRIM but failed to decode: {e}"))?;
         if env.protected().is_hash_envelope() {
             return Err("hash-envelope payload is not an unsigned authoring document; use convert --lossless".into());
         }
-        protected_header = Some(
-            crate::jsonfmt::protected_header_value(
-                env.protected(),
-                env.protected_header_bytes().len(),
-            )
-            .map_err(|e| format!("protected header summary: {e}; use convert --lossless"))?,
-        );
-        payload = env.payload.ok_or_else(|| {
-            "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is \
+        let mut summary = crate::jsonfmt::protected_header_value(
+            env.protected(),
+            env.protected_header_bytes().len(),
+        )
+        .map_err(|e| format!("protected header summary: {e}; use convert --lossless"))?;
+        if let corim::types::signed::SignedEnvelope::Sign(multi) = &env {
+            let signers = multi
+                .signatures()
+                .iter()
+                .map(|signature| {
+                    crate::jsonfmt::protected_header_value(
+                        signature.protected(),
+                        signature.protected_header_bytes().len(),
+                    )
+                    .map_err(|error| error.to_string())
+                })
+                .collect::<Result<Vec<_>, _>>()?;
+            summary["signatures"] = JsonValue::Array(signers);
+        }
+        protected_header = Some(summary);
+        payload = env
+            .payload()
+            .ok_or_else(|| {
+                "signed CoRIM has a detached (nil) payload; the unsigned CoRIM is \
              transported separately; use convert --lossless to preserve this envelope"
-                .to_string()
-        })?;
+                    .to_string()
+            })?
+            .to_vec();
         // Borrow rather than copy: the wrap is zero-copy when the payload is
         // already `#6.501`-tagged.
         wrapped = corim::compat::wrap_bare_corim_map(&payload);

@@ -18,7 +18,7 @@ use corim::baseline::{
 };
 use corim::cbor::value::Value;
 use corim::types::corim::CorimMap;
-use corim::types::signed::ProtectedCorimHeaderMap;
+use corim::types::signed::SignedEnvelope;
 
 #[derive(Debug)]
 pub(crate) enum BaselineError {
@@ -62,7 +62,7 @@ pub(crate) struct BaselineOutcome {
 /// JSON (`format` is `"text"` or `"json"`).
 pub fn run(
     input_payload: Option<&CorimMap>,
-    input_header: Option<&ProtectedCorimHeaderMap>,
+    input_header: Option<&SignedEnvelope>,
     path: &str,
     format: &str,
     now: Option<i64>,
@@ -76,7 +76,10 @@ pub fn run(
 
     // Header: only when both baseline and target are signed.
     if let (Some(ih), Some(bh)) = (input_header, baseline.header.as_ref()) {
-        report.merge(corim::baseline::compare_headers(ih, bh).map_err(|error| error.to_string())?);
+        report.merge(
+            corim::types::signed::compare_signed_envelopes(ih, bh)
+                .map_err(|error| error.to_string())?,
+        );
         compared_header = true;
     }
     // Payload: whenever both sides carry one.
@@ -137,7 +140,7 @@ pub fn run(
 /// A decoded baseline: its optional payload and optional protected header.
 struct LoadedBaseline {
     payload: Option<CorimMap>,
-    header: Option<ProtectedCorimHeaderMap>,
+    header: Option<SignedEnvelope>,
     /// Description used when the baseline is unsigned (JSON vs CBOR source).
     source_unsigned_desc: &'static str,
     coverage: corim::document::ValidationCoverage,
@@ -191,7 +194,7 @@ fn load_corim(path: &str, now: Option<i64>) -> Result<LoadedBaseline, BaselineEr
         .map_err(|error| format!("baseline is not a valid CoRIM: {error}"))?;
     Ok(LoadedBaseline {
         payload: Some(document.payload.corim),
-        header: document.signed.map(|signed| signed.protected().clone()),
+        header: document.signed,
         source_unsigned_desc: if json_input {
             "unsigned CoRIM (from JSON)"
         } else {
