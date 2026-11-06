@@ -199,17 +199,19 @@ impl DecodeBudget {
         context: ScanContext,
         depth: usize,
     ) -> Result<(), DecodeError> {
-        use crate::types::signed::{COSE_HEADER_CORIM_META, COSE_HEADER_PAYLOAD_HASH_ALG};
+        use crate::types::signed::COSE_HEADER_CORIM_META;
         use crate::types::tags::{
             CORIM_KEY_TAGS, TAG_COMID, TAG_CORIM, TAG_COSWID, TAG_COTL, TAG_LEGACY_SIGNED,
-            TAG_LEGACY_TOP, TAG_SIGNED_CORIM,
+            TAG_LEGACY_TOP, TAG_MULTI_SIGNED_CORIM, TAG_SIGNED_CORIM,
         };
         if depth > self.limits.max_depth {
             self.fail("depth", self.limits.max_depth);
             return self.check();
         }
         match value {
-            Value::Tag(TAG_SIGNED_CORIM, inner) if matches!(context, ScanContext::Document) => {
+            Value::Tag(tag @ (TAG_SIGNED_CORIM | TAG_MULTI_SIGNED_CORIM), inner)
+                if matches!(context, ScanContext::Document) =>
+            {
                 if let Value::Array(parts) = inner.as_ref() {
                     if self.inspect_framing {
                         // Even tolerated malformed slots and surplus array
@@ -223,26 +225,17 @@ impl DecodeBudget {
                     // even malformed envelopes so diagnostics cannot reset budgets.
                     let mut hash = false;
                     if let Some(Value::Bytes(bytes)) = parts.first() {
-                        self.check_input(bytes)?;
-                        let header = if self.inspect_framing {
-                            self.decode_value_exact_at_depth(bytes, depth + 2)
-                        } else {
-                            self.decode_value_at_depth(bytes, depth + 2)
-                        };
-                        self.check()?;
-                        if let Err(e @ DecodeError::TrailingData { .. }) = header {
-                            return Err(e);
-                        }
-                        if let Ok(header) = header {
-                            if self.inspect_framing {
-                                super::map_keys::check_header(&header)?;
+                        hash = self.inspect_header(bytes, depth + 2)?;
+                    }
+                    if *tag == TAG_MULTI_SIGNED_CORIM {
+                        if let Some(Value::Array(signatures)) = parts.get(3) {
+                            for signature in signatures {
+                                if let Value::Array(fields) = signature {
+                                    if let Some(Value::Bytes(bytes)) = fields.first() {
+                                        self.inspect_header(bytes, depth + 4)?;
+                                    }
+                                }
                             }
-                            if let Value::Map(fields) = &header {
-                                hash = fields.iter().any(|(k, _)| {
-                                    k == &Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))
-                                });
-                            }
-                            self.inspect_value(&header, ScanContext::Header, depth + 2)?;
                         }
                     }
                     if !hash {
@@ -309,6 +302,30 @@ impl DecodeBudget {
             _ => {}
         }
         Ok(())
+    }
+
+    fn inspect_header(&mut self, bytes: &[u8], depth: usize) -> Result<bool, DecodeError> {
+        use crate::types::signed::COSE_HEADER_PAYLOAD_HASH_ALG;
+        self.check_input(bytes)?;
+        let header = if self.inspect_framing {
+            self.decode_value_exact_at_depth(bytes, depth)
+        } else {
+            self.decode_value_at_depth(bytes, depth)
+        };
+        self.check()?;
+        if let Err(error @ DecodeError::TrailingData { .. }) = header {
+            return Err(error);
+        }
+        let Ok(header) = header else {
+            return Ok(false);
+        };
+        if self.inspect_framing {
+            super::map_keys::check_header(&header)?;
+        }
+        let hash = matches!(&header, Value::Map(fields) if fields.iter().any(|(key,_)|
+            *key == Value::Integer(i128::from(COSE_HEADER_PAYLOAD_HASH_ALG))));
+        self.inspect_value(&header, ScanContext::Header, depth)?;
+        Ok(hash)
     }
 
     pub(crate) fn new(limits: &DecodeLimits) -> Result<Self, DecodeError> {

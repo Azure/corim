@@ -49,12 +49,8 @@ fn envelope(payload: Option<Vec<u8>>) -> CoseSignCorim {
         payload,
         vec![
             CoseSignature::from_parts(creator, vec![], vec![1]).unwrap(),
-            CoseSignature::from_parts(
-                header("second", CoseAlgorithm::Esp384),
-                vec![],
-                vec![2],
-            )
-            .unwrap(),
+            CoseSignature::from_parts(header("second", CoseAlgorithm::Esp384), vec![], vec![2])
+                .unwrap(),
         ],
     )
     .unwrap()
@@ -107,8 +103,14 @@ fn reject_empty_signatures_wrong_slots_first_signer_mismatch_and_trailing_data()
     let Value::Tag(_, inner) = cbor::decode_exact::<Value>(&bytes).unwrap() else {
         panic!("tag");
     };
-    let Value::Array(parts) = *inner else { panic!("array") };
-    for signatures in [Value::Array(vec![]), Value::Bytes(vec![]), Value::Array(vec![Value::Null])] {
+    let Value::Array(parts) = *inner else {
+        panic!("array")
+    };
+    for signatures in [
+        Value::Array(vec![]),
+        Value::Bytes(vec![]),
+        Value::Array(vec![Value::Null]),
+    ] {
         let mut malformed = parts.clone();
         malformed[3] = signatures;
         let bytes = cbor::encode(&Value::Tag(
@@ -135,7 +137,9 @@ fn body_and_signer_bytes_are_authoritative_and_budget_is_shared() {
     let mut envelope = envelope(Some(payload()));
     let bytes = encode_multi_signed_corim(&envelope).unwrap();
     let tbs = envelope.to_be_signed(1, &[]).unwrap();
-    envelope.unprotected.push((Value::Integer(1000), Value::Null));
+    envelope
+        .unprotected
+        .push((Value::Integer(1000), Value::Null));
     assert_eq!(envelope.to_be_signed(1, &[]).unwrap(), tbs);
     let mut limits = DecodeLimits::default();
     limits.max_values = 10;
@@ -145,4 +149,151 @@ fn body_and_signer_bytes_are_authoritative_and_budget_is_shared() {
         cbor::decode_exact::<Value>(&payload()).unwrap(),
         Value::Tag(TAG_CORIM, _)
     ));
+}
+
+#[test]
+fn original_nonpreferred_header_bytes_are_not_reencoded() {
+    let mut creator = header("creator", CoseAlgorithm::Esp256);
+    // Encode key 1 with a non-preferred one-byte argument (RFC 8949 §3).
+    assert_eq!(creator[1], 1);
+    creator.insert(1, 0x18);
+    let envelope = CoseSignCorim::from_parts(
+        creator.clone(),
+        vec![],
+        Some(payload()),
+        vec![CoseSignature::from_parts(creator.clone(), vec![], vec![1]).unwrap()],
+    )
+    .unwrap();
+    assert_eq!(envelope.protected_header_bytes(), creator);
+    assert_eq!(envelope.signatures()[0].protected_header_bytes(), creator);
+    let Value::Array(tbs) =
+        cbor::decode_exact::<Value>(&envelope.to_be_signed(0, &[]).unwrap()).unwrap()
+    else {
+        panic!("array")
+    };
+    assert_eq!(tbs[1], Value::Bytes(creator.clone()));
+    assert_eq!(tbs[2], Value::Bytes(creator));
+}
+
+#[test]
+fn every_signer_window_is_checked_and_preparation_errors_win() {
+    let mut value: Value =
+        cbor::decode_exact(&encode_multi_signed_corim(&envelope(Some(payload()))).unwrap())
+            .unwrap();
+    let Value::Tag(_, inner) = &mut value else {
+        panic!("tag")
+    };
+    let Value::Array(parts) = inner.as_mut() else {
+        panic!("array")
+    };
+    let Value::Array(signers) = &mut parts[3] else {
+        panic!("signers")
+    };
+    let Value::Array(second) = &mut signers[1] else {
+        panic!("signature")
+    };
+    let expired = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Esp384)
+        .content_type(CORIM_CONTENT_TYPE)
+        .cwt_claims(CwtClaims::new("second").with_exp(NOW - 1))
+        .build();
+    second[0] = Value::Bytes(cbor::encode(&expired).unwrap());
+    let registry = ProfileRegistry::new();
+    let context = ValidationContext::new(TimeCheck::At(NOW), &registry);
+    let bytes = cbor::encode(&value).unwrap();
+    assert!(matches!(
+        document::validate(&bytes, &context),
+        Err(corim::ValidationError::Expired)
+    ));
+    let Value::Tag(_, inner) = &mut value else {
+        panic!("tag")
+    };
+    let Value::Array(parts) = inner.as_mut() else {
+        panic!("array")
+    };
+    let Value::Array(signers) = &mut parts[3] else {
+        panic!("signers")
+    };
+    let Value::Array(second) = &mut signers[1] else {
+        panic!("signature")
+    };
+    let Value::Bytes(bytes) = &mut second[0] else {
+        panic!("bytes")
+    };
+    bytes.push(0);
+    assert!(matches!(
+        document::validate(&cbor::encode(&value).unwrap(), &context),
+        Err(corim::ValidationError::Decode(
+            corim::DecodeError::TrailingData { .. }
+        ))
+    ));
+}
+
+#[test]
+fn multi_signature_builder_checks_signature_count_and_detached_tbs() {
+    let creator = ProtectedCorimHeaderMapBuilder::new(CoseAlgorithm::Esp256)
+        .content_type(CORIM_CONTENT_TYPE)
+        .cwt_claims(CwtClaims::new("creator"))
+        .build();
+    let builder = MultiSignedCorimBuilder::new(creator, payload()).unwrap();
+    assert!(builder.clone().build_with_signatures(vec![]).is_err());
+    assert!(builder.to_be_signed(1, &[]).is_err());
+    let tbs = builder.to_be_signed(0, b"aad").unwrap();
+    let bytes = builder
+        .build_detached_with_signatures(vec![vec![1]])
+        .unwrap();
+    let envelope = decode_multi_signed_corim(&bytes).unwrap();
+    assert!(envelope.is_detached());
+    assert_eq!(
+        envelope
+            .to_be_signed_detached(0, &payload(), b"aad")
+            .unwrap(),
+        tbs
+    );
+}
+
+#[test]
+fn each_known_tree_is_charged_once_against_the_aggregate_budget() {
+    fn count(value: &Value) -> usize {
+        1 + match value {
+            Value::Array(values) => values.iter().map(count).sum(),
+            Value::Map(entries) => entries
+                .iter()
+                .map(|(key, value)| count(key) + count(value))
+                .sum(),
+            Value::Tag(_, inner) => count(inner),
+            _ => 0,
+        }
+    }
+    let envelope = envelope(Some(payload()));
+    let bytes = encode_multi_signed_corim(&envelope).unwrap();
+    let mut needed = count(&cbor::decode_exact::<Value>(&bytes).unwrap());
+    needed += count(&cbor::decode_exact::<Value>(envelope.protected_header_bytes()).unwrap());
+    for signature in envelope.signatures() {
+        needed += count(&cbor::decode_exact::<Value>(signature.protected_header_bytes()).unwrap());
+    }
+    let payload = payload();
+    needed += count(&cbor::decode_exact::<Value>(&payload).unwrap());
+    let payload: cbor::value::Tagged<corim::types::corim::CorimMap> =
+        cbor::decode_exact(&payload).unwrap();
+    for tag in payload.value.tags {
+        if let corim::types::corim::ConciseTagChoice::Comid(bytes) = tag {
+            needed += count(&cbor::decode_exact::<Value>(&bytes).unwrap());
+        }
+    }
+    let registry = ProfileRegistry::new();
+    for (limit, success) in [(needed, true), (needed - 1, false)] {
+        let mut limits = DecodeLimits::default();
+        limits.max_values = limit;
+        let context = ValidationContext::new(TimeCheck::At(NOW), &registry).with_limits(limits);
+        assert_eq!(
+            document::validate(&bytes, &context).is_ok(),
+            success,
+            "budget {limit}"
+        );
+        assert_eq!(
+            document::inspect(&bytes, &limits).is_ok(),
+            success,
+            "inspection budget {limit}"
+        );
+    }
 }

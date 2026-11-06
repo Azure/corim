@@ -360,13 +360,17 @@ The library accepts these on decode; encode always uses draft-11 tags.",
 /// Dispatch on the top-level (post-peel) [`Value`] of a CoRIM document.
 fn inspect_top_value(ins: &mut Inspector<'_>, top: Value) {
     match top {
-        Value::Tag(TAG_SIGNED_CORIM, inner) => {
+        Value::Tag(
+            tag @ (TAG_SIGNED_CORIM | crate::types::tags::TAG_MULTI_SIGNED_CORIM),
+            inner,
+        ) => {
             ins.report.envelope = EnvelopeKind::Signed;
-            ins.info(
-                "$",
-                format!("recognized CBOR tag {} (signed-corim)", TAG_SIGNED_CORIM),
-            );
-            inspect_cose_sign1(ins, *inner);
+            ins.info("$", format!("recognized CBOR tag {} (signed-corim)", tag));
+            if tag == TAG_SIGNED_CORIM {
+                inspect_cose_sign1(ins, *inner);
+            } else {
+                inspect_cose_sign(ins, *inner);
+            }
         }
         Value::Tag(TAG_CORIM, inner) => {
             ins.report.envelope = EnvelopeKind::Unsigned;
@@ -438,25 +442,75 @@ fn inspect_cose_sign1(ins: &mut Inspector<'_>, v: Value) {
 
     let mut it = arr.into_iter();
     if let Some(protected) = it.next() {
-        inspect_cose_protected(ins, protected);
+        inspect_cose_protected(ins, "$.protected", protected);
     }
     if let Some(unprotected) = it.next() {
-        inspect_cose_unprotected(ins, unprotected);
+        inspect_cose_unprotected(ins, "$.unprotected", unprotected);
     }
     if let Some(payload) = it.next() {
         inspect_cose_payload(ins, payload);
     }
     if let Some(signature) = it.next() {
-        inspect_cose_signature(ins, signature);
+        inspect_cose_signature(ins, "$.signature", signature);
     }
 }
 
-fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_sign(ins: &mut Inspector<'_>, value: Value) {
+    let Value::Array(parts) = value else {
+        ins.err("$", "COSE_Sign must be a four-element array");
+        return;
+    };
+    if parts.len() != 4 {
+        ins.err("$", "COSE_Sign requires four elements");
+    }
+    let mut parts = parts.into_iter();
+    if let Some(header) = parts.next() {
+        inspect_cose_protected(ins, "$.protected", header);
+    }
+    if let Some(header) = parts.next() {
+        inspect_cose_unprotected(ins, "$.unprotected", header);
+    }
+    if let Some(payload) = parts.next() {
+        inspect_cose_payload(ins, payload);
+    }
+    match parts.next() {
+        Some(Value::Array(signatures)) if !signatures.is_empty() => {
+            for (index, signature) in signatures.into_iter().enumerate() {
+                let path = format!("$.signatures[{index}]");
+                let Value::Array(fields) = signature else {
+                    ins.err(&path, "signature entry must be an array");
+                    continue;
+                };
+                if fields.len() != 3 {
+                    ins.err(&path, "signature entry requires three elements");
+                }
+                let mut fields = fields.into_iter();
+                if let Some(header) = fields.next() {
+                    let body_hash = ins.hash_payload;
+                    inspect_cose_protected(ins, &format!("{path}.protected"), header);
+                    ins.hash_payload = body_hash;
+                }
+                if let Some(header) = fields.next() {
+                    inspect_cose_unprotected(ins, &format!("{path}.unprotected"), header);
+                }
+                if let Some(signature) = fields.next() {
+                    inspect_cose_signature(ins, &format!("{path}.signature"), signature);
+                }
+            }
+        }
+        _ => ins.err(
+            "$.signatures",
+            "COSE_Sign requires a non-empty signature array",
+        ),
+    }
+}
+
+fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
     let bytes = match v {
         Value::Bytes(b) => b,
         other => {
             ins.err_hint(
-                "$.protected",
+                path,
                 format!(
                     "protected header must be a byte string (bstr .cbor protected-corim-header-map), found {}",
                     value_kind(&other)
@@ -469,7 +523,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
 
     if bytes.is_empty() {
         ins.err(
-            "$.protected",
+            path,
             "protected header byte string is empty (must encode a non-empty CBOR map)",
         );
         return;
@@ -479,7 +533,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
         Ok(v) => v,
         Err(e) => {
             ins.err(
-                "$.protected",
+                path,
                 format!("inner CBOR of protected header is not valid: {}", e),
             );
             return;
@@ -493,21 +547,21 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
             ))
         });
     }
-    inspect_protected_header_map(ins, inner);
+    inspect_protected_header_map(ins, path, inner);
 }
 
-fn inspect_cose_unprotected(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_unprotected(ins: &mut Inspector<'_>, path: &str, v: Value) {
     match v {
         Value::Map(_) => {
             // Unprotected header is `* cose-label => cose-value`. We don't
             // type-check individual entries.
             ins.info(
-                "$.unprotected",
+                path,
                 "unprotected header is a CBOR map (contents not inspected)",
             );
         }
         other => ins.err(
-            "$.unprotected",
+            path,
             format!(
                 "unprotected header must be a CBOR map, found {}",
                 value_kind(&other)
@@ -607,17 +661,17 @@ The library accepts this on decode; encoders always emit the tag.",
     }
 }
 
-fn inspect_cose_signature(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_signature(ins: &mut Inspector<'_>, path: &str, v: Value) {
     match v {
         Value::Bytes(b) => {
             if b.is_empty() {
-                ins.err("$.signature", "signature byte string is empty");
+                ins.err(path, "signature byte string is empty");
             } else {
-                ins.info("$.signature", format!("signature is {} bytes", b.len()));
+                ins.info(path, format!("signature is {} bytes", b.len()));
             }
         }
         other => ins.err(
-            "$.signature",
+            path,
             format!(
                 "signature must be a byte string, found {}",
                 value_kind(&other)
@@ -630,12 +684,12 @@ fn inspect_cose_signature(ins: &mut Inspector<'_>, v: Value) {
 // protected-corim-header-map  (§4.2.1)
 // ===========================================================================
 
-fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
     let map = match v {
         Value::Map(m) => m,
         other => {
             ins.err(
-                "$.protected",
+                base,
                 format!(
                     "protected header inner CBOR must be a map, found {}",
                     value_kind(&other)
@@ -658,7 +712,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 Ok(k) => k,
                 Err(_) => {
                     ins.info(
-                        format!("$.protected[{n}]"),
+                        format!("{base}[{n}]"),
                         format!(
                             "integer label {n} is a valid COSE header label (value not inspected)"
                         ),
@@ -668,7 +722,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             },
             Value::Text(label) => {
                 ins.info(
-                    format!("$.protected[{label:?}]"),
+                    format!("{base}[{label:?}]"),
                     format!(
                         "text label {label:?} is a valid COSE header label (value not inspected)"
                     ),
@@ -677,7 +731,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             }
             other => {
                 ins.warn(
-                    "$.protected",
+                    base,
                     format!(
                         "invalid COSE header key ({}); RFC 9052 §1.5 requires int or tstr",
                         value_kind(other)
@@ -687,7 +741,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             }
         };
 
-        let path = format!("$.protected.{}", key);
+        let path = format!("{base}.{}", key);
 
         match key {
             COSE_HEADER_ALG => {
@@ -885,25 +939,25 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
 
     // §4.2.1 structural rules.
     if !have_alg {
-        ins.err("$.protected", "missing required key 1 (alg)");
+        ins.err(base, "missing required key 1 (alg)");
     }
     let inline_mode = have_content_type;
     let hash_envelope_mode = have_payload_preimage_ct;
     if !inline_mode && !hash_envelope_mode {
         ins.err_hint(
-            "$.protected",
+            base,
             "missing both content-type (key 3, inline mode) and payload_preimage_content_type (key 259, hash-envelope mode)",
             "draft-ietf-rats-corim-11 §4.2.1 requires exactly one of these",
         );
     } else if inline_mode && hash_envelope_mode {
         ins.warn(
-            "$.protected",
+            base,
             "both content-type (key 3) and payload_preimage_content_type (key 259) are present; pick one mode",
         );
     }
     if !have_corim_meta && !have_cwt_claims && !have_cwt_iss_flat {
         ins.err_hint(
-            "$.protected",
+            base,
             "meta-group violation: at least one of corim-meta (key 8) or CWT-Claims (key 15) must be present",
             "draft-ietf-rats-corim-11 §4.2.1 meta-group: ((corim-meta-identity, ?cwt-claims-identity) // cwt-claims-identity)",
         );

@@ -1,6 +1,6 @@
 //! Strict structural and temporal signed-document validation.
 //!
-//! Per draft-ietf-rats-corim-11 Section 4.2 and RFC 9052 Section 4.
+//! Per draft-ietf-rats-corim-12 §4.2 and RFC 9052 §4.
 //! These APIs do not authenticate signatures, certificates, or hash preimages.
 //! Use the existing decode APIs for tolerant inspection of incomplete documents.
 //!
@@ -31,7 +31,7 @@ use alloc::collections::BTreeSet;
 
 /// Decode and validate a complete signed document with an explicit clock.
 ///
-/// Per draft-ietf-rats-corim-11 Section 4.2, RFC 9052 Section 4 and RFC 8392
+/// Per draft-ietf-rats-corim-12 §4.2, RFC 9052 §4 and RFC 8392
 /// Sections 3, 4.4 and 4.5. Checks COSE slot shapes, exact media type, header
 /// time windows and CWT/metadata agreement, then validates the inline CoRIM.
 /// Protected and unprotected label sets must be disjoint (RFC 9052 Section 3).
@@ -145,19 +145,9 @@ pub(crate) fn validate_parsed_signed(
     let Value::Bytes(signature) = signature else {
         return Err(invalid("COSE signature must be bstr"));
     };
-    let header = budget.decode_value_exact(&protected_header_bytes)?;
-    cbor::map_keys::check_header(&header)?;
+    let (header, prepared_metadata) = prepare_header(&protected_header_bytes, budget)?;
     let Value::Map(fields) = &header else {
         return Err(invalid("protected header must be a map"));
-    };
-    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
-    let prepared_metadata = match field(fields, COSE_HEADER_CORIM_META) {
-        Some(Value::Bytes(bytes)) => {
-            let value = budget.decode_value_exact(bytes)?;
-            cbor::map_keys::check(&value)?;
-            Some(value)
-        }
-        _ => None,
     };
     // Declared hash payloads remain opaque; every known CBOR body is prepared
     // before semantic/time checks, then consumed without a second parse.
@@ -179,9 +169,75 @@ pub(crate) fn validate_parsed_signed(
         let value = budget.decode_value_exact(selected)?;
         Some(crate::validate::prepare_parsed_corim(value, budget)?)
     };
-    header_labels(&unprotected)?;
+    let (protected, used_flat_cwt) = validate_header(
+        header,
+        prepared_metadata,
+        &unprotected,
+        now_epoch_secs,
+        budget,
+    )?;
+    if protected.is_hash_envelope() {
+        return Err(invalid(
+            "hash-envelope requires an authenticated preimage; digest is not an inline CoRIM",
+        ));
+    }
+    let prepared_payload =
+        prepared_payload.ok_or_else(|| invalid("missing prepared inline payload"))?;
+    let validated = crate::validate::validate_prepared_corim(prepared_payload, now_epoch_secs)?;
+    validated.corim.valid().map_err(ValidationError::Invalid)?;
+    if validated.coswid_opaque_count != 0 {
+        return Err(invalid(
+            "strict validation cannot validate opaque CoSWID content",
+        ));
+    }
+    let signed = CoseSign1Corim::from_decoded_parts(
+        protected_header_bytes,
+        protected,
+        unprotected,
+        payload,
+        signature,
+    );
+    Ok(ValidatedSignedDocument {
+        envelope: signed,
+        payload: validated,
+        used_flat_cwt,
+    })
+}
+
+pub(crate) fn prepare_header(
+    bytes: &[u8],
+    budget: &mut cbor::DecodeBudget,
+) -> Result<(Value, Option<Value>), crate::DecodeError> {
+    let header = budget.decode_value_exact(bytes)?;
+    cbor::map_keys::check_header(&header)?;
+    let metadata = match &header {
+        Value::Map(fields) => match field(fields, COSE_HEADER_CORIM_META) {
+            Some(Value::Bytes(bytes)) => {
+                let metadata = budget.decode_value_exact(bytes)?;
+                cbor::map_keys::check(&metadata)?;
+                Some(metadata)
+            }
+            _ => None,
+        },
+        _ => None,
+    };
+    Ok((header, metadata))
+}
+
+pub(crate) fn validate_header(
+    header: Value,
+    prepared_metadata: Option<Value>,
+    unprotected: &[(Value, Value)],
+    now_epoch_secs: Option<i64>,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<(ProtectedCorimHeaderMap, bool), ValidationError> {
+    let Value::Map(fields) = &header else {
+        return Err(invalid("protected header must be a map"));
+    };
+    let metadata_present = field(fields, COSE_HEADER_CORIM_META).is_some();
+    header_labels(unprotected)?;
     header_labels(fields)?;
-    disjoint_header_labels(fields, &unprotected)?;
+    disjoint_header_labels(fields, unprotected)?;
     let window = original_claims(fields)?;
     check_window(window.not_before, window.expires, now_epoch_secs, true)?;
     let mut nested_error = None;
@@ -236,32 +292,7 @@ pub(crate) fn validate_parsed_signed(
         }
         check_window(not_before, not_after, now_epoch_secs, false)?;
     }
-    if protected.is_hash_envelope() {
-        return Err(invalid(
-            "hash-envelope requires an authenticated preimage; digest is not an inline CoRIM",
-        ));
-    }
-    let prepared_payload =
-        prepared_payload.ok_or_else(|| invalid("missing prepared inline payload"))?;
-    let validated = crate::validate::validate_prepared_corim(prepared_payload, now_epoch_secs)?;
-    validated.corim.valid().map_err(ValidationError::Invalid)?;
-    if validated.coswid_opaque_count != 0 {
-        return Err(invalid(
-            "strict validation cannot validate opaque CoSWID content",
-        ));
-    }
-    let signed = CoseSign1Corim::from_decoded_parts(
-        protected_header_bytes,
-        protected,
-        unprotected,
-        payload,
-        signature,
-    );
-    Ok(ValidatedSignedDocument {
-        envelope: signed,
-        payload: validated,
-        used_flat_cwt: window.used_flat,
-    })
+    Ok((protected, window.used_flat))
 }
 
 fn invalid(message: &str) -> ValidationError {

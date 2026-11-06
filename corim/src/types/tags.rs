@@ -25,6 +25,9 @@ pub const TAG_EPOCH_TIME: u64 = 1;
 /// `signed-corim` = `#6.18(COSE-Sign1-corim)`.
 pub const TAG_SIGNED_CORIM: u64 = 18;
 
+/// `signed-corim` = `#6.98(COSE-Sign-corim)`, draft-ietf-rats-corim-12 §4.2.
+pub const TAG_MULTI_SIGNED_CORIM: u64 = 98;
+
 /// `uri` = `#6.32(tstr)` (RFC 8949 §3.4.5.3 and RFC 8610 Appendix D).
 pub const TAG_URI: u64 = 32;
 
