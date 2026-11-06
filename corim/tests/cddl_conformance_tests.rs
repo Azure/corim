@@ -655,6 +655,33 @@ fn tag_identity_without_version() {
     });
 }
 
+#[test]
+fn tag_identity_absence_is_not_a_protocol_default_zero() {
+    let absent = TagIdentity {
+        tag_id: TagIdChoice::Text("draft12".into()),
+        tag_version: None,
+    };
+    let explicit = TagIdentity {
+        tag_version: Some(0),
+        ..absent.clone()
+    };
+    let absent_bytes = cbor::encode(&absent).unwrap();
+    let explicit_bytes = cbor::encode(&explicit).unwrap();
+    assert_ne!(absent_bytes, explicit_bytes);
+    assert_eq!(
+        cbor::decode_exact::<TagIdentity>(&absent_bytes)
+            .unwrap()
+            .tag_version,
+        None
+    );
+    assert_eq!(
+        cbor::decode_exact::<TagIdentity>(&explicit_bytes)
+            .unwrap()
+            .tag_version,
+        Some(0)
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════════════════
 // §5.1.3 — linked-tag-map  (supplements / replaces)
 // ═══════════════════════════════════════════════════════════════════════════

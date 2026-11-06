@@ -8,6 +8,34 @@ versions.
 
 ## [Unreleased]
 
+### Changed
+
+- Upgrade the base wire model to draft-ietf-rats-corim-12. Add COSE_Sign
+  multi-signature envelopes (tag 98) alongside unchanged Sign1-specific APIs.
+  Generic document outcomes now expose `SignedEnvelope::Sign1` / `Sign`;
+  callers must handle both variants.
+- Replace editor-draft `number` / `NumberMatcher` with `integer` /
+  `IntegerMatcher` at key 17 and `float` / `FloatMatcher` at key 20. Numeric
+  domains never cross-match; mixed-domain wire data at key 17 is rejected.
+  Reject NaN, infinite float-range bounds, all-null ranges and reversed bounds,
+  including the existing integer-range field. Range/set matchers are restricted
+  to conditions rather than assertions.
+- Apply attribute-path containment for measurement matching, including missing
+  flag attributes and unknown-extension comparison rules. Preserve optional
+  tag-version absence rather than assigning a draft-12 protocol default.
+- Validate all multi-signature headers/windows with shared resource budgets,
+  exact framing and original protected bytes. First-signature creator identity
+  and algorithm agree with the body; no missing-header inheritance is assumed.
+  Add the external-signing multi-signature builder and RFC 9052 `Signature` TBS.
+  Cryptographic verification and creator-authority policy remain caller-owned.
+- CLI validation, diagnostics, EDN, readable/lossless conversion, generation,
+  baseline comparison and extraction support both signed formats. Reports and
+  comparisons include secondary signer headers; `extract --header
+  --signature-index N` selects an indexed signature header. Readable commented
+  authoring and lossless raw-envelope preservation retain separate contracts.
+  CLI `sign prepare/finalize` continues to create Sign1 envelopes; multi-signature
+  signing is available through the library builder.
+
 ## [0.2.1] — 2026-10-23
 
 **Crates:** `corim` and `corim-macros` v0.2.1. `corim-cli` follows the

@@ -6,21 +6,21 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 - The implementation adds support for a new specification
 - An RFC errata affects our implementation
 
-**Last reviewed**: September 29, 2026
+**Last reviewed**: November 6, 2026
 
 ---
 
 ## Primary Specification
 
-### draft-ietf-rats-corim-11 — Concise Reference Integrity Manifests (CoRIM)
+### draft-ietf-rats-corim-12 — Concise Reference Integrity Manifests (CoRIM)
 
 | | |
 |-|-|
 | **Status** | Internet-Draft (not yet RFC) |
-| **Version implemented** | **-11** |
-| **URL** | https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html |
+| **Version implemented** | **-12** (wire model and selected appraisal operations) |
+| **URL** | https://www.ietf.org/archive/id/draft-ietf-rats-corim-12.html |
 | **Datatracker** | https://datatracker.ietf.org/doc/draft-ietf-rats-corim/ |
-| **CDDL source** | `cddl/corim.cddl` (local copy from -11) |
+| **CDDL source** | `cddl/corim.cddl` (draft-12 base with existing profile extensions) |
 
 #### Sections Implemented
 
@@ -32,7 +32,9 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §4.1.4 | `profile` (wire format) | ✅ Full | `types/corim.rs` → `ProfileChoice` |
 | §4.1.4 | Profile extension framework | ✅ Full | `profile.rs` → `Profile`, `ProfileRegistry`, `MatchContext` |
 | §4.1.5 | `entity-map` (CoRIM) | ✅ Full | `types/common.rs` → `EntityMap` |
-| §4.2 | Signed CoRIM (`#6.18`) | ✅ Full (no crypto) | `types/signed.rs` → `CoseSign1Corim`, `SignedCorimBuilder` |
+| §4.2.1 | Single-signature CoRIM (`#6.18`) | ✅ No crypto | `types/signed/envelope.rs`, `builder.rs` |
+| §4.2.3 | Multi-signature CoRIM (`#6.98`) | ✅ No crypto | `types/signed/multi.rs` → `CoseSignCorim`, `MultiSignedCorimBuilder` |
+| §5.1.4.9 | Primitive matchers (keys 16–20) | ✅ Integer/float domains separate; condition-only ranges/sets | `types/matcher.rs`, `types/measurement.rs` |
 | §5 | `concise-mid-tag` (CoMID) | ✅ Full | `types/comid.rs` → `ComidTag` |
 | §5.1.1 | `tag-identity-map` | ✅ Full | `types/common.rs` → `TagIdentity` |
 | §5.1.2 | CoMID entities | ✅ Full | `types/common.rs` → `EntityMap` |
@@ -56,17 +58,18 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | §7.3 | `validity-map` | ✅ Full | `types/common.rs` → `ValidityMap` |
 | §7.4 | UUID size constraints | ✅ Full | `types/tags.rs` → `UUID_SIZE` |
 | §7.5 | UEID size constraints (7–33 bytes) | ✅ Full | `types/common.rs` → `InstanceIdChoice::Ueid` |
-| §8.2 | Appraisal / Validation | ✅ Partial | `validate.rs` |
-| §8.2.3 | Input validation | ✅ Full | `validate.rs` → `decode_and_validate` |
-| §8.2.3 | Profile-aware input validation | ✅ Full | `validate.rs` → `decode_and_validate_with_registry` |
-| §8.2.4.2 | Reference value matching | ✅ Full | `validate.rs` → `match_reference_values` |
-| §8.2.4.2 | Profile-aware reference value matching | ✅ Full | `validate.rs` → `match_reference_values_with_profile` |
-| §8.2.4.3.2 | CES application | ✅ Full | `validate.rs` → `apply_endorsement_series` |
-| §8.2.4.3.2 | Profile-aware CES application | ✅ Full | `validate.rs` → `apply_endorsement_series_with_profile` |
-| §8.2.4.4.1 | Environment matching | ✅ Full | `validate.rs` → `environment_matches` |
-| §8.2.4.4.5 | Measurement matching | ✅ Full | `validate.rs` → `measurement_matches` |
-| §8.2.4.4.5.3 | SVN comparison | ✅ Full | `validate.rs` → `svn_matches` |
-| §8.2.4.4.5.4 | Digest comparison | ✅ Full | `validate.rs` → `digests_match` |
+| §8.3 | Appraisal / Validation | ✅ Partial; not a full ACS/graph engine | `validate.rs` |
+| §8.3.3 | Input validation | ✅ Structural/temporal; no crypto or remote fetch | `document.rs`, `validate.rs` |
+| §8.3.3 | Profile-aware input validation | ✅ Registered profile checks | `validate.rs` → `decode_and_validate_with_registry` |
+| §8.3.4.2 | Reference value matching | ✅ Full | `validate.rs` → `match_reference_values` |
+| §8.3.4.2 | Profile-aware reference value matching | ✅ Full | `validate.rs` → `match_reference_values_with_profile` |
+| §8.3.4.3.2 | CES application | ✅ Partial, existing direct-evidence API | `validate.rs` → `apply_endorsement_series` |
+| §8.3.4.3.2 | Profile-aware CES application | ✅ Partial, existing direct-evidence API | `validate.rs` → `apply_endorsement_series_with_profile` |
+| §8.3.4.4.1 | Environment matching | ✅ Full | `validate.rs` → `environment_matches` |
+| §8.3.4.4.5 | Measurement matching | ✅ Attribute containment | `validate.rs` → `measurement_matches` |
+| §8.3.4.4.5.3 | SVN comparison | ✅ Full | `validate.rs` → `svn_matches` |
+| §8.3.4.4.5.4 | Digest comparison | ✅ Full | `validate.rs` → `digests_match` |
+| §8.3.4.4.5.11–12 | Integer/float matcher comparison | ✅ Strict domain and bound validation | `types/matcher.rs` |
 | §11 | IANA registries / constants | ✅ Full | `types/tags.rs` (all constants) |
 
 #### Sections Not Implemented
@@ -74,19 +77,34 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 | Section | Topic | Reason |
 |---------|-------|--------|
 | CDDL `$$*-extension` sockets | Extension points | Unknown keys are preserved in `extra_entries`; registered profiles can validate and appraise them (see `profile.rs`). |
+| §4.3.1 | CMW collection transport | No collection envelope API; individual CoRIM documents remain supported. |
+| §8.3 | Complete reference-verifier ACS/DMG/TDG engine | Existing matching/CES operations are not a complete graph-processing implementation. |
+| §8.3.3 | Signature authentication, signer authority, remote locator retrieval | Caller-owned crypto/trust/retrieval policy. Authenticate at least the creator before accepting a multi-signature CoRIM; check fetched locator thumbprints before using content. |
+
+#### Draft-12 migration decisions
+
+- Generic document results use `SignedEnvelope::{Sign1, Sign}`; Sign1-specific
+  APIs remain unchanged.
+- COSE_Sign follows the complete-map CDDL, without inherited missing headers.
+  The first signature agrees with the body's creator identity and algorithm.
+- Mixed editor-draft numeric codepoint 17 is replaced by integer 17 / float 20.
+  Invalid legacy forms reject instead of silently changing their signed bytes.
+- `tag-version` has no protocol default. The explicitly named legacy
+  `tag_version_or_default()` convenience remains available to callers, but
+  parsing and comparisons retain absent-versus-zero identity.
 
 #### ⚠️ Draft Tracking Notes
 
 This is an **Internet-Draft**, not a finalized RFC. Changes to watch for:
 
-- **CDDL changes**: Any new keys, renamed fields, or restructured maps. Our `cddl/corim.cddl` is a snapshot from -11. Diff against new revisions.
+- **CDDL changes**: Any new keys, renamed fields, or restructured maps. Our `cddl/corim.cddl` tracks -12 with existing profile extensions. Diff against new revisions.
 - **IANA registry updates**: New tag numbers, role values, or version scheme values may be added. Check `types/tags.rs` constants.
 - **Appraisal algorithm changes**: §8.2 may be refined. Our `validate.rs`
-  implements the -11 semantics.
+  implements selected -12 semantics; full reference-verifier processing is not claimed.
 - **Signed CoRIM changes**: §4.2 COSE structure may evolve. Our signed types
-  implement the -11 semantics.
+  implement the -12 semantics without cryptographic verification.
 
-**How to check for updates**: Visit the [datatracker page](https://datatracker.ietf.org/doc/draft-ietf-rats-corim/) and compare the latest revision number against `-11`.
+**How to check for updates**: Visit the [datatracker page](https://datatracker.ietf.org/doc/draft-ietf-rats-corim/) and compare the latest revision number against `-12`.
 
 ---
 
@@ -208,10 +226,10 @@ wire elements beyond `psa-cert-num`.
 | Feature | Status | Impact |
 |---------|--------|--------|
 | Indefinite-length encoding | ❌ Rejected on decode | CoRIM CDDL uses definite-length only |
-| Float encode precision | Always f64 | CoRIM rarely uses floats (only CWT claims) |
+| Float encode precision | Always f64 | CWT NumericDates and draft-12 float matchers retain their numeric domain |
 | Simple values >23 (except false/true/null) | ❌ Rejected | Not used in CoRIM |
 | CBOR sequences | ❌ Not supported | CoRIM always has single tagged wrapper |
-| Maximum nesting depth | Stack-limited (~100) | CoRIM is typically 5–10 levels |
+| Maximum nesting depth | Bounded at 64 | Shared byte, collection and aggregate-value budgets also apply |
 
 ---
 

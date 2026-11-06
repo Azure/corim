@@ -43,6 +43,17 @@ COSE-Sign1-corim = [
   signature: bstr,
 ]
 hash-envelope-digest = bstr
+COSE-Sign-corim = [
+  protected: bstr .cbor protected-corim-header-map,
+  unprotected: unprotected-corim-header-map,
+  payload: bstr .cbor tagged-unsigned-corim-map / hash-envelope-digest / nil,
+  signature: [+ signature-structure],
+]
+signature-structure = [
+  protected: bstr .cbor protected-corim-header-map,
+  unprotected: unprotected-corim-header-map,
+  signature: bstr,
+]
 $profile-type-choice /= uri / tagged-oid-type
 cwt-claims = {
   &(iss: 1) => tstr,
@@ -73,7 +84,7 @@ meta-group = ((
       ) // cwt-claims-identity)
 corim-meta-identity = (&(corim-meta: 8) => bstr .cbor corim-meta-map)
 cwt-claims-identity = (&(CWT-Claims: 15) => cwt-claims)
-signed-corim = #6.18(COSE-Sign1-corim)
+signed-corim = #6.18(COSE-Sign1-corim) / #6.98(COSE-Sign-corim)
 tagged-concise-swid-tag = #6.505(bytes .cbor coswid.concise-swid-tag)
 tagged-concise-mid-tag = #6.506(bytes .cbor concise-mid-tag)
 tagged-concise-tl-tag = #6.508(bytes .cbor concise-tl-tag)
@@ -250,18 +261,22 @@ measurement-values-map = non-empty<{
     ? &(integrity-registers: 14) => integrity-registers,
     ? &(int-range: 15) => int-range-type-choice,
     ? &(bool: 16) => bool-matcher,
-    ? &(number: 17) => number-matcher,
+    ? &(integer: 17) => integer-matcher,
     ? &(text: 18) => text-matcher,
     ? &(bytes: 19) => bytes-matcher,
+    ? &(float: 20) => float-matcher,
     * $$measurement-values-map-extension,
 }>
-  ; CoRIM editor's draft (2026-10-07), section 5.1.4.9.
+  ; draft-ietf-rats-corim-12, section 5.1.4.9.
   bool-matcher = bool
-  number-matcher = number / tagged-number-range / tagged-number-set
+  integer-matcher = int / tagged-integer-range / tagged-integer-set
+  float-matcher = float / tagged-float-range / tagged-float-set
   text-matcher = text / tagged-text-set
   bytes-matcher = bytes / tagged-bytes-set
-  tagged-number-range = #6.565([number / null, number / null])
-  tagged-number-set = #6.566([2* number])
+  tagged-integer-range = #6.565([int / null, int / null])
+  tagged-float-range = #6.565([float / null, float / null])
+  tagged-integer-set = #6.566([2* int])
+  tagged-float-set = #6.566([2* float])
   tagged-text-set = #6.566([2* text])
   tagged-bytes-set = #6.566([2* bytes])
 ; Arm PSA profile (tag:arm.com,2025:psa#1.0.0) measurement-values extension.
@@ -296,7 +311,7 @@ tag-identity-map = {
   ? &(tag-version: 1) => tag-version-type,
 }
 $tag-rel-type-choice /= &(supplements: 0) / &(replaces: 1)
-tag-version-type = uint .default 0
+tag-version-type = uint
 tagged-bytes = #6.560(bytes)
 triples-map = non-empty<{
     ? &(reference-triples: 0) => [+ reference-triple-record],
