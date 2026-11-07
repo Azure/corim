@@ -92,6 +92,11 @@ This document tracks all RFCs and Internet-Drafts referenced by the `corim` crat
 - `tag-version` has no protocol default. The explicitly named legacy
   `tag_version_or_default()` convenience remains available to callers, but
   parsing and comparisons retain absent-versus-zero identity.
+- `FlagsMap` stores typed `Flag` labels and retained integer/text extension
+  values. Known keys remain booleans; unrecognized condition paths fail closed.
+  First-party profile comparators certify all required attributes, not only
+  their recognized extensions. Empty CES conditions/additions are rejected.
+  Multi-signature diagnostics share the strict cross-header relationship rules.
 
 #### ⚠️ Draft Tracking Notes
 

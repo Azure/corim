@@ -14,6 +14,11 @@ versions.
   multi-signature envelopes (tag 98) alongside unchanged Sign1-specific APIs.
   Generic document outcomes now expose `SignedEnvelope::Sign1` / `Sign`;
   callers must handle both variants.
+- Replace the growing `FlagsMap` struct with a typed `Flag`-keyed map and
+  `get`/`insert`/`remove`/`iter` accessors. Preserve all extension flag paths
+  and reject unknown required flags in core/first-party comparisons instead of
+  allowing them to disappear during decoding. Known wire encodings are unchanged.
+  Rust field/literal construction must migrate to the map API.
 - Replace editor-draft `number` / `NumberMatcher` with `integer` /
   `IntegerMatcher` at key 17 and `float` / `FloatMatcher` at key 20. Numeric
   domains never cross-match; mixed-domain wire data at key 17 is rejected.

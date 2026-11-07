@@ -166,6 +166,19 @@ JSON uses `integer` / `float` keys and matching `integer-range`,
 `integer-set`, `float-range`, `float-set` wrappers. Existing `$comment` and
 `"//"` annotations remain supported. Lossless JSON remains unchanged.
 
+### Typed operational flags
+
+`FlagsMap` is now a private typed-key map rather than an eleven-field struct.
+Use `FlagsMap::default()` and `insert(Flag::IsSecure, Value::Bool(true))`,
+then read through `get(&Flag::IsSecure)` or iterate all entries with `iter()`.
+Known flags require boolean values; integer and text extension labels retain
+their original CBOR values. Reserved integer aliases canonicalize to the named
+flag, while text `"1"` stays distinct from integer key 1.
+Unknown condition flag paths fail closed in core/first-party appraisal unless
+a profile explicitly supplies their comparison algorithm. Extra assertion
+flags are allowed. Known-field wire encodings and readable JSON names remain
+unchanged; Rust callers using field assignments or literals must migrate.
+
 The crate supports creating and parsing signed CoRIM documents (`#6.18` /
 `COSE_Sign1-corim`) without any cryptographic dependencies. The caller
 performs signature operations externally.
