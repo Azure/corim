@@ -119,6 +119,7 @@ impl Flag {
 ///
 /// Known flags require boolean values; unknown values survive decode/encode
 /// but require a profile comparator before they can satisfy a condition.
+/// Ambiguous text labels require lossless JSON, not readable serialization.
 #[derive(Clone, Debug, PartialEq, Default)]
 pub struct FlagsMap(BTreeMap<Flag, Value>);
 
@@ -165,6 +166,22 @@ impl Validate for FlagsMap {
 impl Serialize for FlagsMap {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         self.valid().map_err(serde::ser::Error::custom)?;
+        if serializer.is_human_readable()
+            && self.0.keys().any(|flag| match flag {
+                Flag::Text(text) => {
+                    text.parse::<i64>().is_ok()
+                        || text.strip_prefix("is-").is_some_and(|name| {
+                            (FLAG_KEY_IS_CONFIGURED..=FLAG_KEY_IS_RUNTIME_UPDATABLE)
+                                .any(|key| Flag::from_int(key).name() == Some(name))
+                        })
+                }
+                _ => false,
+            })
+        {
+            return Err(serde::ser::Error::custom(
+                "ambiguous text flag label cannot be represented in readable JSON; use convert --lossless",
+            ));
+        }
         Value::Map(
             self.0
                 .iter()

@@ -75,28 +75,56 @@ fn assert_value_round_trip(value: &Value) {
 fn text_flag_labels_require_lossless_conversion_and_survive_generation() {
     use corim::types::{Flag, FlagsMap, MeasurementMap, MeasurementValuesMap};
     let mut flags = FlagsMap::default();
-    flags.insert(Flag::Text("1".into()), Value::Bool(true)).unwrap();
+    flags
+        .insert(Flag::Text("1".into()), Value::Bool(true))
+        .unwrap();
     let mut values = MeasurementValuesMap::default();
     values.flags = Some(flags);
-    let comid = corim::builder::ComidBuilder::new(corim::types::TagIdChoice::Text("text-flag".into()))
-        .add_reference_triple(corim::types::ReferenceTriple::new(
-            corim::types::EnvironmentMap::for_class("vendor", "model"),
-            vec![MeasurementMap { mkey: None, mval: values, authorized_by: None }],
-        )).build().unwrap();
+    let comid =
+        corim::builder::ComidBuilder::new(corim::types::TagIdChoice::Text("text-flag".into()))
+            .add_reference_triple(corim::types::ReferenceTriple::new(
+                corim::types::EnvironmentMap::for_class("vendor", "model"),
+                vec![MeasurementMap {
+                    mkey: None,
+                    mval: values,
+                    authorized_by: None,
+                }],
+            ))
+            .build()
+            .unwrap();
     let bytes = corim::builder::CorimBuilder::new(corim::types::CorimId::Text("text-flag".into()))
-        .add_comid_tag(comid).unwrap().build_bytes().unwrap();
+        .add_comid_tag(comid)
+        .unwrap()
+        .build_bytes()
+        .unwrap();
     let mut files = Files::new();
     let input = files.path("cbor");
     let json = files.path("json");
     let output = files.path("rebuilt.cbor");
     std::fs::write(&input, &bytes).unwrap();
-    let readable = Command::new(bin()).arg("convert").arg(&input).output().unwrap();
+    let readable = Command::new(bin())
+        .arg("convert")
+        .arg(&input)
+        .output()
+        .unwrap();
     assert!(!readable.status.success());
     assert!(readable.stdout.is_empty());
-    assert!(String::from_utf8(readable.stderr).unwrap().contains("--lossless"));
+    assert!(String::from_utf8(readable.stderr)
+        .unwrap()
+        .contains("--lossless"));
     std::fs::write(&json, convert(&bytes)).unwrap();
-    let generated = Command::new(bin()).arg("generate").arg(&json).arg("-o").arg(&output).output().unwrap();
-    assert!(generated.status.success(), "{}", String::from_utf8_lossy(&generated.stderr));
+    let generated = Command::new(bin())
+        .arg("generate")
+        .arg(&json)
+        .arg("-o")
+        .arg(&output)
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
     assert_eq!(std::fs::read(output).unwrap(), bytes);
 }
 
