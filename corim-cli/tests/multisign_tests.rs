@@ -219,33 +219,68 @@ fn diagnose_reports_cross_header_mismatches_and_keeps_inspecting_signatures() {
     const SHA_256: i64 = -16;
     let files = Files::new();
     let input = files.path("input.cbor");
-    for case in 0..3 {
+    for case in 0..4 {
         let mut value: Value = cbor::decode_exact(&envelope("second")).unwrap();
-        let Value::Tag(_, inner) = &mut value else { panic!("tag") };
-        let Value::Array(parts) = inner.as_mut() else { panic!("array") };
+        let Value::Tag(_, inner) = &mut value else {
+            panic!("tag")
+        };
+        let Value::Array(parts) = inner.as_mut() else {
+            panic!("array")
+        };
         match case {
-            0 => parts[0] = Value::Bytes(cbor::encode(&header("other", CoseAlgorithm::Esp256)).unwrap()),
-            1 => parts[0] = Value::Bytes(cbor::encode(&header("creator", CoseAlgorithm::Esp384)).unwrap()),
-            _ => {
+            0 => {
+                parts[0] =
+                    Value::Bytes(cbor::encode(&header("other", CoseAlgorithm::Esp256)).unwrap())
+            }
+            1 => {
+                parts[0] =
+                    Value::Bytes(cbor::encode(&header("creator", CoseAlgorithm::Esp384)).unwrap())
+            }
+            2 => {
                 let mut hash = header("second", CoseAlgorithm::Esp384);
                 hash.content_type = None;
                 hash.payload_hash_alg = Some(SHA_256);
                 hash.payload_preimage_content_type = Some(CORIM_CONTENT_TYPE.into());
-                let Value::Array(signers) = &mut parts[3] else { panic!("signers") };
-                let Value::Array(second) = &mut signers[1] else { panic!("second") };
+                let Value::Array(signers) = &mut parts[3] else {
+                    panic!("signers")
+                };
+                let Value::Array(second) = &mut signers[1] else {
+                    panic!("second")
+                };
                 second[0] = Value::Bytes(cbor::encode(&hash).unwrap());
             }
+            _ => {
+                let mut map: Value =
+                    cbor::value::to_value(&header("other", CoseAlgorithm::Esp256)).unwrap();
+                let Value::Map(fields) = &mut map else {
+                    panic!("header")
+                };
+                fields
+                    .retain(|(key, _)| *key != Value::Integer(i128::from(COSE_HEADER_CWT_CLAIMS)));
+                fields.push((
+                    Value::Integer(i128::from(CWT_CLAIM_ISS)),
+                    Value::Text("other".into()),
+                ));
+                parts[0] = Value::Bytes(cbor::encode(&map).unwrap());
+            }
         }
-        let Value::Array(signers) = &mut parts[3] else { panic!("signers") };
+        let Value::Array(signers) = &mut parts[3] else {
+            panic!("signers")
+        };
         signers.push(Value::Array(vec![
             Value::Bytes(cbor::encode(&header("third", CoseAlgorithm::Esp256)).unwrap()),
-            Value::Map(vec![]), Value::Null,
+            Value::Map(vec![]),
+            Value::Null,
         ]));
         std::fs::write(&input, cbor::encode(&value).unwrap()).unwrap();
         let output = run(&input, &["validate", "--diagnose"]);
         assert_eq!(output.status.code(), Some(2));
         let text = String::from_utf8(output.stdout).unwrap();
-        let relationship = if case == 2 { "payload modes disagree" } else { "first signer must agree" };
+        let relationship = if case == 2 {
+            "payload modes disagree"
+        } else {
+            "first signer must agree"
+        };
         assert!(text.contains(relationship), "{text}");
         assert!(text.contains("$.signatures[2].signature"), "{text}");
     }

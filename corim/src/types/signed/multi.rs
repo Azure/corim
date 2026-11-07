@@ -478,14 +478,9 @@ fn finish(
             budget,
         )?;
         used_flat |= flat;
-        if header.is_hash_envelope() != protected.is_hash_envelope() {
-            return Err(invalid("body and signer payload modes disagree"));
-        }
-        if index == 0 && (header.alg != protected.alg || issuer(&header) != issuer(&protected)) {
-            return Err(invalid(
-                "first signer must agree with body creator algorithm and metadata",
-            ));
-        }
+        HeaderIdentity::from_header(&header)
+            .check_against(&HeaderIdentity::from_header(&protected), index)
+            .map_err(invalid)?;
         signatures.push(CoseSignature {
             protected_bytes: signature.bytes,
             protected: header,
@@ -516,6 +511,42 @@ fn issuer(header: &ProtectedCorimHeaderMap) -> Option<&str> {
                 .as_ref()
                 .map(|meta| meta.signer.signer_name.as_str())
         })
+}
+
+#[derive(Default)]
+pub(crate) struct HeaderIdentity {
+    pub alg: Option<i64>,
+    pub cwt_issuer: Option<String>,
+    pub flat_issuer: Option<String>,
+    pub metadata_issuer: Option<String>,
+    pub hash_payload: bool,
+}
+
+impl HeaderIdentity {
+    fn from_header(header: &ProtectedCorimHeaderMap) -> Self {
+        Self {
+            alg: Some(header.alg.to_i64()),
+            cwt_issuer: issuer(header).map(ToOwned::to_owned),
+            flat_issuer: None,
+            metadata_issuer: None,
+            hash_payload: header.is_hash_envelope(),
+        }
+    }
+    fn issuer(&self) -> Option<&str> {
+        self.cwt_issuer
+            .as_deref()
+            .or(self.flat_issuer.as_deref())
+            .or(self.metadata_issuer.as_deref())
+    }
+    pub(crate) fn check_against(&self, body: &Self, index: usize) -> Result<(), &'static str> {
+        if self.hash_payload != body.hash_payload {
+            return Err("body and signer payload modes disagree");
+        }
+        if index == 0 && (self.alg != body.alg || self.issuer() != body.issuer()) {
+            return Err("first signer must agree with body creator algorithm and metadata");
+        }
+        Ok(())
+    }
 }
 
 pub(crate) fn validate_parsed_multi(

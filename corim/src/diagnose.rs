@@ -464,9 +464,9 @@ fn inspect_cose_sign(ins: &mut Inspector<'_>, value: Value) {
         ins.err("$", "COSE_Sign requires four elements");
     }
     let mut parts = parts.into_iter();
-    if let Some(header) = parts.next() {
-        inspect_cose_protected(ins, "$.protected", header);
-    }
+    let body_header = parts
+        .next()
+        .and_then(|header| inspect_cose_protected(ins, "$.protected", header));
     if let Some(header) = parts.next() {
         inspect_cose_unprotected(ins, "$.unprotected", header);
     }
@@ -487,8 +487,13 @@ fn inspect_cose_sign(ins: &mut Inspector<'_>, value: Value) {
                 let mut fields = fields.into_iter();
                 if let Some(header) = fields.next() {
                     let body_hash = ins.hash_payload;
-                    inspect_cose_protected(ins, &format!("{path}.protected"), header);
+                    let signer = inspect_cose_protected(ins, &format!("{path}.protected"), header);
                     ins.hash_payload = body_hash;
+                    if let (Some(body), Some(signer)) = (&body_header, signer) {
+                        if let Err(error) = signer.check_against(body, index) {
+                            ins.err(&path, error);
+                        }
+                    }
                 }
                 if let Some(header) = fields.next() {
                     inspect_cose_unprotected(ins, &format!("{path}.unprotected"), header);
@@ -505,7 +510,11 @@ fn inspect_cose_sign(ins: &mut Inspector<'_>, value: Value) {
     }
 }
 
-fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
+fn inspect_cose_protected(
+    ins: &mut Inspector<'_>,
+    path: &str,
+    v: Value,
+) -> Option<crate::types::signed::multi::HeaderIdentity> {
     let bytes = match v {
         Value::Bytes(b) => b,
         other => {
@@ -517,7 +526,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
                 ),
                 "RFC 9052 §4: protected MUST be `bstr .cbor header_map`",
             );
-            return;
+            return None;
         }
     };
 
@@ -526,7 +535,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
             path,
             "protected header byte string is empty (must encode a non-empty CBOR map)",
         );
-        return;
+        return None;
     }
 
     let inner: Value = match ins.budget.decode_value_exact(&bytes) {
@@ -536,7 +545,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
                 path,
                 format!("inner CBOR of protected header is not valid: {}", e),
             );
-            return;
+            return None;
         }
     };
 
@@ -547,7 +556,7 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, path: &str, v: Value) {
             ))
         });
     }
-    inspect_protected_header_map(ins, path, inner);
+    inspect_protected_header_map(ins, path, inner)
 }
 
 fn inspect_cose_unprotected(ins: &mut Inspector<'_>, path: &str, v: Value) {
@@ -684,7 +693,11 @@ fn inspect_cose_signature(ins: &mut Inspector<'_>, path: &str, v: Value) {
 // protected-corim-header-map  (§4.2.1)
 // ===========================================================================
 
-fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
+fn inspect_protected_header_map(
+    ins: &mut Inspector<'_>,
+    base: &str,
+    v: Value,
+) -> Option<crate::types::signed::multi::HeaderIdentity> {
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -695,7 +708,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
                     value_kind(&other)
                 ),
             );
-            return;
+            return None;
         }
     };
 
@@ -705,6 +718,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
     let mut have_content_type = false;
     let mut have_payload_preimage_ct = false;
     let mut have_cwt_iss_flat = false;
+    let mut identity = crate::types::signed::multi::HeaderIdentity::default();
 
     for (k, val) in map {
         let key = match &k {
@@ -744,18 +758,32 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
         let path = format!("{base}.{}", key);
 
         match key {
-            COSE_HEADER_ALG => {
-                have_alg = true;
-                if !matches!(val, Value::Integer(_)) {
-                    ins.err(
+            COSE_HEADER_ALG => match &val {
+                Value::Integer(alg) => {
+                    have_alg = true;
+                    match i64::try_from(*alg) {
+                        Ok(alg) => identity.alg = Some(alg),
+                        Err(_) => {
+                            ins.err(path.clone(), "alg is outside the supported integer range")
+                        }
+                    }
+                }
+                Value::Text(issuer) => {
+                    have_cwt_iss_flat = true;
+                    identity.flat_issuer = Some(issuer.clone());
+                    ins.warn(
                         path,
-                        format!(
-                            "alg (key 1) must be int (COSE algorithm registry), found {}",
-                            value_kind(&val)
-                        ),
+                        "legacy CWT issuer is carried flat alongside alg at key 1",
                     );
                 }
-            }
+                _ => ins.err(
+                    path,
+                    format!(
+                        "alg (key 1) must be int or legacy flat issuer text, found {}",
+                        value_kind(&val)
+                    ),
+                ),
+            },
             COSE_HEADER_CONTENT_TYPE => match val {
                 Value::Text(t) => {
                     have_content_type = true;
@@ -814,13 +842,38 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
                 Value::Bytes(b) => {
                     have_corim_meta = true;
                     match ins.budget.decode_value_exact(&b) {
-                        Ok(Value::Map(_)) => ins.info(
-                            path,
-                            format!(
-                                "corim-meta (key 8) decoded as bstr .cbor map ({} bytes)",
-                                b.len()
-                            ),
-                        ),
+                        Ok(Value::Map(map)) => {
+                            identity.metadata_issuer = map.iter().find_map(|(key, value)| {
+                                if *key
+                                    != Value::Integer(i128::from(
+                                        crate::types::tags::META_KEY_SIGNER,
+                                    ))
+                                {
+                                    return None;
+                                }
+                                let Value::Map(signer) = value else {
+                                    return None;
+                                };
+                                signer.iter().find_map(|(key, value)| match value {
+                                    Value::Text(name)
+                                        if *key
+                                            == Value::Integer(i128::from(
+                                                crate::types::tags::SIGNER_KEY_NAME,
+                                            )) =>
+                                    {
+                                        Some(name.clone())
+                                    }
+                                    _ => None,
+                                })
+                            });
+                            ins.info(
+                                path,
+                                format!(
+                                    "corim-meta (key 8) decoded as bstr .cbor map ({} bytes)",
+                                    b.len()
+                                ),
+                            );
+                        }
                         Ok(other) => ins.err(
                             path,
                             format!(
@@ -850,8 +903,19 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
                 ),
             },
             COSE_HEADER_CWT_CLAIMS => match val {
-                Value::Map(_) => {
+                Value::Map(claims) => {
                     have_cwt_claims = true;
+                    identity.cwt_issuer = claims.iter().find_map(|(key, value)| match value {
+                        Value::Text(issuer)
+                            if *key
+                                == Value::Integer(i128::from(
+                                    crate::types::signed::CWT_CLAIM_ISS,
+                                )) =>
+                        {
+                            Some(issuer.clone())
+                        }
+                        _ => None,
+                    });
                     ins.info(path, "CWT-Claims (key 15) is a CBOR map");
                 }
                 _ => ins.err(
@@ -863,6 +927,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
                 ),
             },
             COSE_HEADER_PAYLOAD_HASH_ALG => {
+                identity.hash_payload = true;
                 if !matches!(val, Value::Integer(_)) {
                     ins.err(
                         path,
@@ -962,6 +1027,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, base: &str, v: Value) {
             "draft-ietf-rats-corim-11 §4.2.1 meta-group: ((corim-meta-identity, ?cwt-claims-identity) // cwt-claims-identity)",
         );
     }
+    Some(identity)
 }
 
 // ===========================================================================
