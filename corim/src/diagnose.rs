@@ -1719,19 +1719,24 @@ fn inspect_env_measurements_triples(
                 } else {
                     for (j, m) in ms.into_iter().enumerate() {
                         let path = format!("{}[{}]", meas_path, j);
-                        let typed_measurement = if triple_key == TRIPLES_KEY_REFERENCE {
-                            cbor::value::from_value::<MeasurementMap>(&m).ok()
-                        } else {
-                            None
-                        };
-                        if let Ok(measurement) = cbor::value::from_value::<MeasurementMap>(&m) {
-                            if let Err(error) = measurement.mval.valid_assertion() {
-                                ins.err(&path, error);
+                        let typed_measurement = match cbor::value::from_value::<MeasurementMap>(&m)
+                        {
+                            Ok(measurement) => {
+                                if let Err(error) = measurement.mval.valid_assertion() {
+                                    ins.err(&path, error);
+                                }
+                                Some(measurement)
                             }
-                        }
+                            Err(error) => {
+                                ins.err(&path, format!("measurement decoding failed: {error}"));
+                                None
+                            }
+                        };
                         inspect_measurement_map(ins, &path, m);
-                        if let Some(measurement) = typed_measurement.as_ref() {
-                            inspect_profile_reference_measurement(ins, &path, measurement);
+                        if triple_key == TRIPLES_KEY_REFERENCE {
+                            if let Some(measurement) = typed_measurement.as_ref() {
+                                inspect_profile_reference_measurement(ins, &path, measurement);
+                            }
                         }
                     }
                 }

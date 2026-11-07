@@ -41,6 +41,14 @@ versions.
   CLI `sign prepare/finalize` continues to create Sign1 envelopes; multi-signature
   signing is available through the library builder.
 
+### Fixed
+
+- Conditional-endorsement conditions validate complete measurements, including
+  nonempty digest lists, while retaining valid condition matchers.
+- Non-aborting diagnostics report typed measurement decoding failures
+  (including malformed flags) and continue inspecting subsequent measurements,
+  rather than silently treating rejected typed data as diagnostically valid.
+
 ## [0.2.1] — 2026-10-23
 
 **Crates:** `corim` and `corim-macros` v0.2.1. `corim-cli` follows the

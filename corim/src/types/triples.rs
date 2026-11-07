@@ -631,7 +631,7 @@ impl Validate for StatefulEnvironmentRecord {
             return Err("measurements must not be empty".into());
         }
         for measurement in &self.1 {
-            measurement.mval.valid_matchers()?;
+            measurement.valid()?;
         }
         Ok(())
     }
