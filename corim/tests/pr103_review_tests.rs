@@ -120,37 +120,80 @@ fn profile_accepts_core_mask(profile: &dyn Profile, key: i64, known: Value) {
     let mut reference = measurement();
     reference.mval.raw_value = Some(RawValueChoice::Bytes(vec![0xa0]));
     reference.mval.extra_entries.insert(key, known);
-    reference.mval.extra_entries.insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, Value::Bytes(vec![0xf0]));
+    reference
+        .mval
+        .extra_entries
+        .insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, Value::Bytes(vec![0xf0]));
     let mut observed = reference.clone();
-    observed.mval.extra_entries.remove(&MVAL_KEY_RAW_VALUE_MASK_DEPRECATED);
+    observed
+        .mval
+        .extra_entries
+        .remove(&MVAL_KEY_RAW_VALUE_MASK_DEPRECATED);
     observed.mval.raw_value = Some(RawValueChoice::Bytes(vec![0xaf]));
-    assert_eq!(profile.match_measurement(&reference, &observed, &MatchContext::new()), Some(true));
-    for mask in [Value::Text("bad".into()), Value::Bytes(vec![]), Value::Bytes(vec![0xf0, 0xf0])] {
-        reference.mval.extra_entries.insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, mask);
-        assert_eq!(profile.match_measurement(&reference, &observed, &MatchContext::new()), Some(false));
+    assert_eq!(
+        profile.match_measurement(&reference, &observed, &MatchContext::new()),
+        Some(true)
+    );
+    for mask in [
+        Value::Text("bad".into()),
+        Value::Bytes(vec![]),
+        Value::Bytes(vec![0xf0, 0xf0]),
+    ] {
+        reference
+            .mval
+            .extra_entries
+            .insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, mask);
+        assert_eq!(
+            profile.match_measurement(&reference, &observed, &MatchContext::new()),
+            Some(false)
+        );
     }
-    reference.mval.extra_entries.insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, Value::Bytes(vec![0xf0]));
-    reference.mval.extra_entries.insert(UNKNOWN_ATTRIBUTE, Value::Bool(true));
-    assert_eq!(profile.match_measurement(&reference, &observed, &MatchContext::new()), Some(false));
+    reference
+        .mval
+        .extra_entries
+        .insert(MVAL_KEY_RAW_VALUE_MASK_DEPRECATED, Value::Bytes(vec![0xf0]));
+    reference
+        .mval
+        .extra_entries
+        .insert(UNKNOWN_ATTRIBUTE, Value::Bool(true));
+    assert_eq!(
+        profile.match_measurement(&reference, &observed, &MatchContext::new()),
+        Some(false)
+    );
+    reference.mval.extra_entries.remove(&UNKNOWN_ATTRIBUTE);
+    reference.mval.raw_value = None;
+    assert_eq!(
+        profile.match_measurement(&reference, &observed, &MatchContext::new()),
+        Some(false)
+    );
 }
 
 #[test]
 #[cfg(feature = "profile-intel")]
 fn intel_delegates_recognized_core_mask_modifiers() {
-    profile_accepts_core_mask(&corim::profile::intel::IntelProfile::new(),
-        corim::profile::intel::MVAL_TEE_VENDOR, Value::Text("Intel".into()));
+    profile_accepts_core_mask(
+        &corim::profile::intel::IntelProfile::new(),
+        corim::profile::intel::MVAL_TEE_VENDOR,
+        Value::Text("Intel".into()),
+    );
 }
 #[test]
 #[cfg(feature = "profile-azure")]
 fn azure_delegates_recognized_core_mask_modifiers() {
-    profile_accepts_core_mask(&corim::profile::azure::AzureProfile::new(),
-        corim::profile::azure::MVAL_TCBSTATUS, Value::Text("UpToDate".into()));
+    profile_accepts_core_mask(
+        &corim::profile::azure::AzureProfile::new(),
+        corim::profile::azure::MVAL_TCBSTATUS,
+        Value::Text("UpToDate".into()),
+    );
 }
 #[test]
 #[cfg(feature = "profile-psa")]
 fn psa_delegates_recognized_core_mask_modifiers() {
-    profile_accepts_core_mask(&corim::profile::psa::PsaProfile::new(),
-        corim::profile::psa::MVAL_PSA_CERT_NUM, Value::Text("1234567890123 - 12345".into()));
+    profile_accepts_core_mask(
+        &corim::profile::psa::PsaProfile::new(),
+        corim::profile::psa::MVAL_PSA_CERT_NUM,
+        Value::Text("1234567890123 - 12345".into()),
+    );
 }
 
 #[test]

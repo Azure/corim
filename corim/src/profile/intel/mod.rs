@@ -213,6 +213,9 @@ impl Profile for IntelProfile {
         let mut verdicts: Vec<eval::Verdict> = Vec::new();
         for (key, ref_val) in reference.mval.extra_entries.iter() {
             if intel_mval_name(*key).is_none() {
+                if crate::validate::core_handles_mval_extension(reference, *key, ref_val) {
+                    continue;
+                }
                 return Some(false);
             }
             match evidence.mval.extra_entries.get(key) {

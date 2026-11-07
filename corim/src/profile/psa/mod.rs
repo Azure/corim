@@ -118,12 +118,10 @@ impl Profile for PsaProfile {
         // Only take a position when the reference carries psa-cert-num;
         // otherwise defer to the crate's default matching.
         let ref_val = reference.mval.extra_entries.get(&MVAL_PSA_CERT_NUM)?;
-        if reference
-            .mval
-            .extra_entries
-            .keys()
-            .any(|key| *key != MVAL_PSA_CERT_NUM)
-        {
+        if reference.mval.extra_entries.iter().any(|(key, value)| {
+            *key != MVAL_PSA_CERT_NUM
+                && !crate::validate::core_handles_mval_extension(reference, *key, value)
+        }) {
             return Some(false);
         }
 

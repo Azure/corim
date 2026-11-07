@@ -1097,11 +1097,21 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 // The deprecated key-5 mask is part of the key-4 comparison, not a separate
 // assertion path (draft-12 §8.3.4.4.5.1 and §8.3.4.4.5.6).
 fn known_comparison_algorithms(condition: &MeasurementMap) -> bool {
-    condition.mval.extra_entries.iter().all(|(key, value)| {
-        *key == crate::types::tags::MVAL_KEY_RAW_VALUE_MASK_DEPRECATED
-            && matches!(condition.mval.raw_value, Some(RawValueChoice::Bytes(_)))
-            && matches!(value, cbor::value::Value::Bytes(_))
-    })
+    condition
+        .mval
+        .extra_entries
+        .iter()
+        .all(|(key, value)| core_handles_mval_extension(condition, *key, value))
+}
+
+pub(crate) fn core_handles_mval_extension(
+    condition: &MeasurementMap,
+    key: i64,
+    value: &cbor::value::Value,
+) -> bool {
+    key == crate::types::tags::MVAL_KEY_RAW_VALUE_MASK_DEPRECATED
+        && matches!(condition.mval.raw_value, Some(RawValueChoice::Bytes(_)))
+        && matches!(value, cbor::value::Value::Bytes(_))
 }
 
 /// Per-pair core matching primitive: tests whether a single reference

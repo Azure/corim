@@ -73,12 +73,10 @@ impl Profile for AzureProfile {
         _ctx: &MatchContext,
     ) -> Option<bool> {
         let ref_val = reference.mval.extra_entries.get(&MVAL_TCBSTATUS)?;
-        if reference
-            .mval
-            .extra_entries
-            .keys()
-            .any(|key| *key != MVAL_TCBSTATUS)
-        {
+        if reference.mval.extra_entries.iter().any(|(key, value)| {
+            *key != MVAL_TCBSTATUS
+                && !crate::validate::core_handles_mval_extension(reference, *key, value)
+        }) {
             return Some(false);
         }
 
