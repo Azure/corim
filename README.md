@@ -174,10 +174,15 @@ then read through `get(&Flag::IsSecure)` or iterate all entries with `iter()`.
 Known flags require boolean values; integer and text extension labels retain
 their original CBOR values. Reserved integer aliases canonicalize to the named
 flag, while text `"1"` stays distinct from integer key 1.
+Numeric-looking text labels and text labels that alias standard flag names
+require `convert --lossless`; readable serialization rejects them before
+prose-key normalization. Unambiguous text extensions remain readable.
 Unknown condition flag paths fail closed in core/first-party appraisal unless
 a profile explicitly supplies their comparison algorithm. Extra assertion
 flags are allowed. Known-field wire encodings and readable JSON names remain
 unchanged; Rust callers using field assignments or literals must migrate.
+First-party profiles still delegate recognized core modifiers, such as the
+deprecated key-5 byte-string mask paired with a bare raw value, to core matching.
 
 The crate supports creating and parsing signed CoRIM documents (`#6.18` /
 `COSE_Sign1-corim`) without any cryptographic dependencies. The caller
