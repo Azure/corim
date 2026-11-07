@@ -97,6 +97,9 @@
 //! profile implementations from accidentally bypassing core
 //! invariants. The [`intel::IntelProfile`](crate::profile::intel::IntelProfile)
 //! implementation is a worked example of this composition pattern.
+//! An affirmative verdict must account for every required condition attribute.
+//! Unhandled extension keys (including flag paths) must not be silently ignored
+//! when another recognized constraint passes (draft-12 §8.3.4.4.5).
 //!
 //! ### Per-call context: [`MatchContext`](crate::profile::MatchContext)
 //!
@@ -303,6 +306,10 @@ pub trait Profile {
     /// semantics (e.g. operator-based comparison via tag `#6.60010`),
     /// `Some(false)` if it explicitly does not match, or `None` to defer
     /// to the crate's default exact-match logic.
+    ///
+    /// `Some(true)` certifies all required condition paths, not just the keys
+    /// recognized by this profile. Unknown required attributes must fail closed
+    /// unless the profile supplies their comparison algorithm.
     ///
     /// `ctx` carries per-call verifier state (currently just
     /// `now: Option<CborTime>` for epoch-based reference values).

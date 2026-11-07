@@ -2,8 +2,11 @@ use corim::cbor::{self, value::Value};
 use corim::profile::{MatchContext, Profile};
 use corim::types::environment::EnvironmentMap;
 use corim::types::measurement::{FlagsMap, MeasurementMap, MeasurementValuesMap, SvnChoice};
-use corim::types::triples::{CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord, ReferenceTriple};
-use corim::validate::{EvidenceClaim, match_reference_values, match_reference_values_with_profile};
+use corim::types::triples::{
+    CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalSeriesRecord,
+    ReferenceTriple,
+};
+use corim::validate::{match_reference_values, match_reference_values_with_profile, EvidenceClaim};
 use corim::Validate;
 
 const UNKNOWN_ATTRIBUTE: i64 = 10001;
@@ -12,11 +15,22 @@ const UNKNOWN_FLAG: i64 = 99;
 fn measurement() -> MeasurementMap {
     let mut values = MeasurementValuesMap::default();
     values.svn = Some(SvnChoice::ExactValue(1));
-    MeasurementMap { mkey: None, mval: values, authorized_by: None }
+    MeasurementMap {
+        mkey: None,
+        mval: values,
+        authorized_by: None,
+    }
 }
-fn series(condition: Vec<MeasurementMap>, addition: Vec<MeasurementMap>) -> ConditionalEndorsementSeriesTriple {
+fn series(
+    condition: Vec<MeasurementMap>,
+    addition: Vec<MeasurementMap>,
+) -> ConditionalEndorsementSeriesTriple {
     ConditionalEndorsementSeriesTriple(
-        CesCommonCondition { environment: EnvironmentMap::for_class("vendor", "model"), claims_list: vec![], authorized_by: None },
+        CesCommonCondition {
+            environment: EnvironmentMap::for_class("vendor", "model"),
+            claims_list: vec![],
+            authorized_by: None,
+        },
         vec![ConditionalSeriesRecord(condition, addition)],
     )
 }
@@ -25,23 +39,50 @@ fn series(condition: Vec<MeasurementMap>, addition: Vec<MeasurementMap>) -> Cond
 fn conditional_series_rejects_empty_conditions_and_additions() {
     assert!(series(vec![], vec![measurement()]).valid().is_err());
     assert!(series(vec![measurement()], vec![]).valid().is_err());
-    assert!(series(vec![measurement()], vec![measurement()]).valid().is_ok());
-    let evidence = vec![EvidenceClaim { environment: EnvironmentMap::for_class("vendor", "model"), measurements: vec![measurement()] }];
-    assert!(corim::validate::apply_endorsement_series(&[series(vec![], vec![measurement()])], &evidence).is_err());
+    assert!(series(vec![measurement()], vec![measurement()])
+        .valid()
+        .is_ok());
+    let evidence = vec![EvidenceClaim {
+        environment: EnvironmentMap::for_class("vendor", "model"),
+        measurements: vec![measurement()],
+    }];
+    assert!(corim::validate::apply_endorsement_series(
+        &[series(vec![], vec![measurement()])],
+        &evidence
+    )
+    .is_err());
 }
 
 fn profile_requires_all_constraints(profile: &dyn Profile, key: i64, known: Value) {
     let mut reference = measurement();
     reference.mval.extra_entries.insert(key, known);
     let mut observed = reference.clone();
-    reference.mval.extra_entries.insert(UNKNOWN_ATTRIBUTE, Value::Bool(true));
+    reference
+        .mval
+        .extra_entries
+        .insert(UNKNOWN_ATTRIBUTE, Value::Bool(true));
     let environment = EnvironmentMap::for_class("vendor", "model");
     let reference = ReferenceTriple::new(environment.clone(), vec![reference]);
     let ctx = MatchContext::new();
     for include_unknown in [false, true] {
-        if include_unknown { observed.mval.extra_entries.insert(UNKNOWN_ATTRIBUTE, Value::Bool(true)); }
-        let evidence = [EvidenceClaim { environment: environment.clone(), measurements: vec![observed.clone()] }];
-        assert!(match_reference_values_with_profile(&[reference.clone()], &evidence, Some(profile), &ctx).unwrap().is_empty());
+        if include_unknown {
+            observed
+                .mval
+                .extra_entries
+                .insert(UNKNOWN_ATTRIBUTE, Value::Bool(true));
+        }
+        let evidence = [EvidenceClaim {
+            environment: environment.clone(),
+            measurements: vec![observed.clone()],
+        }];
+        assert!(match_reference_values_with_profile(
+            std::slice::from_ref(&reference),
+            &evidence,
+            Some(profile),
+            &ctx
+        )
+        .unwrap()
+        .is_empty());
     }
 }
 
@@ -75,20 +116,34 @@ fn psa_known_and_unknown_conditions_fail_closed() {
 
 #[test]
 fn extension_flags_round_trip_but_unknown_condition_paths_never_match_core() {
-    let value = Value::Map(vec![(Value::Integer(i128::from(UNKNOWN_FLAG)), Value::Bool(true))]);
+    let value = Value::Map(vec![(
+        Value::Integer(i128::from(UNKNOWN_FLAG)),
+        Value::Bool(true),
+    )]);
     let flags: FlagsMap = cbor::decode_exact(&cbor::encode(&value).unwrap()).unwrap();
     let round_trip = cbor::encode(&flags);
     let mut reference = measurement();
     reference.mval.flags = Some(flags);
     let mut observed = measurement();
-    let flags: FlagsMap = cbor::decode_exact(&cbor::encode(&Value::Map(vec![
-        (Value::Integer(1), Value::Bool(false))
-    ])).unwrap()).unwrap();
+    let flags: FlagsMap = cbor::decode_exact(
+        &cbor::encode(&Value::Map(vec![(Value::Integer(1), Value::Bool(false))])).unwrap(),
+    )
+    .unwrap();
     observed.mval.flags = Some(flags);
     let environment = EnvironmentMap::for_class("vendor", "model");
-    let evidence = [EvidenceClaim { environment: environment.clone(), measurements: vec![observed] }];
-    assert!(match_reference_values(&[ReferenceTriple::new(environment, vec![reference])], &evidence).is_empty());
-    assert_eq!(cbor::decode_exact::<Value>(&round_trip.unwrap()).unwrap(), value);
+    let evidence = [EvidenceClaim {
+        environment: environment.clone(),
+        measurements: vec![observed],
+    }];
+    assert!(match_reference_values(
+        &[ReferenceTriple::new(environment, vec![reference])],
+        &evidence
+    )
+    .is_empty());
+    assert_eq!(
+        cbor::decode_exact::<Value>(&round_trip.unwrap()).unwrap(),
+        value
+    );
 }
 
 #[test]
@@ -96,9 +151,15 @@ fn unrelated_environments_do_not_rescan_every_evidence_measurement() {
     const CHILD: &str = "CORIM_PR103_SCAN_CHILD";
     if std::env::var_os(CHILD).is_none() {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap())
-            .args(["--exact", "unrelated_environments_do_not_rescan_every_evidence_measurement", "--nocapture"])
+            .args([
+                "--exact",
+                "unrelated_environments_do_not_rescan_every_evidence_measurement",
+                "--nocapture",
+            ])
             .env(CHILD, "1")
-            .spawn().unwrap();
+            .stdout(std::process::Stdio::null())
+            .spawn()
+            .unwrap();
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
             if let Some(status) = child.try_wait().unwrap() {
@@ -113,10 +174,19 @@ fn unrelated_environments_do_not_rescan_every_evidence_measurement() {
             std::thread::sleep(std::time::Duration::from_millis(20));
         }
     }
-    let references = vec![ReferenceTriple::new(EnvironmentMap::for_class("vendor", "reference"), vec![measurement()]); 2500];
-    let evidence = vec![EvidenceClaim {
-        environment: EnvironmentMap::for_class("vendor", "unrelated"),
-        measurements: vec![measurement(); 400],
-    }; 1000];
+    let references = vec![
+        ReferenceTriple::new(
+            EnvironmentMap::for_class("vendor", "reference"),
+            vec![measurement()]
+        );
+        2500
+    ];
+    let evidence = vec![
+        EvidenceClaim {
+            environment: EnvironmentMap::for_class("vendor", "unrelated"),
+            measurements: vec![measurement(); 400],
+        };
+        1000
+    ];
     assert!(match_reference_values(&references, &evidence).is_empty());
 }

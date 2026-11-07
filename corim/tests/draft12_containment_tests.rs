@@ -26,11 +26,28 @@ fn flags_require_condition_paths_but_allow_additional_evidence_flags() {
     );
     let condition = measurement(condition);
     let mut entry = condition.clone();
-    entry.mval.flags.as_mut().unwrap().is_debug = Some(true);
+    entry
+        .mval
+        .flags
+        .as_mut()
+        .unwrap()
+        .insert(corim::types::Flag::IsDebug, Value::Bool(true))
+        .unwrap();
     assert!(core_fields_match(&condition, &entry));
-    entry.mval.flags.as_mut().unwrap().is_secure = None;
+    entry
+        .mval
+        .flags
+        .as_mut()
+        .unwrap()
+        .remove(&corim::types::Flag::IsSecure);
     assert!(!core_fields_match(&condition, &entry));
-    entry.mval.flags.as_mut().unwrap().is_secure = Some(true);
+    entry
+        .mval
+        .flags
+        .as_mut()
+        .unwrap()
+        .insert(corim::types::Flag::IsSecure, Value::Bool(true))
+        .unwrap();
     assert!(!core_fields_match(&condition, &entry));
     entry.mval.flags = None;
     assert!(!core_fields_match(&condition, &entry));

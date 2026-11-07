@@ -443,7 +443,15 @@ fn corim_with_matchers(mval: MeasurementValuesMap) -> corim::types::CorimMap {
             },
             vec![corim::types::ConditionalSeriesRecord(
                 vec![measurement],
-                vec![],
+                vec![{
+                    let mut values = MeasurementValuesMap::default();
+                    values.svn = Some(corim::types::SvnChoice::ExactValue(1));
+                    corim::types::MeasurementMap {
+                        mkey: None,
+                        mval: values,
+                        authorized_by: None,
+                    }
+                }],
             )],
         )]);
     corim::builder::CorimBuilder::new(corim::types::CorimId::Text("matcher".into()))

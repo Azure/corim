@@ -483,38 +483,11 @@ pub fn value_summary(v: &Value) -> String {
 
 fn print_flags(flags: &FlagsMap, indent: &str) {
     let mut parts = Vec::new();
-    if let Some(v) = flags.is_configured {
-        parts.push(format!("configured={}", v));
-    }
-    if let Some(v) = flags.is_secure {
-        parts.push(format!("secure={}", v));
-    }
-    if let Some(v) = flags.is_recovery {
-        parts.push(format!("recovery={}", v));
-    }
-    if let Some(v) = flags.is_debug {
-        parts.push(format!("debug={}", v));
-    }
-    if let Some(v) = flags.is_replay_protected {
-        parts.push(format!("replay-protected={}", v));
-    }
-    if let Some(v) = flags.is_integrity_protected {
-        parts.push(format!("integrity-protected={}", v));
-    }
-    if let Some(v) = flags.is_runtime_meas {
-        parts.push(format!("runtime-meas={}", v));
-    }
-    if let Some(v) = flags.is_immutable {
-        parts.push(format!("immutable={}", v));
-    }
-    if let Some(v) = flags.is_tcb {
-        parts.push(format!("tcb={}", v));
-    }
-    if let Some(v) = flags.is_confidentiality_protected {
-        parts.push(format!("confidentiality-protected={}", v));
-    }
-    if let Some(v) = flags.is_runtime_updatable {
-        parts.push(format!("runtime-updatable={}", v));
+    for (flag, value) in flags.iter() {
+        match flag.name() {
+            Some(name) => parts.push(format!("{name}={}", value_summary(value))),
+            None => parts.push(format!("{flag:?}={}", value_summary(value))),
+        }
     }
     if !parts.is_empty() {
         println!("{}flags: {{{}}}", indent, parts.join(", "));

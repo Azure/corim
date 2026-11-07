@@ -642,6 +642,9 @@ pub fn match_reference_values(
             continue;
         }
         for ev in evidence {
+            if !environment_matches(triple.environment(), &ev.environment) {
+                continue;
+            }
             if ev
                 .measurements
                 .iter()
@@ -649,10 +652,6 @@ pub fn match_reference_values(
             {
                 continue;
             }
-            if !environment_matches(triple.environment(), &ev.environment) {
-                continue;
-            }
-
             let conditions = triple.measurements();
             if !conditions.is_empty()
                 && conditions
@@ -853,26 +852,7 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
         validate_matcher_evidence(evidence)?;
     }
     for triple in ces_triples {
-        for measurement in &triple.0.claims_list {
-            measurement
-                .mval
-                .valid_matchers()
-                .map_err(ValidationError::Invalid)?;
-        }
-        for record in triple.series() {
-            for measurement in record.condition() {
-                measurement
-                    .mval
-                    .valid_matchers()
-                    .map_err(ValidationError::Invalid)?;
-            }
-            for measurement in record.addition() {
-                measurement
-                    .mval
-                    .valid_assertion()
-                    .map_err(ValidationError::Invalid)?;
-            }
-        }
+        triple.valid().map_err(ValidationError::Invalid)?;
     }
 
     if let Some(profile) = profile {
@@ -1226,28 +1206,8 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
         let Some(entry) = &ev_meas.mval.flags else {
             return false;
         };
-        // A missing flag is not false; additional assertion flags are ignored
-        // (draft-12 §8.3.4.4.5.5).
-        for (condition, entry) in [
-            (condition.is_configured, entry.is_configured),
-            (condition.is_secure, entry.is_secure),
-            (condition.is_recovery, entry.is_recovery),
-            (condition.is_debug, entry.is_debug),
-            (condition.is_replay_protected, entry.is_replay_protected),
-            (
-                condition.is_integrity_protected,
-                entry.is_integrity_protected,
-            ),
-            (condition.is_runtime_meas, entry.is_runtime_meas),
-            (condition.is_immutable, entry.is_immutable),
-            (condition.is_tcb, entry.is_tcb),
-            (
-                condition.is_confidentiality_protected,
-                entry.is_confidentiality_protected,
-            ),
-            (condition.is_runtime_updatable, entry.is_runtime_updatable),
-        ] {
-            if condition.is_some() && condition != entry {
+        for (flag, value) in condition.iter() {
+            if flag.is_extension() || entry.get(flag) != Some(value) {
                 return false;
             }
         }

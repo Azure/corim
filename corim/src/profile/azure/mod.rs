@@ -73,6 +73,14 @@ impl Profile for AzureProfile {
         _ctx: &MatchContext,
     ) -> Option<bool> {
         let ref_val = reference.mval.extra_entries.get(&MVAL_TCBSTATUS)?;
+        if reference
+            .mval
+            .extra_entries
+            .keys()
+            .any(|key| *key != MVAL_TCBSTATUS)
+        {
+            return Some(false);
+        }
 
         let ev_val = match evidence.mval.extra_entries.get(&MVAL_TCBSTATUS) {
             Some(v) => v,

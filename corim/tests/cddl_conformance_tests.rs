@@ -474,56 +474,42 @@ fn integrity_registers_mixed_keys() {
 
 #[test]
 fn flags_map_all_fields() {
-    round_trip(&FlagsMap {
-        is_configured: Some(true),
-        is_secure: Some(true),
-        is_recovery: Some(false),
-        is_debug: Some(false),
-        is_replay_protected: Some(true),
-        is_integrity_protected: Some(true),
-        is_runtime_meas: Some(false),
-        is_immutable: Some(true),
-        is_tcb: Some(true),
-        is_confidentiality_protected: Some(false),
-        is_runtime_updatable: Some(true),
-    });
+    let mut flags = FlagsMap::default();
+    for (flag, value) in [
+        (Flag::IsConfigured, true),
+        (Flag::IsSecure, true),
+        (Flag::IsRecovery, false),
+        (Flag::IsDebug, false),
+        (Flag::IsReplayProtected, true),
+        (Flag::IsIntegrityProtected, true),
+        (Flag::IsRuntimeMeas, false),
+        (Flag::IsImmutable, true),
+        (Flag::IsTcb, true),
+        (Flag::IsConfidentialityProtected, false),
+        (Flag::IsRuntimeUpdatable, true),
+    ] {
+        flags
+            .insert(flag, corim::cbor::value::Value::Bool(value))
+            .unwrap();
+    }
+    round_trip(&flags);
 }
 
 #[test]
 fn flags_map_single_field() {
-    round_trip(&FlagsMap {
-        is_configured: None,
-        is_secure: None,
-        is_recovery: None,
-        is_debug: Some(true),
-        is_replay_protected: None,
-        is_integrity_protected: None,
-        is_runtime_meas: None,
-        is_immutable: None,
-        is_tcb: None,
-        is_confidentiality_protected: None,
-        is_runtime_updatable: None,
-    });
+    let mut flags = FlagsMap::default();
+    flags
+        .insert(Flag::IsDebug, corim::cbor::value::Value::Bool(true))
+        .unwrap();
+    round_trip(&flags);
 }
 
 #[test]
 fn flags_map_non_empty_enforced() {
-    let f = FlagsMap {
-        is_configured: None,
-        is_secure: None,
-        is_recovery: None,
-        is_debug: None,
-        is_replay_protected: None,
-        is_integrity_protected: None,
-        is_runtime_meas: None,
-        is_immutable: None,
-        is_tcb: None,
-        is_confidentiality_protected: None,
-        is_runtime_updatable: None,
-    };
+    let f = FlagsMap::default();
     assert!(
         cbor::encode(&f).is_err(),
-        "all-None FlagsMap must fail non-empty"
+        "empty FlagsMap must fail non-empty"
     );
 }
 
@@ -784,19 +770,18 @@ fn measurement_values_map_all_14_fields() {
         });
         values.svn = Some(SvnChoice::MinValue(3));
         values.digests = Some(vec![Digest::new(7, vec![0xAA; 48])]);
-        values.flags = Some(FlagsMap {
-            is_configured: Some(true),
-            is_secure: Some(true),
-            is_recovery: None,
-            is_debug: Some(false),
-            is_replay_protected: None,
-            is_integrity_protected: None,
-            is_runtime_meas: None,
-            is_immutable: None,
-            is_tcb: Some(true),
-            is_confidentiality_protected: None,
-            is_runtime_updatable: None,
-        });
+        let mut flags = FlagsMap::default();
+        for (flag, value) in [
+            (Flag::IsConfigured, true),
+            (Flag::IsSecure, true),
+            (Flag::IsDebug, false),
+            (Flag::IsTcb, true),
+        ] {
+            flags
+                .insert(flag, corim::cbor::value::Value::Bool(value))
+                .unwrap();
+        }
+        values.flags = Some(flags);
         values.raw_value = Some(RawValueChoice::Bytes(vec![0xDE, 0xAD]));
         values.mac_addr = Some(MacAddr::Eui48([0x00, 0x11, 0x22, 0x33, 0x44, 0x55]));
         values.ip_addr = Some(IpAddr::V4([192, 168, 1, 1]));

@@ -118,6 +118,14 @@ impl Profile for PsaProfile {
         // Only take a position when the reference carries psa-cert-num;
         // otherwise defer to the crate's default matching.
         let ref_val = reference.mval.extra_entries.get(&MVAL_PSA_CERT_NUM)?;
+        if reference
+            .mval
+            .extra_entries
+            .keys()
+            .any(|key| *key != MVAL_PSA_CERT_NUM)
+        {
+            return Some(false);
+        }
 
         let ev_val = match evidence.mval.extra_entries.get(&MVAL_PSA_CERT_NUM) {
             Some(v) => v,

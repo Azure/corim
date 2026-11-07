@@ -208,44 +208,7 @@ impl<'de> Deserialize<'de> for SvnChoice {
 // flags-map
 // ---------------------------------------------------------------------------
 
-/// `flags-map` — boolean operational mode flags.
-#[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
-#[cbor(non_empty)]
-pub struct FlagsMap {
-    /// `is-configured` (key 0).
-    #[cbor(key = 0, optional)]
-    pub is_configured: Option<bool>,
-    /// `is-secure` (key 1).
-    #[cbor(key = 1, optional)]
-    pub is_secure: Option<bool>,
-    /// `is-recovery` (key 2).
-    #[cbor(key = 2, optional)]
-    pub is_recovery: Option<bool>,
-    /// `is-debug` (key 3).
-    #[cbor(key = 3, optional)]
-    pub is_debug: Option<bool>,
-    /// `is-replay-protected` (key 4).
-    #[cbor(key = 4, optional)]
-    pub is_replay_protected: Option<bool>,
-    /// `is-integrity-protected` (key 5).
-    #[cbor(key = 5, optional)]
-    pub is_integrity_protected: Option<bool>,
-    /// `is-runtime-meas` (key 6).
-    #[cbor(key = 6, optional)]
-    pub is_runtime_meas: Option<bool>,
-    /// `is-immutable` (key 7).
-    #[cbor(key = 7, optional)]
-    pub is_immutable: Option<bool>,
-    /// `is-tcb` (key 8).
-    #[cbor(key = 8, optional)]
-    pub is_tcb: Option<bool>,
-    /// `is-confidentiality-protected` (key 9).
-    #[cbor(key = 9, optional)]
-    pub is_confidentiality_protected: Option<bool>,
-    /// `is-runtime-updatable` (key 10).
-    #[cbor(key = 10, optional)]
-    pub is_runtime_updatable: Option<bool>,
-}
+pub use super::flags::{Flag, FlagsMap};
 
 // ---------------------------------------------------------------------------
 // raw-value-type-choice
@@ -749,6 +712,9 @@ impl MeasurementValuesMap {
     }
 
     pub(crate) fn valid_matchers(&self) -> Result<(), String> {
+        if let Some(flags) = &self.flags {
+            flags.valid()?;
+        }
         if let Some(value) = &self.int_range {
             value.valid()?;
         }

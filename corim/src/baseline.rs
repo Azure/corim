@@ -2294,19 +2294,13 @@ mod projection_invariants {
     }
 
     fn flags(is_secure: Option<bool>) -> FlagsMap {
-        FlagsMap {
-            is_configured: None,
-            is_secure,
-            is_recovery: None,
-            is_debug: None,
-            is_replay_protected: None,
-            is_integrity_protected: None,
-            is_runtime_meas: None,
-            is_immutable: None,
-            is_tcb: None,
-            is_confidentiality_protected: None,
-            is_runtime_updatable: None,
+        let mut flags = FlagsMap::default();
+        if let Some(value) = is_secure {
+            flags
+                .insert(crate::types::Flag::IsSecure, Value::Bool(value))
+                .unwrap();
         }
+        flags
     }
 
     #[test]

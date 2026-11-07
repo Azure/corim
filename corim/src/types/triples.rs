@@ -601,13 +601,20 @@ impl Validate for ConditionalEndorsementSeriesTriple {
             return Err("no measurement entries in series".into());
         }
         for measurement in &self.0.claims_list {
-            measurement.mval.valid_matchers()?;
+            measurement.valid()?;
         }
         for record in &self.1 {
+            if record.0.is_empty() {
+                return Err("series condition must not be empty".into());
+            }
+            if record.1.is_empty() {
+                return Err("series addition must not be empty".into());
+            }
             for measurement in &record.0 {
-                measurement.mval.valid_matchers()?;
+                measurement.valid()?;
             }
             for measurement in &record.1 {
+                measurement.valid()?;
                 measurement.mval.valid_assertion()?;
             }
         }

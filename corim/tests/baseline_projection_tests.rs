@@ -149,7 +149,7 @@ fn extension_map_order_is_unordered_but_nested_arrays_remain_positional() {
 }
 
 #[test]
-fn decoded_flags_serialization_failures_remain_errors_on_either_side() {
+fn decoded_extension_flags_remain_comparable_on_either_side() {
     use corim::cbor::{self, value::Value};
     use corim::types::corim::ConciseTagChoice;
     use corim::types::tags::*;
@@ -186,9 +186,15 @@ fn decoded_flags_serialization_failures_remain_errors_on_either_side() {
     ));
     extension_only.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
     for (input, baseline) in [(&extension_only, &valid), (&valid, &extension_only)] {
-        let error = compare(input, baseline).unwrap_err();
-        assert!(
-            matches!(error, corim::ValidationError::Invalid(ref detail) if detail.contains("non-empty constraint") && detail.contains("FlagsMap"))
-        );
+        let report = compare(input, baseline).unwrap();
+        assert!(!report.is_conformant());
+        assert!(report.structural_mismatches.iter().any(|mismatch| {
+            mismatch
+                .path
+                .contains(&corim::baseline::PathSegment::Field("flags"))
+        }));
     }
+    assert!(compare(&extension_only, &extension_only)
+        .unwrap()
+        .is_conformant());
 }
