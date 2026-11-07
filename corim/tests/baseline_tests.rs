@@ -177,11 +177,9 @@ fn indexed_parent_keys_preserve_nested_unordered_semantics() {
             CryptoKey::Bytes(vec![marker]),
             CryptoKey::KeyThumbprint(Digest::new(7, vec![marker])),
         ];
-        let mut set = vec![format!("a{marker}"), format!("b{marker}")];
         if reverse {
             digests.reverse();
             keys.reverse();
-            set.reverse();
         }
         let values = &mut triple.1[0].mval;
         values.digests = Some(digests.clone());
@@ -189,7 +187,7 @@ fn indexed_parent_keys_preserve_nested_unordered_semantics() {
         values.integrity_registers = Some(IntegrityRegisters(
             [(IntegrityRegisterId::Uint(0), digests)].into(),
         ));
-        values.text = Some(TextMatcher::Set(set));
+        values.text = Some(TextMatcher::Exact(format!("a{marker}")));
         triple
     };
     for scope in [

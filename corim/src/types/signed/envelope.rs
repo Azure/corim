@@ -261,13 +261,19 @@ fn decode_signed_budget(
     bytes: &[u8],
     budget: &mut cbor::DecodeBudget,
 ) -> Result<CoseSign1Corim, crate::DecodeError> {
-    use crate::error::DecodeError;
-
     budget.check_input(bytes)?;
 
     // Parse once: legacy wrappers consume depth and value budget too.
-    let val = crate::compat::peel_value(budget.decode_value_exact(bytes)?);
+    let val = budget.decode_value_exact(bytes)?;
+    decode_parsed_signed_budget(val, budget)
+}
 
+pub(crate) fn decode_parsed_signed_budget(
+    val: Value,
+    budget: &mut cbor::DecodeBudget,
+) -> Result<CoseSign1Corim, crate::DecodeError> {
+    use crate::error::DecodeError;
+    let val = crate::compat::peel_value(val);
     // Must be tag 18
     let (tag, inner) = match val {
         Value::Tag(t, inner) => (t, *inner),
@@ -407,7 +413,7 @@ pub fn validate_signed_corim_payload(
 /// Validate an attached payload with explicit parser limits (RFC 8949 §10).
 /// The original protected header and embedded payload share the value budget.
 /// No cryptographic verification is performed.
-/// Hash-envelope digests are never decoded as CBOR (draft-ietf-rats-corim-11 §4.2).
+/// Hash-envelope digests are never decoded as CBOR (draft-ietf-rats-corim-12 §4.2).
 pub fn validate_signed_corim_payload_with_limits(
     signed: &CoseSign1Corim,
     now_epoch_secs: i64,

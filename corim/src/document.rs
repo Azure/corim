@@ -9,8 +9,10 @@ use crate::cbor::{self, value::Value, DecodeLimits};
 use crate::nostd_prelude::*;
 use crate::profile::ProfileRegistry;
 use crate::types::corim::{ConciseTagChoice, ProfileChoice};
-use crate::types::signed::{validation::validate_parsed_signed, CoseSign1Corim};
-use crate::types::tags::{TAG_LEGACY_SIGNED, TAG_LEGACY_TOP, TAG_SIGNED_CORIM};
+use crate::types::signed::{validation::validate_parsed_signed, SignedEnvelope};
+use crate::types::tags::{
+    TAG_LEGACY_SIGNED, TAG_LEGACY_TOP, TAG_MULTI_SIGNED_CORIM, TAG_SIGNED_CORIM,
+};
 use crate::validate::ValidatedCorim;
 use crate::{Validate, ValidationError};
 
@@ -151,7 +153,7 @@ impl ValidationCoverage {
 #[derive(Clone, Debug, PartialEq)]
 pub struct ValidatedDocument {
     payload: ValidatedCorim,
-    envelope: Option<CoseSign1Corim>,
+    envelope: Option<SignedEnvelope>,
     coverage: ValidationCoverage,
 }
 
@@ -161,7 +163,7 @@ impl ValidatedDocument {
         &self.payload
     }
     /// Read the original signed envelope, when present.
-    pub fn envelope(&self) -> Option<&CoseSign1Corim> {
+    pub fn envelope(&self) -> Option<&SignedEnvelope> {
         self.envelope.as_ref()
     }
     /// Inspect check coverage before consuming the document.
@@ -169,7 +171,7 @@ impl ValidatedDocument {
         &self.coverage
     }
     /// Consume the outcome to obtain editable data and its historical coverage.
-    pub fn into_parts(self) -> (ValidatedCorim, Option<CoseSign1Corim>, ValidationCoverage) {
+    pub fn into_parts(self) -> (ValidatedCorim, Option<SignedEnvelope>, ValidationCoverage) {
         (self.payload, self.envelope, self.coverage)
     }
 }
@@ -192,27 +194,45 @@ pub fn validate(
         compatibility.push(CompatibilityNote::LegacyOuterTag(tag));
         value = *inner;
     }
-    let (envelope, payload) = if matches!(value, Value::Tag(TAG_SIGNED_CORIM, _)) {
-        let validated = validate_parsed_signed(
-            value,
-            context.detached_payload,
-            context.time.timestamp(),
-            &mut budget,
-        )?;
-        if validated.used_flat_cwt {
+    let (envelope, payload) = if matches!(
+        value,
+        Value::Tag(TAG_SIGNED_CORIM | TAG_MULTI_SIGNED_CORIM, _)
+    ) {
+        let (envelope, payload, used_flat_cwt) = if matches!(value, Value::Tag(TAG_SIGNED_CORIM, _))
+        {
+            let validated = validate_parsed_signed(
+                value,
+                context.detached_payload,
+                context.time.timestamp(),
+                &mut budget,
+            )?;
+            (
+                SignedEnvelope::Sign1(validated.envelope),
+                validated.payload,
+                validated.used_flat_cwt,
+            )
+        } else {
+            let (envelope, payload, used_flat) =
+                crate::types::signed::multi::validate_parsed_multi(
+                    value,
+                    context.detached_payload,
+                    context.time.timestamp(),
+                    &mut budget,
+                )?;
+            (SignedEnvelope::Sign(envelope), payload, used_flat)
+        };
+        if used_flat_cwt {
             compatibility.push(CompatibilityNote::FlatCwtClaims);
         }
-        if validated
-            .envelope
-            .payload
-            .as_deref()
+        if envelope
+            .payload()
             .or(context.detached_payload)
             .and_then(|bytes| bytes.first())
             .is_some_and(|byte| byte >> 5 == cbor::constants::MAJOR_MAP)
         {
             compatibility.push(CompatibilityNote::BareCorimMap);
         }
-        (Some(validated.envelope), validated.payload)
+        (Some(envelope), payload)
     } else {
         if context.detached_payload.is_some() {
             return Err(ValidationError::Invalid(

@@ -1,31 +1,33 @@
 # corim
 
 **Concise Reference Integrity Manifest (CoRIM)** — Rust implementation of
-[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
+[draft-ietf-rats-corim-12](https://www.ietf.org/archive/id/draft-ietf-rats-corim-12.html).
 
 CBOR-native Rust types for the CoRIM / CoMID CDDL schema, a builder API,
-validation/appraisal logic, and signed CoRIM (COSE_Sign1) support for
+validation/appraisal logic, and signed CoRIM (COSE_Sign1 / COSE_Sign) support for
 Remote Attestation (RATS) Endorsements and Reference Values.
 
 ## Features
 
-- **Generic measurement matchers** - targeted support for keys 16-19 from the
-  [2026-10-07 editor's draft](https://ietf-rats-wg.github.io/draft-ietf-rats-corim/draft-ietf-rats-corim.html#name-type-matchers):
-  `BoolMatcher` (bare `bool`), `NumberMatcher`, `TextMatcher`, and `BytesMatcher`.
+- **Generic measurement matchers** - draft-12 §5.1.4.9 keys 16-20:
+  `BoolMatcher` (bare `bool`), `IntegerMatcher`, `FloatMatcher`, `TextMatcher`,
+  and `BytesMatcher`.
   Set and numeric-range conditions accept exact observations only. Numeric
-  comparison preserves integer precision; NaN never matches. The Rust map fields
-  are `r#bool`, `number`, `text`, and `bytes`. See the
+  comparison preserves integer precision and separates integer/float domains.
+  NaN, infinite range bounds and all-null ranges are invalid. The Rust map fields
+  are `r#bool`, `integer`, `float`, `text`, and `bytes`. See the
   [matcher module](src/types/matcher.rs) for Rust usage. Document JSON uses the
   lossless CBOR-tree codec in `corim::json`. The CLI separately supports
   readable authoring templates with semantic matcher wrappers and annotations.
 - **Full CDDL coverage** — `corim-map`, CoMID, CoTL, all 9 triple types,
   `measurement-values-map` with all fields
-- **Signed CoRIM (`#6.18`)** — decode, validate, construct (attached + detached);
+- **Signed CoRIM (`#6.18` / `#6.98`)** — decode, validate, construct (attached + detached);
   no crypto dependency
 - **Zero-dependency CBOR** — built-in encoder/decoder, deterministic per RFC 8949 §4.2.1
 - **`no_std` support** — `#![no_std]` + `alloc`; `std` feature (default) adds
   `SystemTime`-based validation
-- **Builder API** — `ComidBuilder`, `CotlBuilder`, `CorimBuilder`, `SignedCorimBuilder`.
+- **Builder API** — `ComidBuilder`, `CotlBuilder`, `CorimBuilder`, `SignedCorimBuilder`,
+  `MultiSignedCorimBuilder`.
   Opt-in environment catalog (`declare_env` / `EnvRef` / `add_*_for`) lets one
   `EnvironmentMap` be shared across triples without duplication, and
   `strict_links` adds a cross-triple env-anchoring lint.
@@ -52,7 +54,7 @@ Remote Attestation (RATS) Endorsements and Reference Values.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Builders emit draft-11 wire format; lossless JSON transcoding
+  firmware). Builders emit draft-12 wire format; lossless JSON transcoding
   preserves an existing document's wire forms rather than normalizing signed
   byte strings.
 

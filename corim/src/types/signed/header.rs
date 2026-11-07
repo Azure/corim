@@ -1,8 +1,8 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Protected COSE_Sign1 header for signed CoRIMs (draft-ietf-rats-corim-11
-//! §4.2.1).
+//! Protected COSE header for signed CoRIMs (draft-ietf-rats-corim-12
+//! §4.2.2.1).
 //!
 //! Models the decoded contents of the `protected` `bstr` element of a
 //! `#6.18(COSE_Sign1)` signed CoRIM:
@@ -16,7 +16,7 @@
 //! }
 //! ```
 //!
-//! Also handles the hash-envelope (draft-ietf-cose-hash-envelope) variant
+//! Also handles the hash-envelope (RFC 9995) variant
 //! and the X.509 header parameters from RFC 9360.
 
 #[allow(unused_imports)]
@@ -37,7 +37,7 @@ use crate::cbor::value::Value;
 use crate::Validate;
 
 // ===================================================================
-// COSE Header Label Constants (RFC 9052 / draft-ietf-rats-corim-11 §4.2)
+// COSE Header Label Constants (RFC 9052 / draft-ietf-rats-corim-12 §4.2.2)
 // ===================================================================
 
 /// COSE header: `alg` (key 1) — Algorithm identifier.
@@ -59,10 +59,10 @@ pub const COSE_HEADER_PAYLOAD_LOCATION: i64 = 260;
 pub const CORIM_CONTENT_TYPE: &str = "application/rim+cbor";
 
 // ===================================================================
-// Protected CoRIM Header Map (§4.2.1)
+// Protected CoRIM Header Map (§4.2.2.1)
 // ===================================================================
 
-/// Protected CoRIM header map (§4.2.1).
+/// Protected CoRIM header map (draft-12 §4.2.2.1).
 ///
 /// Contains the algorithm identifier, content type, and signer metadata.
 /// Supports both inline signing and hash-envelope modes.
@@ -124,7 +124,7 @@ impl ProtectedCorimHeaderMap {
 /// Builder for [`ProtectedCorimHeaderMap`].
 ///
 /// The only required field is `alg`. At least one of `corim_meta` or
-/// `cwt_claims` should be set to satisfy the meta-group constraint (§4.2.1),
+/// `cwt_claims` should be set to satisfy the meta-group constraint (§4.2.2.1),
 /// but this is validated at sign time, not build time.
 ///
 /// # Example
@@ -738,7 +738,7 @@ impl Validate for ProtectedCorimHeaderMap {
         }
 
         // If both corim-meta and cwt-claims are present, validate consistency
-        // (§4.2.1: iss must match signer-name, nbf/exp must match signature-validity)
+        // (§4.2.2.1: iss must match signer-name, nbf/exp must match signature-validity)
         if let (Some(meta), Some(cwt)) = (&self.corim_meta, &self.cwt_claims) {
             if meta.signer.signer_name != cwt.iss {
                 return Err(format!(

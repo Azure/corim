@@ -208,44 +208,7 @@ impl<'de> Deserialize<'de> for SvnChoice {
 // flags-map
 // ---------------------------------------------------------------------------
 
-/// `flags-map` — boolean operational mode flags.
-#[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
-#[cbor(non_empty)]
-pub struct FlagsMap {
-    /// `is-configured` (key 0).
-    #[cbor(key = 0, optional)]
-    pub is_configured: Option<bool>,
-    /// `is-secure` (key 1).
-    #[cbor(key = 1, optional)]
-    pub is_secure: Option<bool>,
-    /// `is-recovery` (key 2).
-    #[cbor(key = 2, optional)]
-    pub is_recovery: Option<bool>,
-    /// `is-debug` (key 3).
-    #[cbor(key = 3, optional)]
-    pub is_debug: Option<bool>,
-    /// `is-replay-protected` (key 4).
-    #[cbor(key = 4, optional)]
-    pub is_replay_protected: Option<bool>,
-    /// `is-integrity-protected` (key 5).
-    #[cbor(key = 5, optional)]
-    pub is_integrity_protected: Option<bool>,
-    /// `is-runtime-meas` (key 6).
-    #[cbor(key = 6, optional)]
-    pub is_runtime_meas: Option<bool>,
-    /// `is-immutable` (key 7).
-    #[cbor(key = 7, optional)]
-    pub is_immutable: Option<bool>,
-    /// `is-tcb` (key 8).
-    #[cbor(key = 8, optional)]
-    pub is_tcb: Option<bool>,
-    /// `is-confidentiality-protected` (key 9).
-    #[cbor(key = 9, optional)]
-    pub is_confidentiality_protected: Option<bool>,
-    /// `is-runtime-updatable` (key 10).
-    #[cbor(key = 10, optional)]
-    pub is_runtime_updatable: Option<bool>,
-}
+pub use super::flags::{Flag, FlagsMap};
 
 // ---------------------------------------------------------------------------
 // raw-value-type-choice
@@ -406,13 +369,13 @@ impl<'de> Deserialize<'de> for IpAddr {
 // int-range-type-choice
 // ---------------------------------------------------------------------------
 
-/// `int-range-type-choice` — integer or tagged int range.
+/// `int-range-type-choice` — integer or tagged int range, draft-12 §5.1.4.8.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IntRangeChoice {
     /// A single integer value.
     Int(i64),
-    /// A range `[min, max]` (CBOR tag 564). `None` represents infinity.
+    /// Inclusive `[min, max]` (tag 564); at least one bound must be present.
     Range {
         /// Minimum (inclusive), or `None` for negative infinity.
         min: Option<i64>,
@@ -421,8 +384,23 @@ pub enum IntRangeChoice {
     },
 }
 
+impl Validate for IntRangeChoice {
+    fn valid(&self) -> Result<(), String> {
+        if let Self::Range { min, max } = self {
+            if min.is_none() && max.is_none() {
+                return Err("int-range requires at least one bound (draft-12 §5.1.4.8)".into());
+            }
+            if matches!((min, max), (Some(min), Some(max)) if min > max) {
+                return Err("int-range minimum exceeds maximum (draft-12 §5.1.4.8)".into());
+            }
+        }
+        Ok(())
+    }
+}
+
 impl Serialize for IntRangeChoice {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.valid().map_err(serde::ser::Error::custom)?;
         match self {
             IntRangeChoice::Int(v) => s.serialize_i64(*v),
             IntRangeChoice::Range { min, max } => {
@@ -474,7 +452,9 @@ impl<'de> Deserialize<'de> for IntRangeChoice {
                             ))
                         }
                     };
-                    Ok(IntRangeChoice::Range { min, max })
+                    let range = IntRangeChoice::Range { min, max };
+                    range.valid().map_err(serde::de::Error::custom)?;
+                    Ok(range)
                 }
                 _ => Err(serde::de::Error::custom("tag 564 must wrap [min, max]")),
             },
@@ -679,15 +659,18 @@ pub struct MeasurementValuesMap {
     /// `bool` (key 16), editor's draft (2026-10-07) Section 5.1.4.5.2.
     #[cbor(key = 16, optional, non_null)]
     pub r#bool: Option<super::matcher::BoolMatcher>,
-    /// `number` (key 17), editor's draft (2026-10-07) Section 5.1.4.5.2.
+    /// `integer` (key 17), draft-ietf-rats-corim-12 §5.1.4.5.2.
     #[cbor(key = 17, optional, non_null)]
-    pub number: Option<super::matcher::NumberMatcher>,
+    pub integer: Option<super::matcher::IntegerMatcher>,
     /// `text` (key 18), editor's draft (2026-10-07) Section 5.1.4.5.2.
     #[cbor(key = 18, optional, non_null)]
     pub text: Option<super::matcher::TextMatcher>,
     /// `bytes` (key 19), editor's draft (2026-10-07) Section 5.1.4.5.2.
     #[cbor(key = 19, optional, non_null)]
     pub bytes: Option<super::matcher::BytesMatcher>,
+    /// `float` (key 20), draft-ietf-rats-corim-12 §5.1.4.5.2.
+    #[cbor(key = 20, optional, non_null)]
+    pub float: Option<super::matcher::FloatMatcher>,
     /// Profile-defined extension entries. Keyed by the raw integer CBOR
     /// map key; values are preserved as opaque [`Value`] trees. Populated
     /// by the deserializer for any integer key not matched by the fields
@@ -699,6 +682,57 @@ pub struct MeasurementValuesMap {
 }
 
 impl MeasurementValuesMap {
+    /// Validate generic matcher assertions per draft-12 §5.1.4.9.
+    ///
+    /// Evidence, Reference Values and Endorsements use bare values only.
+    pub(crate) fn valid_assertion(&self) -> Result<(), String> {
+        self.valid_matchers()?;
+        if self
+            .integer
+            .as_ref()
+            .is_some_and(|value| !matches!(value, super::matcher::IntegerMatcher::Exact(_)))
+            || self
+                .float
+                .as_ref()
+                .is_some_and(|value| !matches!(value, super::matcher::FloatMatcher::Exact(_)))
+            || self
+                .text
+                .as_ref()
+                .is_some_and(|value| !matches!(value, super::matcher::TextMatcher::Exact(_)))
+            || self
+                .bytes
+                .as_ref()
+                .is_some_and(|value| !matches!(value, super::matcher::BytesMatcher::Exact(_)))
+        {
+            return Err(
+                "range/set matchers are only permitted in conditions (draft-12 §5.1.4.9)".into(),
+            );
+        }
+        Ok(())
+    }
+
+    pub(crate) fn valid_matchers(&self) -> Result<(), String> {
+        if let Some(flags) = &self.flags {
+            flags.valid()?;
+        }
+        if let Some(value) = &self.int_range {
+            value.valid()?;
+        }
+        if let Some(value) = &self.integer {
+            value.valid()?;
+        }
+        if let Some(value) = &self.float {
+            value.valid()?;
+        }
+        if let Some(value) = &self.text {
+            value.valid()?;
+        }
+        if let Some(value) = &self.bytes {
+            value.valid()?;
+        }
+        Ok(())
+    }
+
     /// Create a new empty `MeasurementValuesMap`.
     ///
     /// Note: encoding will fail due to `non_empty` unless at least one field is set.
@@ -719,9 +753,10 @@ impl MeasurementValuesMap {
             integrity_registers: None,
             int_range: None,
             r#bool: None,
-            number: None,
+            integer: None,
             text: None,
             bytes: None,
+            float: None,
             extra_entries: BTreeMap::new(),
         }
     }
@@ -754,7 +789,8 @@ impl Validate for MeasurementValuesMap {
             && self.integrity_registers.is_none()
             && self.int_range.is_none()
             && self.r#bool.is_none()
-            && self.number.is_none()
+            && self.integer.is_none()
+            && self.float.is_none()
             && self.text.is_none()
             && self.bytes.is_none()
             && self.extra_entries.is_empty()
@@ -762,15 +798,7 @@ impl Validate for MeasurementValuesMap {
             return Err("no measurement value set".into());
         }
         // Validate digests if present: at least one digest required
-        if let Some(value) = &self.number {
-            value.valid()?;
-        }
-        if let Some(value) = &self.text {
-            value.valid()?;
-        }
-        if let Some(value) = &self.bytes {
-            value.valid()?;
-        }
+        self.valid_matchers()?;
         if let Some(ref digests) = self.digests {
             if digests.is_empty() {
                 return Err("digests list must not be empty".into());

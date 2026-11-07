@@ -20,7 +20,9 @@ use crate::types::comid::ComidTag;
 use crate::types::corim::{ConciseTagChoice, ConciseTlTag, CorimMap};
 use crate::types::coswid::ConciseSwidTag;
 use crate::types::environment::EnvironmentMap;
-use crate::types::measurement::{Digest, MeasurementMap, SvnChoice};
+use crate::types::measurement::{
+    Digest, IntRangeChoice, MeasurementMap, RawValueChoice, SvnChoice,
+};
 use crate::types::tags::{
     CORIM_KEY_RIM_VALIDITY, COTL_KEY_VALIDITY, TAG_CORIM, VALIDITY_KEY_NOT_BEFORE,
 };
@@ -632,11 +634,24 @@ pub fn match_reference_values(
     let mut corroborated = Vec::new();
 
     for triple in ref_triples {
+        if triple
+            .measurements()
+            .iter()
+            .any(|measurement| measurement.mval.valid_assertion().is_err())
+        {
+            continue;
+        }
         for ev in evidence {
             if !environment_matches(triple.environment(), &ev.environment) {
                 continue;
             }
-
+            if ev
+                .measurements
+                .iter()
+                .any(|measurement| measurement.mval.valid_assertion().is_err())
+            {
+                continue;
+            }
             let conditions = triple.measurements();
             if !conditions.is_empty()
                 && conditions
@@ -666,7 +681,8 @@ pub struct EvidenceClaim {
 /// Like [`match_reference_values`] but consults a profile's
 /// [`Profile::match_measurement`] hook for each candidate
 /// (reference, evidence) measurement pair before falling back to the
-/// crate's core comparison rules, including matcher conditions for keys 16-19.
+/// crate's core comparison rules, including bare assertions for keys 16-20
+/// (draft-ietf-rats-corim-12 §5.1.4.9).
 /// All reference measurements must match within one evidence claim; successful
 /// results copy that claim's complete measurement list, as in
 /// [`match_reference_values`] (draft-ietf-rats-corim-11 §8.2.4.2.1).
@@ -711,6 +727,15 @@ pub fn match_reference_values_with_profile<P: ?Sized + Profile>(
     ctx: &MatchContext,
 ) -> Result<Vec<CorroboratedClaim>, ValidationError> {
     let mut corroborated = Vec::new();
+    for measurement in ref_triples.iter().flat_map(|triple| triple.measurements()) {
+        measurement
+            .mval
+            .valid_assertion()
+            .map_err(ValidationError::Invalid)?;
+    }
+    if !ref_triples.is_empty() {
+        validate_matcher_evidence(evidence)?;
+    }
 
     if let Some(profile) = profile {
         for triple in ref_triples {
@@ -769,7 +794,9 @@ fn measurement_matches_with_profile<P: ?Sized + Profile>(
     evidence.iter().any(
         |ev| match profile.and_then(|p| p.match_measurement(reference, ev, ctx)) {
             Some(verdict) => verdict,
-            None => single_measurement_matches(reference, ev),
+            None => {
+                known_comparison_algorithms(reference) && single_measurement_matches(reference, ev)
+            }
         },
     )
 }
@@ -821,6 +848,12 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     ctx: &MatchContext,
 ) -> Result<Vec<EndorsedClaim>, ValidationError> {
     let mut endorsed = Vec::new();
+    if !ces_triples.is_empty() {
+        validate_matcher_evidence(evidence)?;
+    }
+    for triple in ces_triples {
+        triple.valid().map_err(ValidationError::Invalid)?;
+    }
 
     if let Some(profile) = profile {
         if !ces_triples.is_empty() {
@@ -833,7 +866,16 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
 
         let mut matching_evidence = Vec::new();
         for evidence_claim in evidence {
-            if environment_matches(&condition.environment, &evidence_claim.environment) {
+            if environment_matches(&condition.environment, &evidence_claim.environment)
+                && condition.claims_list.iter().all(|measurement| {
+                    measurement_matches_with_profile(
+                        measurement,
+                        &evidence_claim.measurements,
+                        profile,
+                        ctx,
+                    )
+                })
+            {
                 matching_evidence.push(evidence_claim);
             }
         }
@@ -857,6 +899,16 @@ pub fn apply_endorsement_series_with_profile<P: ?Sized + Profile>(
     }
 
     Ok(endorsed)
+}
+
+fn validate_matcher_evidence(evidence: &[EvidenceClaim]) -> Result<(), ValidationError> {
+    for measurement in evidence.iter().flat_map(|claim| &claim.measurements) {
+        measurement
+            .mval
+            .valid_assertion()
+            .map_err(ValidationError::Invalid)?;
+    }
+    Ok(())
 }
 
 fn validate_profile_evidence<P: ?Sized + Profile>(
@@ -1007,42 +1059,66 @@ fn class_matches(
 /// - `digests` (key 2) — §8.2.4.4.5.4, per-algorithm comparison
 /// - `svn` (key 1) — §8.2.4.4.5.3, exact or minimum
 /// - `version` (key 0) — exact match
-/// - `flags` (key 3) — exact match
-/// - `raw-value` (key 4) — exact match
+/// - `flags` (key 3) — each condition flag must be present and equal
+/// - `raw-value` (key 4) — byte equality under the condition's mask
 /// - `mac-addr` (key 6) — exact match
 /// - `ip-addr` (key 7) — exact match
 /// - `serial-number` (key 8) — exact match
 /// - `ueid` (key 9) — exact match
 /// - `uuid` (key 10) — exact match
 /// - `name` (key 11) — exact match
-/// - `integrity-registers` (key 14) — exact match
-/// - `int-range` (key 15) — exact match
+/// - `cryptokeys` (key 13) — ordered deterministic-CBOR prefix comparison
+/// - `integrity-registers` (key 14) — condition registers must match digests
+/// - `int-range` (key 15) — inclusive range inclusion/subsumption
 /// - `bool` (key 16) - exact boolean match
-/// - `number` (key 17) - numeric equality, inclusive range, or set membership
+/// - `integer` (key 17) - integer equality, inclusive range, or set membership
 /// - `text` (key 18) - exact text or set membership
 /// - `bytes` (key 19) - exact bytes or set membership
+/// - `float` (key 20) - float equality, inclusive range, or set membership
 ///
-/// Keys 16-19 follow the editor's draft (2026-10-07), Sections
-/// 8.3.4.4.5.9-12. Number/text/bytes observations must be exact values, not
+/// Keys 16-20 follow draft-ietf-rats-corim-12 §5.1.4.9 and
+/// §8.3.4.4.5.10-14. Integer/float/text/bytes assertions must be exact values, not
 /// sets or ranges. Missing required observations and invalid matchers do not
 /// match; NaN never matches and infinities compare normally.
 ///
-/// Note: `cryptokeys` (key 13) is not compared — it carries authorized
-/// keys, not a measurement value to match against evidence. Profile-defined
-/// extension entries in [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries]
-/// are not compared by this function; profile-aware matching is provided
-/// by [`match_reference_values_with_profile`].
+/// Unknown condition attributes are non-matches unless a profile supplies the
+/// comparison algorithm (draft-12 §8.3.4.4.5.1). Profile-aware matching is
+/// provided by [`match_reference_values_with_profile`]. Additional assertion
+/// attributes are ignored. Element identifiers must both be absent or equal
+/// (§8.3.4.4.4); absent identifiers are not wildcards.
 fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) -> bool {
-    evidence
+    known_comparison_algorithms(reference)
+        && evidence
+            .iter()
+            .any(|ev| single_measurement_matches(reference, ev))
+}
+
+// Unknown attributes cannot acquire semantics merely by being byte-identical.
+// The deprecated key-5 mask is part of the key-4 comparison, not a separate
+// assertion path (draft-12 §8.3.4.4.5.1 and §8.3.4.4.5.6).
+fn known_comparison_algorithms(condition: &MeasurementMap) -> bool {
+    condition
+        .mval
+        .extra_entries
         .iter()
-        .any(|ev| single_measurement_matches(reference, ev))
+        .all(|(key, value)| core_handles_mval_extension(condition, *key, value))
+}
+
+pub(crate) fn core_handles_mval_extension(
+    condition: &MeasurementMap,
+    key: i64,
+    value: &cbor::value::Value,
+) -> bool {
+    key == crate::types::tags::MVAL_KEY_RAW_VALUE_MASK_DEPRECATED
+        && matches!(condition.mval.raw_value, Some(RawValueChoice::Bytes(_)))
+        && matches!(value, cbor::value::Value::Bytes(_))
 }
 
 /// Per-pair core matching primitive: tests whether a single reference
 /// measurement matches a single evidence measurement under the crate's
-/// core comparison rules: equality for ordinary fields, typed SVN comparison,
+/// core comparison rules: containment for map paths, typed SVN comparison,
 /// and exact/range/set conditions for the generic measurement matchers at
-/// keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12).
+/// keys 16-20 (draft-ietf-rats-corim-12 §5.1.4.9, §8.3.4.4.5.10-14).
 /// Used by both the loop in
 /// [`measurement_matches`] and by the profile-aware fallback path in
 /// [`measurement_matches_with_profile`].
@@ -1050,13 +1126,26 @@ fn measurement_matches(reference: &MeasurementMap, evidence: &[MeasurementMap]) 
 /// Public companion: [`core_fields_match`] (same logic, stable name for
 /// out-of-crate [`Profile`][crate::profile::Profile] implementations).
 fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementMap) -> bool {
+    if reference.mval.valid_matchers().is_err() || ev_meas.mval.valid_assertion().is_err() {
+        return false;
+    }
     if reference.mval.r#bool.is_some() && reference.mval.r#bool != ev_meas.mval.r#bool {
         return false;
     }
-    if let Some(condition) = &reference.mval.number {
+    if let Some(condition) = &reference.mval.integer {
         if !ev_meas
             .mval
-            .number
+            .integer
+            .as_ref()
+            .is_some_and(|value| condition.matches(value))
+        {
+            return false;
+        }
+    }
+    if let Some(condition) = &reference.mval.float {
+        if !ev_meas
+            .mval
+            .float
             .as_ref()
             .is_some_and(|value| condition.matches(value))
         {
@@ -1083,12 +1172,10 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
             return false;
         }
     }
-    // Match mkey if specified in reference
-    if let Some(ref ref_mkey) = reference.mkey {
-        match &ev_meas.mkey {
-            Some(ev_mkey) if ev_mkey == ref_mkey => {}
-            _ => return false,
-        }
+    // Element identifiers are either both omitted or deterministically equal
+    // (draft-12 §8.3.4.4.4).
+    if reference.mkey != ev_meas.mkey {
+        return false;
     }
 
     // Match digests if present in reference (§8.2.4.4.5.4)
@@ -1125,14 +1212,52 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
         return false;
     }
 
-    // Match flags if present in reference
-    if reference.mval.flags.is_some() && reference.mval.flags != ev_meas.mval.flags {
-        return false;
+    if let Some(condition) = &reference.mval.flags {
+        let Some(entry) = &ev_meas.mval.flags else {
+            return false;
+        };
+        for (flag, value) in condition.iter() {
+            if flag.is_extension() || entry.get(flag) != Some(value) {
+                return false;
+            }
+        }
     }
 
     // Match raw-value if present in reference
-    if reference.mval.raw_value.is_some() && reference.mval.raw_value != ev_meas.mval.raw_value {
-        return false;
+    if let Some(condition) = &reference.mval.raw_value {
+        let Some(RawValueChoice::Bytes(entry)) = &ev_meas.mval.raw_value else {
+            return false;
+        };
+        let (expected, mask) = match condition {
+            RawValueChoice::Bytes(value) => {
+                let mask = match reference
+                    .mval
+                    .extra_entries
+                    .get(&crate::types::tags::MVAL_KEY_RAW_VALUE_MASK_DEPRECATED)
+                {
+                    None => None,
+                    Some(cbor::value::Value::Bytes(mask)) => Some(mask),
+                    Some(_) => return false,
+                };
+                (value, mask)
+            }
+            RawValueChoice::Masked { value, mask } => (value, Some(mask)),
+        };
+        if expected.len() != entry.len() || mask.is_some_and(|mask| mask.len() != expected.len()) {
+            return false;
+        }
+        if let Some(mask) = mask {
+            if !expected
+                .iter()
+                .zip(entry)
+                .zip(mask)
+                .all(|((expected, entry), mask)| expected & mask == entry & mask)
+            {
+                return false;
+            }
+        } else if expected != entry {
+            return false;
+        }
     }
 
     // Match mac-addr if present in reference
@@ -1167,19 +1292,61 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
         return false;
     }
 
-    // Match integrity-registers if present in reference
-    if reference.mval.integrity_registers.is_some()
-        && reference.mval.integrity_registers != ev_meas.mval.integrity_registers
-    {
-        return false;
+    if let Some(condition) = &reference.mval.cryptokeys {
+        let Some(entry) = &ev_meas.mval.cryptokeys else {
+            return false;
+        };
+        if condition.len() > entry.len()
+            || !condition.iter().zip(entry).all(|(condition, entry)| {
+                match (cbor::encode(condition), cbor::encode(entry)) {
+                    (Ok(condition), Ok(entry)) => condition == entry,
+                    _ => false,
+                }
+            })
+        {
+            return false;
+        }
     }
 
-    // Match int-range if present in reference
-    if reference.mval.int_range.is_some() && reference.mval.int_range != ev_meas.mval.int_range {
-        return false;
+    if let Some(condition) = &reference.mval.integrity_registers {
+        let Some(entry) = &ev_meas.mval.integrity_registers else {
+            return false;
+        };
+        if !condition.0.iter().all(|(identifier, digests)| {
+            entry
+                .0
+                .get(identifier)
+                .is_some_and(|entry| digests_match(digests, entry))
+        }) {
+            return false;
+        }
+    }
+
+    if let Some(condition) = &reference.mval.int_range {
+        let Some(entry) = &ev_meas.mval.int_range else {
+            return false;
+        };
+        if !int_range_matches(condition, entry) {
+            return false;
+        }
     }
 
     true
+}
+
+/// Inclusive range subsumption, draft-12 §8.3.4.4.5.9.
+fn int_range_matches(condition: &IntRangeChoice, entry: &IntRangeChoice) -> bool {
+    if condition.valid().is_err() || entry.valid().is_err() {
+        return false;
+    }
+    let bounds = |range: &IntRangeChoice| match range {
+        IntRangeChoice::Int(value) => (Some(*value), Some(*value)),
+        IntRangeChoice::Range { min, max } => (*min, *max),
+    };
+    let (min, max) = bounds(condition);
+    let (entry_min, entry_max) = bounds(entry);
+    min.is_none_or(|min| entry_min.is_some_and(|entry| entry >= min))
+        && max.is_none_or(|max| entry_max.is_some_and(|entry| entry <= max))
 }
 
 /// Tests whether a reference measurement's core (non-extension) fields
@@ -1192,17 +1359,17 @@ fn single_measurement_matches(reference: &MeasurementMap, ev_meas: &MeasurementM
 /// [`MeasurementValuesMap::extra_entries`][crate::types::measurement::MeasurementValuesMap::extra_entries])
 /// but want to delegate the structural fields (`mkey`, `digests`, `svn`,
 /// `version`, `name`, `flags`, `raw-value`, `mac-addr`, `ip-addr`,
-/// `serial-number`, `ueid`, `uuid`, `integrity-registers`, `int-range`,
-/// `bool`, `number`, `text`, `bytes`)
+/// `serial-number`, `ueid`, `uuid`, `cryptokeys`, `integrity-registers`, `int-range`,
+/// `bool`, `integer`, `text`, `bytes`, `float`)
 /// to the crate's default matcher.
 ///
-/// For keys 16-19 (editor's draft, 2026-10-07, Sections 8.3.4.4.5.9-12),
-/// booleans match exactly; number conditions support equality, inclusive
+/// For keys 16-20 (draft-ietf-rats-corim-12 §5.1.4.9, §8.3.4.4.5.10-14),
+/// booleans match exactly; integer/float conditions support equality, inclusive
 /// ranges and set membership; text and byte conditions support equality and
-/// set membership. Number/text/bytes observations must be exact values, not
+/// set membership. Integer/float/text/bytes assertions must be exact values, not
 /// sets or ranges. Missing observations or invalid matchers return `false`.
-/// Numeric comparisons preserve integer precision across integer/float types;
-/// NaN never matches and infinities compare normally. A field absent from the
+/// Numeric codepoints never cross domains. Integers retain full CBOR precision;
+/// NaN is invalid and infinities compare normally. A field absent from the
 /// reference imposes no condition on the corresponding evidence field.
 ///
 /// Note: this function does NOT inspect

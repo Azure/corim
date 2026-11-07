@@ -468,6 +468,18 @@ impl Validate for TriplesMap {
                     .map_err(|e| format!("membership triple at index {i}: {e}"))?;
             }
         }
+        // Matcher forms depend on whether measurements assert values or
+        // constrain them (draft-12 §5.1.4.9).
+        if let Some(triples) = &self.conditional_endorsement_series {
+            for triple in triples {
+                triple.valid()?;
+            }
+        }
+        if let Some(triples) = &self.conditional_endorsement {
+            for triple in triples {
+                triple.valid()?;
+            }
+        }
         Ok(())
     }
 }
@@ -482,6 +494,9 @@ impl Validate for ReferenceTriple {
         }
         for (i, m) in self.1.iter().enumerate() {
             m.valid()
+                .map_err(|e| format!("measurement at index {i}: {e}"))?;
+            m.mval
+                .valid_assertion()
                 .map_err(|e| format!("measurement at index {i}: {e}"))?;
         }
         Ok(())
@@ -498,6 +513,9 @@ impl Validate for EndorsedTriple {
         }
         for (i, m) in self.1.iter().enumerate() {
             m.valid()
+                .map_err(|e| format!("measurement at index {i}: {e}"))?;
+            m.mval
+                .valid_assertion()
                 .map_err(|e| format!("measurement at index {i}: {e}"))?;
         }
         Ok(())
@@ -582,6 +600,24 @@ impl Validate for ConditionalEndorsementSeriesTriple {
         if self.1.is_empty() {
             return Err("no measurement entries in series".into());
         }
+        for measurement in &self.0.claims_list {
+            measurement.valid()?;
+        }
+        for record in &self.1 {
+            if record.0.is_empty() {
+                return Err("series condition must not be empty".into());
+            }
+            if record.1.is_empty() {
+                return Err("series addition must not be empty".into());
+            }
+            for measurement in &record.0 {
+                measurement.valid()?;
+            }
+            for measurement in &record.1 {
+                measurement.valid()?;
+                measurement.mval.valid_assertion()?;
+            }
+        }
         Ok(())
     }
 }
@@ -593,6 +629,9 @@ impl Validate for StatefulEnvironmentRecord {
             .map_err(|e| format!("environment validation failed: {e}"))?;
         if self.1.is_empty() {
             return Err("measurements must not be empty".into());
+        }
+        for measurement in &self.1 {
+            measurement.valid()?;
         }
         Ok(())
     }

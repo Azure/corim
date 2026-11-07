@@ -1,7 +1,7 @@
 # corim
 
 **Concise Reference Integrity Manifest (CoRIM)** — Rust implementation of
-[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html).
+[draft-ietf-rats-corim-12](https://www.ietf.org/archive/id/draft-ietf-rats-corim-12.html).
 
 This crate provides CBOR-native Rust types for the CoRIM / CoMID CDDL schema,
 a builder API, validation/appraisal logic, and signed CoRIM (COSE_Sign1)
@@ -16,10 +16,11 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
   all fields (digests, SVN, flags, raw-value, MAC/IP addresses, integrity
   registers, int-range, crypto keys, etc.).
 
-- **Signed CoRIM (`#6.18`)** — decode, validate, and construct COSE_Sign1-corim
-  structures per §4.2. Supports both attached and detached payload modes.
+- **Signed CoRIM (`#6.18` / `#6.98`)** — decode, validate, and construct
+  COSE_Sign1 and multi-signature COSE_Sign structures per §4.2.
+  Supports both attached and detached payload modes.
   No cryptographic dependencies — the caller signs/verifies externally using
-  the emitted `Sig_structure1` TBS blob. Protected header extraction includes
+  the emitted `Signature1` or `Signature` TBS blob. Protected header extraction includes
   `corim-meta`, `CWT-Claims`, and hash-envelope fields.
 
 - **Zero-dependency CBOR** — built-in CBOR encoder/decoder with deterministic
@@ -43,7 +44,7 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 
 - **Validation & Appraisal** — core and registered-profile validation,
   reference value matching (Phase 3), and conditional endorsement series
-  application (Phase 4) per draft-11 §8.2.
+  application (Phase 4) per draft-12 §8.3.
 
 - **Profile framework** — [`corim::profile`](corim/src/profile.rs) defines a
   `Profile` trait, a `ProfileRegistry`, and a `MatchContext` (epoch-aware)
@@ -63,7 +64,7 @@ support for Remote Attestation (RATS) Endorsements and Reference Values.
 - **TCG / NVIDIA decode interop** — accepts the legacy `#6.500` / `#6.502`
   outer wrappers, bare `corim-map` payloads, and TCG-style `#6.506(map)`
   CoMID nesting seen in real-world signed CoRIMs (notably NVIDIA NIC
-  firmware). Builders emit draft-11 wire format; lossless JSON transcoding
+  firmware). Builders emit draft-12 wire format; lossless JSON transcoding
   preserves existing wire forms without normalizing signed byte strings.
   See [`corim::compat`](corim/src/compat.rs) for the full list.
 
@@ -118,19 +119,70 @@ let (_corim, _comids) = corim::validate::decode_and_validate(&bytes).unwrap();
 
 ## Compliance notes
 
-This crate implements CoRIM per draft-ietf-rats-corim-11.
+This crate implements CoRIM wire types and selected appraisal operations per
+draft-ietf-rats-corim-12. It is not a complete reference-verifier implementation.
 
 | Feature | Status |
 |---------|--------|
 | **CoMID** (§5) — `#6.506` | ✅ Fully modeled — types, builder, validation, appraisal |
 | **CoTL** (§6) — `#6.508` | ✅ Fully modeled — `ConciseTlTag`, `CotlBuilder`, validity checks |
 | **CoSWID** (RFC 9393) — `#6.505` | ✅ Structured — `ConciseSwidTag`, `SwidEntity`, `SwidLink`; payload/evidence opaque |
-| **Signed CoRIM** (§4.2) — `#6.18` | ✅ Decode, validate, construct (attached + detached); no crypto dependency |
+| **Signed CoRIM** (§4.2) — `#6.18` / `#6.98` | ✅ Decode, validate, construct (attached + detached); no crypto dependency |
 | CDDL extension sockets | ✅ Unknown keys preserved in `extra_entries`; registered profiles can validate and appraise them |
 | CoTS (concise-ta-stores) | ❌ Separate draft, not modeled |
 | `no_std` + `alloc` | ✅ Library crate compiles without `std`; `std` feature is default-on |
 
 ## Signed CoRIM
+
+Draft-12 multi-signature support uses `CoseSignCorim`, `CoseSignature`, and
+`MultiSignedCorimBuilder` alongside the unchanged Sign1-specific APIs.
+`document::validate` and `decode_signed_envelope` dispatch to
+`SignedEnvelope::Sign1` or `SignedEnvelope::Sign`. Generic document callers
+must match this enum rather than assuming every signed envelope is Sign1.
+Each multi-signature TBS uses the exact original body and indexed signer
+protected bytes, as required by RFC 9052 §4.4. The first signer must agree
+with the body creator identity and algorithm; every signature entry carries
+its own complete protected header. No missing headers are inherited.
+The caller must authenticate at least the creator's signature and apply its
+own additional-signer policy before trusting the document (§8.3.3).
+
+The CLI validates, diagnoses, converts and extracts both envelope formats.
+`extract --header` selects the body header; add `--signature-index N` to
+select a COSE_Sign signer's original header. Readable conversion projects
+the unsigned payload with informational signer summaries; `--lossless`
+preserves the full envelope. CLI `sign prepare/finalize` remains the Sign1
+workflow; use the library multi-signature builder for external signing.
+
+### Draft-12 numeric migration
+
+The editor-draft mixed `number` field and `NumberMatcher` are replaced by
+`integer: Option<IntegerMatcher>` (key 17) and
+`float: Option<FloatMatcher>` (key 20). Integers and floats never cross-match.
+Float-at-key-17 and mixed-domain sets/ranges are rejected, not normalized.
+NaN is invalid everywhere in a float matcher; infinite range bounds and
+all-unbounded ranges are invalid. Null is the only unbounded-end encoding.
+Range/set forms are conditions only; assertions use bare values. Readable
+JSON uses `integer` / `float` keys and matching `integer-range`,
+`integer-set`, `float-range`, `float-set` wrappers. Existing `$comment` and
+`"//"` annotations remain supported. Lossless JSON remains unchanged.
+
+### Typed operational flags
+
+`FlagsMap` is now a private typed-key map rather than an eleven-field struct.
+Use `FlagsMap::default()` and `insert(Flag::IsSecure, Value::Bool(true))`,
+then read through `get(&Flag::IsSecure)` or iterate all entries with `iter()`.
+Known flags require boolean values; integer and text extension labels retain
+their original CBOR values. Reserved integer aliases canonicalize to the named
+flag, while text `"1"` stays distinct from integer key 1.
+Numeric-looking text labels and text labels that alias standard flag names
+require `convert --lossless`; readable serialization rejects them before
+prose-key normalization. Unambiguous text extensions remain readable.
+Unknown condition flag paths fail closed in core/first-party appraisal unless
+a profile explicitly supplies their comparison algorithm. Extra assertion
+flags are allowed. Known-field wire encodings and readable JSON names remain
+unchanged; Rust callers using field assignments or literals must migrate.
+First-party profiles still delegate recognized core modifiers, such as the
+deprecated key-5 byte-string mask paired with a bare raw value, to core matching.
 
 The crate supports creating and parsing signed CoRIM documents (`#6.18` /
 `COSE_Sign1-corim`) without any cryptographic dependencies. The caller
@@ -439,8 +491,8 @@ All CBOR-valued differences use the shared lossless JSON representation,
 including finite and non-finite floats.
 
 The structure/value boundary follows
-[draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)
-§8.2.4.4. **Structure** — which must match — is the environment, the
+[draft-ietf-rats-corim-12](https://www.ietf.org/archive/id/draft-ietf-rats-corim-12.html)
+§8.3.4.4. **Structure** — which must match — is the environment, the
 measurement keys, the *presence* and *type* of each measurement
 attribute, the digest *algorithm(s)*, and the authorities. **Values** —
 which may differ — are the measured bytes and scalars: digest values,

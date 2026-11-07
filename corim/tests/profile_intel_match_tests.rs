@@ -375,9 +375,8 @@ fn match_measurement_returns_some_false_when_core_fields_disagree() {
 
 #[test]
 fn dispatch_through_validate_passes_with_intel_profile() {
-    // Without the profile, core sees only structural fields and the
-    // Intel constraint is silently ignored. With the profile, the
-    // numeric-ge check runs and the pair matches.
+    // Unknown comparison algorithms fail closed without the profile.
+    // With the profile, the numeric-ge check runs and the pair matches.
     let p = IntelProfile::new();
     let mut r_extras = BTreeMap::new();
     r_extras.insert(
@@ -401,11 +400,9 @@ fn dispatch_through_validate_passes_with_intel_profile() {
     assert_eq!(with_profile[0].measurements.len(), 1);
     assert_eq!(with_profile[0].measurements, evidence[0].measurements);
 
-    // Sanity: without profile, core also says it matches (it ignores
-    // extras), so we can't differentiate solely on this case. Use a
-    // FAILING-with-profile case below to prove profile is consulted.
+    // An unknown profile comparison cannot silently disappear.
     let no_profile = match_reference_values(&[triple], &evidence);
-    assert_eq!(no_profile.len(), 1);
+    assert!(no_profile.is_empty());
 }
 
 #[test]
@@ -449,7 +446,7 @@ fn dispatch_through_validate_requires_all_profile_measurements() {
 #[test]
 fn dispatch_through_validate_rejects_with_intel_profile() {
     // Same shape but evidence violates the ge-5 constraint.
-    // Without profile, core ignores extras and reports match.
+    // Without profile, the unknown comparison algorithm is a non-match.
     // With profile, the violation is detected and the pair is rejected.
     let p = IntelProfile::new();
     let mut r_extras = BTreeMap::new();
@@ -463,13 +460,9 @@ fn dispatch_through_validate_rejects_with_intel_profile() {
     e_extras.insert(MVAL_TEE_ISVSVN, Value::Integer(3));
     let evidence = evidence_with_extras(e_extras);
 
-    // No profile: core ignores extras → false positive.
+    // No profile: unknown comparison algorithms fail closed.
     let no_profile = match_reference_values(std::slice::from_ref(&triple), &evidence);
-    assert_eq!(
-        no_profile.len(),
-        1,
-        "core ignores extras so it reports a false-positive match"
-    );
+    assert!(no_profile.is_empty());
 
     // With profile: Intel evaluator catches the violation.
     let with_profile =

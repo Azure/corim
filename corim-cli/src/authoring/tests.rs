@@ -41,6 +41,66 @@ fn template() -> Value {
 }
 
 #[test]
+fn draft12_numeric_choices_are_readable_and_domain_checked() {
+    for (name, value) in [
+        (
+            "integer-range",
+            json!([null, {"type": "integer", "value": "18446744073709551615"}]),
+        ),
+        ("integer-set", json!([1, 2])),
+        ("float-range", json!([1.0, null])),
+        (
+            "float-set",
+            json!([1.0, {"type": "float-bits", "value": "7ff0000000000000"}]),
+        ),
+    ] {
+        let json = json!({"type": name, "value": value});
+        let wire = value_conv::json_to_value(&json).unwrap();
+        let readable = value_conv::value_to_json(&wire).unwrap();
+        assert_eq!(readable["type"], name);
+        assert_eq!(value_conv::json_to_value(&readable).unwrap(), wire);
+    }
+    for (name, value) in [
+        ("integer-range", json!([1.0, null])),
+        ("integer-set", json!([1, 2.0])),
+        ("float-range", json!([1, null])),
+        ("float-set", json!([1.0, 2])),
+        (
+            "float-range",
+            json!([null, {"type": "float-bits", "value": "7ff0000000000000"}]),
+        ),
+        (
+            "float-set",
+            json!([1.0, {"type": "float-bits", "value": "7ff8000000000000"}]),
+        ),
+        ("integer-range", json!([null, null])),
+        ("int-range", json!([null, null])),
+        ("int-range", json!([2, 1])),
+        ("number-range", json!([1, null])),
+        ("number-set", json!([1, 2])),
+    ] {
+        assert!(value_conv::json_to_value(&json!({"type": name, "value": value})).is_err());
+    }
+}
+
+#[test]
+fn draft12_numeric_prose_templates_preserve_both_domains() {
+    let mut source = template();
+    source["comids"][0]["triples"]["reference-triples"][0]["ref-claims"][0]["value"] = json!({
+        "integer": {"type": "integer", "value": "-18446744073709551616"},
+        "float": 1.0,
+    });
+    let bytes = encode_template(source, None).unwrap();
+    let readable = to_template(&bytes).unwrap();
+    let values =
+        &readable["comids"][0]["triples"]["reference-triples"][0]["ref-claims"][0]["value"];
+    assert!(values.get("integer").is_some());
+    assert!(values.get("float").is_some());
+    assert!(values.get("number").is_none());
+    assert_eq!(encode_template(readable, None).unwrap(), bytes);
+}
+
+#[test]
 #[cfg(all(feature = "azure", feature = "cca"))]
 fn six_readable_templates_roundtrip_with_comments_and_aliases() {
     for (source, original) in TEMPLATES.into_iter().zip(ORIGINAL_BYTES) {

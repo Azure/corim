@@ -189,6 +189,7 @@ fn run_validate(cli: ValidateArgs) {
     }
     let signed_info = document
         .signed
+        .as_ref()
         .map(signed_info)
         .transpose()
         .unwrap_or_else(|error| validation_failure(&cli.format, &error, 2));
@@ -230,7 +231,7 @@ fn run_validate(cli: ValidateArgs) {
     if let Some(baseline_path) = &cli.baseline {
         match baseline::run(
             Some(&corim),
-            signed_info.as_ref().map(|i| &i.protected),
+            document.signed.as_ref(),
             baseline_path,
             &cli.format,
             now,
@@ -295,6 +296,8 @@ fn validation_failure(format: &str, error: &str, code: i32) -> ! {
 /// Mirrors the four elements of the RFC 9052 §4 `COSE_Sign1` array:
 ///   `[ protected, unprotected, payload, signature ]`
 struct SignedInfo {
+    tag: u64,
+    signers: Vec<SignatureInfo>,
     // -- protected header (decoded fields + raw bstr) --
     alg: corim::types::signed::CoseAlgorithm,
     content_type: Option<String>,
@@ -320,12 +323,45 @@ struct SignedInfo {
     signature: Vec<u8>,
 }
 
-fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> Result<SignedInfo, String> {
-    let unprotected_bytes =
-        corim::cbor::encode(&corim::cbor::value::Value::Map(signed.unprotected.clone()))
-            .map_err(|error| format!("encoding unprotected header for display: {error}"))?;
+struct SignatureInfo {
+    protected: corim::types::signed::ProtectedCorimHeaderMap,
+    protected_bytes: Vec<u8>,
+    unprotected_bytes: Vec<u8>,
+    signature: Vec<u8>,
+}
+
+fn signed_info(signed: &corim::types::signed::SignedEnvelope) -> Result<SignedInfo, String> {
+    use corim::types::signed::SignedEnvelope;
+    let unprotected_bytes = corim::cbor::encode(&corim::cbor::value::Value::Map(
+        signed.unprotected().to_vec(),
+    ))
+    .map_err(|error| format!("encoding unprotected header for display: {error}"))?;
+    let (signature, signers) = match &signed {
+        SignedEnvelope::Sign1(envelope) => (envelope.signature.clone(), Vec::new()),
+        SignedEnvelope::Sign(envelope) => {
+            let signers = envelope
+                .signatures()
+                .iter()
+                .map(|signature| {
+                    Ok(SignatureInfo {
+                        protected: signature.protected().clone(),
+                        protected_bytes: signature.protected_header_bytes().to_vec(),
+                        unprotected_bytes: corim::cbor::encode(&corim::cbor::value::Value::Map(
+                            signature.unprotected.clone(),
+                        ))
+                        .map_err(|error| format!("encoding signer unprotected header: {error}"))?,
+                        signature: signature.signature.clone(),
+                    })
+                })
+                .collect::<Result<Vec<_>, String>>()?;
+            (Vec::new(), signers)
+        }
+        _ => return Err("unsupported signed-envelope type".into()),
+    };
 
     let info = SignedInfo {
+        tag: signed.tag(),
+        signers,
         alg: signed.protected().alg,
         content_type: signed.protected().content_type.clone(),
         has_cwt_claims: signed.protected().cwt_claims.is_some(),
@@ -340,11 +376,11 @@ fn signed_info(signed: corim::types::signed::CoseSign1Corim) -> Result<SignedInf
         has_kid: signed.protected().kid.is_some(),
         protected_header_bytes: signed.protected_header_bytes().to_vec(),
         protected: signed.protected().clone(),
-        unprotected_entries: signed.unprotected.len(),
+        unprotected_entries: signed.unprotected().len(),
         unprotected_bytes,
         is_detached: signed.is_detached(),
-        payload_bytes: signed.payload.clone().unwrap_or_default(),
-        signature: signed.signature.clone(),
+        payload_bytes: signed.payload().unwrap_or_default().to_vec(),
+        signature,
     };
 
     Ok(info)
@@ -363,7 +399,12 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     let sub = format!("{}  ", indent);
     let hex_indent = format!("{}  ", sub);
 
-    println!("{}═══ COSE_Sign1 (tag 18) ═══", indent);
+    let kind = if info.signers.is_empty() {
+        "COSE_Sign1"
+    } else {
+        "COSE_Sign"
+    };
+    println!("{}═══ {} (tag {}) ═══", indent, kind, info.tag);
 
     // [0] Protected header (bstr .cbor protected-corim-header-map)
     println!(
@@ -452,10 +493,37 @@ fn print_cose_sign1(info: &SignedInfo, indent: &str, show_raw: bool) {
     }
 
     // [3] Signature (bstr)
-    println!("{}[3] Signature  ({} bytes)", indent, info.signature.len());
-    if show_raw {
-        println!("{}Raw bytes:", sub);
-        display::print_hex_block(&info.signature, &hex_indent, 32);
+    if info.signers.is_empty() {
+        println!("{}[3] Signature  ({} bytes)", indent, info.signature.len());
+        if show_raw {
+            println!("{}Raw bytes:", sub);
+            display::print_hex_block(&info.signature, &hex_indent, 32);
+        }
+    } else {
+        println!("{}[3] Signatures ({} entries)", indent, info.signers.len());
+        for (index, signer) in info.signers.iter().enumerate() {
+            println!(
+                "{}Signer [{}]: algorithm {}, signature {} bytes",
+                sub,
+                index,
+                signer.protected.alg,
+                signer.signature.len()
+            );
+            if let Some(claims) = &signer.protected.cwt_claims {
+                println!("{}Issuer: {}", sub, claims.iss);
+            }
+            if let Some(meta) = &signer.protected.corim_meta {
+                println!("{}Signer name: {}", sub, meta.signer.signer_name);
+            }
+            if show_raw {
+                println!("{}Protected bytes:", sub);
+                display::print_hex_block(&signer.protected_bytes, &hex_indent, 32);
+                println!("{}Unprotected bytes:", sub);
+                display::print_hex_block(&signer.unprotected_bytes, &hex_indent, 32);
+                println!("{}Signature bytes:", sub);
+                display::print_hex_block(&signer.signature, &hex_indent, 32);
+            }
+        }
     }
     println!(
         "{}note: signature is NOT cryptographically verified — this tool checks \
@@ -582,13 +650,29 @@ fn print_json_output(
 }
 
 fn signed_json(info: &SignedInfo) -> Result<serde_json::Value, String> {
-    Ok(serde_json::json!({
-        "tag": corim::types::tags::TAG_SIGNED_CORIM,
+    let mut report = serde_json::json!({
+        "tag": info.tag,
         "protected": jsonfmt::protected_header_value(&info.protected, info.protected_header_bytes.len())
             .map_err(|error| error.to_string())?,
         "unprotected": { "entries": info.unprotected_entries, "size": info.unprotected_bytes.len() },
         "payload": { "detached": info.is_detached, "size": info.payload_bytes.len() },
         "signature": { "size": info.signature.len() },
         "signature_verified": false,
-    }))
+    });
+    if !info.signers.is_empty() {
+        report
+            .as_object_mut()
+            .ok_or("signed report must be an object")?
+            .remove("signature");
+        report["signatures"] = serde_json::Value::Array(info.signers.iter().map(|signer| {
+            Ok(serde_json::json!({
+                "protected": jsonfmt::protected_header_value(&signer.protected, signer.protected_bytes.len())
+                    .map_err(|error| error.to_string())?,
+                "unprotected": {"size": signer.unprotected_bytes.len()},
+                "signature": {"size": signer.signature.len()},
+                "signature_verified": false,
+            }))
+        }).collect::<Result<Vec<_>, String>>()?);
+    }
+    Ok(report)
 }

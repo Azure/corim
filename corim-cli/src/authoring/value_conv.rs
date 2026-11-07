@@ -80,6 +80,30 @@ pub(super) fn value_to_json(value: &Value) -> Result<Json, String> {
             Json::Object(map)
         }
         Value::Tag(tag, inner) => {
+            if matches!(*tag, TAG_NUMERIC_RANGE | TAG_MATCHER_SET) {
+                let kind = if corim::cbor::value::from_value::<corim::types::IntegerMatcher>(value)
+                    .is_ok()
+                {
+                    Some(if *tag == TAG_NUMERIC_RANGE {
+                        "integer-range"
+                    } else {
+                        "integer-set"
+                    })
+                } else if corim::cbor::value::from_value::<corim::types::FloatMatcher>(value)
+                    .is_ok()
+                {
+                    Some(if *tag == TAG_NUMERIC_RANGE {
+                        "float-range"
+                    } else {
+                        "float-set"
+                    })
+                } else {
+                    None
+                };
+                if let Some(kind) = kind {
+                    return Ok(choice(kind, value_to_json(inner)?));
+                }
+            }
             if *tag == TAG_UUID {
                 if let Value::Bytes(bytes) = inner.as_ref() {
                     if bytes.len() == 16 {
@@ -189,12 +213,29 @@ fn type_choice_to_value(name: &str, value: &Json) -> Result<Value, String> {
             .and_then(|s| hex::decode(s).ok())
             .map(Value::Bytes)
             .ok_or_else(invalid),
-        "number-range" => Ok(Value::Tag(
-            TAG_NUMBER_RANGE,
-            Box::new(json_to_value(value)?),
-        )),
-        "number-set" | "text-set" | "bytes-set" => {
+        "integer-range" | "float-range" | "integer-set" | "float-set" => {
+            let tag = if name.ends_with("-range") {
+                TAG_NUMERIC_RANGE
+            } else {
+                TAG_MATCHER_SET
+            };
+            let matcher = Value::Tag(tag, Box::new(json_to_value(value)?));
+            if name.starts_with("integer-") {
+                corim::cbor::value::from_value::<corim::types::IntegerMatcher>(&matcher)
+                    .map_err(|error| format!("{name}: {error}"))?;
+            } else {
+                corim::cbor::value::from_value::<corim::types::FloatMatcher>(&matcher)
+                    .map_err(|error| format!("{name}: {error}"))?;
+            }
+            Ok(matcher)
+        }
+        "text-set" | "bytes-set" => {
             Ok(Value::Tag(TAG_MATCHER_SET, Box::new(json_to_value(value)?)))
+        }
+        "int-range" => {
+            let range = Value::Tag(TAG_INT_RANGE, Box::new(json_to_value(value)?));
+            corim::cbor::value::from_value::<corim::types::IntRangeChoice>(&range)?;
+            Ok(range)
         }
         _ => {
             let tag = CHOICES

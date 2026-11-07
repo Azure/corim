@@ -1233,7 +1233,11 @@ impl ComparisonProjection {
         Self::optional(
             field,
             value.map(|value| {
-                Self::shape_value(field, value, matches!(field, "number" | "text" | "bytes"))
+                Self::shape_value(
+                    field,
+                    value,
+                    matches!(field, "integer" | "float" | "text" | "bytes"),
+                )
             }),
         )
     }
@@ -1401,7 +1405,8 @@ impl ComparisonProjection {
             opt_val(&values.r#bool)?,
             AttributeMeaning::Scalar,
         ));
-        fields.push(Self::shape("number", opt_val(&values.number)?));
+        fields.push(Self::shape("integer", opt_val(&values.integer)?));
+        fields.push(Self::shape("float", opt_val(&values.float)?));
         fields.push(Self::shape("text", opt_val(&values.text)?));
         fields.push(Self::shape("bytes", opt_val(&values.bytes)?));
         let extensions = values
@@ -2168,7 +2173,7 @@ mod projection_invariants {
     use super::*;
     use crate::types::common::{CryptoKey, MeasuredElement, TagIdChoice};
     use crate::types::environment::EnvironmentMap;
-    use crate::types::matcher::{Number, NumberMatcher, TextMatcher};
+    use crate::types::matcher::{FloatMatcher, TextMatcher};
     use crate::types::measurement::{FlagsMap, IntegrityRegisterId, IntegrityRegisters};
     use crate::types::triples::{
         CesCommonCondition, ConditionalEndorsementSeriesTriple, ConditionalEndorsementTriple,
@@ -2289,19 +2294,13 @@ mod projection_invariants {
     }
 
     fn flags(is_secure: Option<bool>) -> FlagsMap {
-        FlagsMap {
-            is_configured: None,
-            is_secure,
-            is_recovery: None,
-            is_debug: None,
-            is_replay_protected: None,
-            is_integrity_protected: None,
-            is_runtime_meas: None,
-            is_immutable: None,
-            is_tcb: None,
-            is_confidentiality_protected: None,
-            is_runtime_updatable: None,
+        let mut flags = FlagsMap::default();
+        if let Some(value) = is_secure {
+            flags
+                .insert(crate::types::Flag::IsSecure, Value::Bool(value))
+                .unwrap();
         }
+        flags
     }
 
     #[test]
@@ -2372,14 +2371,11 @@ mod projection_invariants {
         for bits in [
             0.0f64.to_bits(),
             (-0.0f64).to_bits(),
-            f64::NAN.to_bits(),
-            f64::NAN.to_bits() ^ 1,
+            f64::INFINITY.to_bits(),
+            f64::NEG_INFINITY.to_bits(),
         ] {
             let mut changed = original.clone();
-            changed.mval.number = Some(NumberMatcher::Set(alloc::vec![
-                Number::Float(f64::from_bits(bits)),
-                Number::Int(1)
-            ]));
+            changed.mval.float = Some(FloatMatcher::Set(alloc::vec![f64::from_bits(bits), 1.0]));
             measurements.push(changed);
         }
         let mut lists: Vec<_> = measurements

@@ -127,20 +127,23 @@ impl<'de> Deserialize<'de> for CborTime {
 /// `tag-identity-map` — identifies a CoMID tag.
 #[derive(Clone, Debug, PartialEq, CborSerialize, CborDeserialize)]
 pub struct TagIdentity {
-    /// `tag-id` (key 0): globally unique tag identifier.
+    /// `tag-id` (key 0): collision-resistant identifier, draft-12 §5.1.1.
     #[cbor(key = 0)]
     pub tag_id: TagIdChoice,
     /// `tag-version` (key 1): optional revision number.
     ///
-    /// Per CDDL `uint .default 0`, absent means version 0.
-    /// Use [`tag_version_or_default`](TagIdentity::tag_version_or_default)
-    /// to get the effective value.
+    /// Draft-12 §5.1.1 assigns no default: absence and explicit zero are
+    /// distinct. [`Self::tag_version_or_default`] is a legacy convenience,
+    /// not a protocol normalization rule.
     #[cbor(key = 1, optional)]
     pub tag_version: Option<u64>,
 }
 
 impl TagIdentity {
-    /// Returns the tag version, treating `None` as the CDDL default of 0.
+    /// Legacy caller convenience that substitutes zero for absence.
+    ///
+    /// Draft-12 §5.1.1 defines no default. Use [`Self::tag_version`] when
+    /// preserving or comparing protocol identity.
     pub fn tag_version_or_default(&self) -> u64 {
         self.tag_version.unwrap_or(0)
     }
