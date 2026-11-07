@@ -70,5 +70,19 @@ fn malformed_flag_maps_reject_explicitly() {
         let bytes = cbor::encode(&value).unwrap();
         assert!(cbor::decode_exact::<FlagsMap>(&bytes).is_err(), "{value:?}");
     }
+
     assert!(cbor::encode(&FlagsMap::default()).is_err());
+}
+
+#[test]
+fn readable_serialization_cannot_normalize_text_labels_into_integer_flags() {
+        let mut flags = FlagsMap::default();
+        flags.insert(Flag::Text("1".into()), Value::Bool(true)).unwrap();
+        let error = corim::cbor::value::to_human_readable_value(&flags).unwrap_err();
+        assert!(error.contains("--lossless"), "{error}");
+        let bytes = cbor::encode(&flags).unwrap();
+        assert_eq!(cbor::decode_exact::<FlagsMap>(&bytes).unwrap(), flags);
+        let mut known = FlagsMap::default();
+        known.insert(Flag::IsSecure, Value::Bool(true)).unwrap();
+        assert!(corim::cbor::value::to_human_readable_value(&known).is_ok());
 }
