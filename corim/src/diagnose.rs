@@ -74,6 +74,7 @@ use crate::types::tags::{
     TRIPLES_KEY_REFERENCE,
 };
 use crate::types::triples::{AttestKeyTriple, ReferenceTriple};
+use crate::Validate;
 
 use core::fmt;
 
@@ -359,13 +360,17 @@ The library accepts these on decode; encode always uses draft-11 tags.",
 /// Dispatch on the top-level (post-peel) [`Value`] of a CoRIM document.
 fn inspect_top_value(ins: &mut Inspector<'_>, top: Value) {
     match top {
-        Value::Tag(TAG_SIGNED_CORIM, inner) => {
+        Value::Tag(
+            tag @ (TAG_SIGNED_CORIM | crate::types::tags::TAG_MULTI_SIGNED_CORIM),
+            inner,
+        ) => {
             ins.report.envelope = EnvelopeKind::Signed;
-            ins.info(
-                "$",
-                format!("recognized CBOR tag {} (signed-corim)", TAG_SIGNED_CORIM),
-            );
-            inspect_cose_sign1(ins, *inner);
+            ins.info("$", format!("recognized CBOR tag {} (signed-corim)", tag));
+            if tag == TAG_SIGNED_CORIM {
+                inspect_cose_sign1(ins, *inner);
+            } else {
+                inspect_cose_sign(ins, *inner);
+            }
         }
         Value::Tag(TAG_CORIM, inner) => {
             ins.report.envelope = EnvelopeKind::Unsigned;
@@ -437,51 +442,110 @@ fn inspect_cose_sign1(ins: &mut Inspector<'_>, v: Value) {
 
     let mut it = arr.into_iter();
     if let Some(protected) = it.next() {
-        inspect_cose_protected(ins, protected);
+        inspect_cose_protected(ins, "$.protected", protected);
     }
     if let Some(unprotected) = it.next() {
-        inspect_cose_unprotected(ins, unprotected);
+        inspect_cose_unprotected(ins, "$.unprotected", unprotected);
     }
     if let Some(payload) = it.next() {
         inspect_cose_payload(ins, payload);
     }
     if let Some(signature) = it.next() {
-        inspect_cose_signature(ins, signature);
+        inspect_cose_signature(ins, "$.signature", signature);
     }
 }
 
-fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_sign(ins: &mut Inspector<'_>, value: Value) {
+    let Value::Array(parts) = value else {
+        ins.err("$", "COSE_Sign must be a four-element array");
+        return;
+    };
+    if parts.len() != 4 {
+        ins.err("$", "COSE_Sign requires four elements");
+    }
+    let mut parts = parts.into_iter();
+    let body_header = parts
+        .next()
+        .and_then(|header| inspect_cose_protected(ins, "$.protected", header));
+    if let Some(header) = parts.next() {
+        inspect_cose_unprotected(ins, "$.unprotected", header);
+    }
+    if let Some(payload) = parts.next() {
+        inspect_cose_payload(ins, payload);
+    }
+    match parts.next() {
+        Some(Value::Array(signatures)) if !signatures.is_empty() => {
+            for (index, signature) in signatures.into_iter().enumerate() {
+                let path = format!("$.signatures[{index}]");
+                let Value::Array(fields) = signature else {
+                    ins.err(&path, "signature entry must be an array");
+                    continue;
+                };
+                if fields.len() != 3 {
+                    ins.err(&path, "signature entry requires three elements");
+                }
+                let mut fields = fields.into_iter();
+                if let Some(header) = fields.next() {
+                    let body_hash = ins.hash_payload;
+                    let signer = inspect_cose_protected(ins, &format!("{path}.protected"), header);
+                    ins.hash_payload = body_hash;
+                    if let (Some(body), Some(signer)) = (&body_header, signer) {
+                        if let Err(error) = signer.check_against(body, index) {
+                            ins.err(&path, error);
+                        }
+                    }
+                }
+                if let Some(header) = fields.next() {
+                    inspect_cose_unprotected(ins, &format!("{path}.unprotected"), header);
+                }
+                if let Some(signature) = fields.next() {
+                    inspect_cose_signature(ins, &format!("{path}.signature"), signature);
+                }
+            }
+        }
+        _ => ins.err(
+            "$.signatures",
+            "COSE_Sign requires a non-empty signature array",
+        ),
+    }
+}
+
+fn inspect_cose_protected(
+    ins: &mut Inspector<'_>,
+    path: &str,
+    v: Value,
+) -> Option<crate::types::signed::multi::HeaderIdentity> {
     let bytes = match v {
         Value::Bytes(b) => b,
         other => {
             ins.err_hint(
-                "$.protected",
+                path,
                 format!(
                     "protected header must be a byte string (bstr .cbor protected-corim-header-map), found {}",
                     value_kind(&other)
                 ),
                 "RFC 9052 §4: protected MUST be `bstr .cbor header_map`",
             );
-            return;
+            return None;
         }
     };
 
     if bytes.is_empty() {
         ins.err(
-            "$.protected",
+            path,
             "protected header byte string is empty (must encode a non-empty CBOR map)",
         );
-        return;
+        return None;
     }
 
     let inner: Value = match ins.budget.decode_value_exact(&bytes) {
         Ok(v) => v,
         Err(e) => {
             ins.err(
-                "$.protected",
+                path,
                 format!("inner CBOR of protected header is not valid: {}", e),
             );
-            return;
+            return None;
         }
     };
 
@@ -492,21 +556,21 @@ fn inspect_cose_protected(ins: &mut Inspector<'_>, v: Value) {
             ))
         });
     }
-    inspect_protected_header_map(ins, inner);
+    inspect_protected_header_map(ins, path, inner)
 }
 
-fn inspect_cose_unprotected(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_unprotected(ins: &mut Inspector<'_>, path: &str, v: Value) {
     match v {
         Value::Map(_) => {
             // Unprotected header is `* cose-label => cose-value`. We don't
             // type-check individual entries.
             ins.info(
-                "$.unprotected",
+                path,
                 "unprotected header is a CBOR map (contents not inspected)",
             );
         }
         other => ins.err(
-            "$.unprotected",
+            path,
             format!(
                 "unprotected header must be a CBOR map, found {}",
                 value_kind(&other)
@@ -606,17 +670,17 @@ The library accepts this on decode; encoders always emit the tag.",
     }
 }
 
-fn inspect_cose_signature(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_cose_signature(ins: &mut Inspector<'_>, path: &str, v: Value) {
     match v {
         Value::Bytes(b) => {
             if b.is_empty() {
-                ins.err("$.signature", "signature byte string is empty");
+                ins.err(path, "signature byte string is empty");
             } else {
-                ins.info("$.signature", format!("signature is {} bytes", b.len()));
+                ins.info(path, format!("signature is {} bytes", b.len()));
             }
         }
         other => ins.err(
-            "$.signature",
+            path,
             format!(
                 "signature must be a byte string, found {}",
                 value_kind(&other)
@@ -629,18 +693,22 @@ fn inspect_cose_signature(ins: &mut Inspector<'_>, v: Value) {
 // protected-corim-header-map  (§4.2.1)
 // ===========================================================================
 
-fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
+fn inspect_protected_header_map(
+    ins: &mut Inspector<'_>,
+    base: &str,
+    v: Value,
+) -> Option<crate::types::signed::multi::HeaderIdentity> {
     let map = match v {
         Value::Map(m) => m,
         other => {
             ins.err(
-                "$.protected",
+                base,
                 format!(
                     "protected header inner CBOR must be a map, found {}",
                     value_kind(&other)
                 ),
             );
-            return;
+            return None;
         }
     };
 
@@ -650,6 +718,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
     let mut have_content_type = false;
     let mut have_payload_preimage_ct = false;
     let mut have_cwt_iss_flat = false;
+    let mut identity = crate::types::signed::multi::HeaderIdentity::default();
 
     for (k, val) in map {
         let key = match &k {
@@ -657,7 +726,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 Ok(k) => k,
                 Err(_) => {
                     ins.info(
-                        format!("$.protected[{n}]"),
+                        format!("{base}[{n}]"),
                         format!(
                             "integer label {n} is a valid COSE header label (value not inspected)"
                         ),
@@ -667,7 +736,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             },
             Value::Text(label) => {
                 ins.info(
-                    format!("$.protected[{label:?}]"),
+                    format!("{base}[{label:?}]"),
                     format!(
                         "text label {label:?} is a valid COSE header label (value not inspected)"
                     ),
@@ -676,7 +745,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             }
             other => {
                 ins.warn(
-                    "$.protected",
+                    base,
                     format!(
                         "invalid COSE header key ({}); RFC 9052 §1.5 requires int or tstr",
                         value_kind(other)
@@ -686,21 +755,35 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
             }
         };
 
-        let path = format!("$.protected.{}", key);
+        let path = format!("{base}.{}", key);
 
         match key {
-            COSE_HEADER_ALG => {
-                have_alg = true;
-                if !matches!(val, Value::Integer(_)) {
-                    ins.err(
+            COSE_HEADER_ALG => match &val {
+                Value::Integer(alg) => {
+                    have_alg = true;
+                    match i64::try_from(*alg) {
+                        Ok(alg) => identity.alg = Some(alg),
+                        Err(_) => {
+                            ins.err(path.clone(), "alg is outside the supported integer range")
+                        }
+                    }
+                }
+                Value::Text(issuer) => {
+                    have_cwt_iss_flat = true;
+                    identity.flat_issuer = Some(issuer.clone());
+                    ins.warn(
                         path,
-                        format!(
-                            "alg (key 1) must be int (COSE algorithm registry), found {}",
-                            value_kind(&val)
-                        ),
+                        "legacy CWT issuer is carried flat alongside alg at key 1",
                     );
                 }
-            }
+                _ => ins.err(
+                    path,
+                    format!(
+                        "alg (key 1) must be int or legacy flat issuer text, found {}",
+                        value_kind(&val)
+                    ),
+                ),
+            },
             COSE_HEADER_CONTENT_TYPE => match val {
                 Value::Text(t) => {
                     have_content_type = true;
@@ -759,13 +842,38 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 Value::Bytes(b) => {
                     have_corim_meta = true;
                     match ins.budget.decode_value_exact(&b) {
-                        Ok(Value::Map(_)) => ins.info(
-                            path,
-                            format!(
-                                "corim-meta (key 8) decoded as bstr .cbor map ({} bytes)",
-                                b.len()
-                            ),
-                        ),
+                        Ok(Value::Map(map)) => {
+                            identity.metadata_issuer = map.iter().find_map(|(key, value)| {
+                                if *key
+                                    != Value::Integer(i128::from(
+                                        crate::types::tags::META_KEY_SIGNER,
+                                    ))
+                                {
+                                    return None;
+                                }
+                                let Value::Map(signer) = value else {
+                                    return None;
+                                };
+                                signer.iter().find_map(|(key, value)| match value {
+                                    Value::Text(name)
+                                        if *key
+                                            == Value::Integer(i128::from(
+                                                crate::types::tags::SIGNER_KEY_NAME,
+                                            )) =>
+                                    {
+                                        Some(name.clone())
+                                    }
+                                    _ => None,
+                                })
+                            });
+                            ins.info(
+                                path,
+                                format!(
+                                    "corim-meta (key 8) decoded as bstr .cbor map ({} bytes)",
+                                    b.len()
+                                ),
+                            );
+                        }
                         Ok(other) => ins.err(
                             path,
                             format!(
@@ -795,8 +903,19 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 ),
             },
             COSE_HEADER_CWT_CLAIMS => match val {
-                Value::Map(_) => {
+                Value::Map(claims) => {
                     have_cwt_claims = true;
+                    identity.cwt_issuer = claims.iter().find_map(|(key, value)| match value {
+                        Value::Text(issuer)
+                            if *key
+                                == Value::Integer(i128::from(
+                                    crate::types::signed::CWT_CLAIM_ISS,
+                                )) =>
+                        {
+                            Some(issuer.clone())
+                        }
+                        _ => None,
+                    });
                     ins.info(path, "CWT-Claims (key 15) is a CBOR map");
                 }
                 _ => ins.err(
@@ -808,6 +927,7 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
                 ),
             },
             COSE_HEADER_PAYLOAD_HASH_ALG => {
+                identity.hash_payload = true;
                 if !matches!(val, Value::Integer(_)) {
                     ins.err(
                         path,
@@ -884,29 +1004,30 @@ fn inspect_protected_header_map(ins: &mut Inspector<'_>, v: Value) {
 
     // §4.2.1 structural rules.
     if !have_alg {
-        ins.err("$.protected", "missing required key 1 (alg)");
+        ins.err(base, "missing required key 1 (alg)");
     }
     let inline_mode = have_content_type;
     let hash_envelope_mode = have_payload_preimage_ct;
     if !inline_mode && !hash_envelope_mode {
         ins.err_hint(
-            "$.protected",
+            base,
             "missing both content-type (key 3, inline mode) and payload_preimage_content_type (key 259, hash-envelope mode)",
             "draft-ietf-rats-corim-11 §4.2.1 requires exactly one of these",
         );
     } else if inline_mode && hash_envelope_mode {
         ins.warn(
-            "$.protected",
+            base,
             "both content-type (key 3) and payload_preimage_content_type (key 259) are present; pick one mode",
         );
     }
     if !have_corim_meta && !have_cwt_claims && !have_cwt_iss_flat {
         ins.err_hint(
-            "$.protected",
+            base,
             "meta-group violation: at least one of corim-meta (key 8) or CWT-Claims (key 15) must be present",
             "draft-ietf-rats-corim-11 §4.2.1 meta-group: ((corim-meta-identity, ?cwt-claims-identity) // cwt-claims-identity)",
         );
     }
+    Some(identity)
 }
 
 // ===========================================================================
@@ -1471,8 +1592,28 @@ fn inspect_triples_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
                 }
             }
             TRIPLES_KEY_COND_ENDORSEMENT_SERIES | TRIPLES_KEY_COND_ENDORSEMENT => {
-                // Series shape is exotic; just type-check the outer array.
-                if !matches!(v, Value::Array(_)) {
+                if let Value::Array(records) = v {
+                    for (index, record) in records.into_iter().enumerate() {
+                        // Typed validation distinguishes condition matchers from
+                        // bare endorsement assertions (draft-12 §5.1.4.9).
+                        let result = if key == TRIPLES_KEY_COND_ENDORSEMENT_SERIES {
+                            cbor::from_parsed_value::<
+                                crate::types::ConditionalEndorsementSeriesTriple,
+                            >(record)
+                            .map_err(|error| error.to_string())
+                            .and_then(|triple| triple.valid())
+                        } else {
+                            cbor::from_parsed_value::<crate::types::ConditionalEndorsementTriple>(
+                                record,
+                            )
+                            .map_err(|error| error.to_string())
+                            .and_then(|triple| triple.valid())
+                        };
+                        if let Err(error) = result {
+                            ins.err(format!("{path}[{index}]"), error);
+                        }
+                    }
+                } else {
                     ins.err(
                         path,
                         format!(
@@ -1578,14 +1719,24 @@ fn inspect_env_measurements_triples(
                 } else {
                     for (j, m) in ms.into_iter().enumerate() {
                         let path = format!("{}[{}]", meas_path, j);
-                        let typed_measurement = if triple_key == TRIPLES_KEY_REFERENCE {
-                            cbor::value::from_value::<MeasurementMap>(&m).ok()
-                        } else {
-                            None
+                        let typed_measurement = match cbor::value::from_value::<MeasurementMap>(&m)
+                        {
+                            Ok(measurement) => {
+                                if let Err(error) = measurement.mval.valid_assertion() {
+                                    ins.err(&path, error);
+                                }
+                                Some(measurement)
+                            }
+                            Err(error) => {
+                                ins.err(&path, format!("measurement decoding failed: {error}"));
+                                None
+                            }
                         };
                         inspect_measurement_map(ins, &path, m);
-                        if let Some(measurement) = typed_measurement.as_ref() {
-                            inspect_profile_reference_measurement(ins, &path, measurement);
+                        if triple_key == TRIPLES_KEY_REFERENCE {
+                            if let Some(measurement) = typed_measurement.as_ref() {
+                                inspect_profile_reference_measurement(ins, &path, measurement);
+                            }
                         }
                     }
                 }
@@ -1948,8 +2099,10 @@ fn inspect_measurement_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
 // ===========================================================================
 
 fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: Value) {
-    use crate::types::matcher::{BytesMatcher, NumberMatcher, TextMatcher};
-    use crate::types::tags::{MVAL_KEY_BOOL, MVAL_KEY_BYTES, MVAL_KEY_NUMBER, MVAL_KEY_TEXT};
+    use crate::types::matcher::{BytesMatcher, FloatMatcher, IntegerMatcher, TextMatcher};
+    use crate::types::tags::{
+        MVAL_KEY_BOOL, MVAL_KEY_BYTES, MVAL_KEY_FLOAT, MVAL_KEY_INTEGER, MVAL_KEY_TEXT,
+    };
     let map = match v {
         Value::Map(m) => m,
         other => {
@@ -2130,22 +2283,25 @@ fn inspect_measurement_values_map(ins: &mut Inspector<'_>, base_path: &str, v: V
                 }
             }
             MVAL_KEY_INT_RANGE => {
-                if !matches!(v, Value::Array(_)) {
-                    ins.err(
-                        path,
-                        format!("int-range (key 15) must be array, found {}", value_kind(&v)),
-                    );
+                if let Err(error) =
+                    crate::cbor::from_parsed_value::<crate::types::IntRangeChoice>(v)
+                {
+                    ins.err(path, format!("int-range (key 15): {error}"));
                 }
             }
-            MVAL_KEY_BOOL | MVAL_KEY_NUMBER | MVAL_KEY_TEXT | MVAL_KEY_BYTES => {
+            MVAL_KEY_BOOL | MVAL_KEY_INTEGER | MVAL_KEY_FLOAT | MVAL_KEY_TEXT | MVAL_KEY_BYTES => {
                 let (name, result) = match key {
                     MVAL_KEY_BOOL => (
                         "bool",
                         crate::cbor::from_parsed_value::<bool>(v).map(|_| ()),
                     ),
-                    MVAL_KEY_NUMBER => (
-                        "number",
-                        crate::cbor::from_parsed_value::<NumberMatcher>(v).map(|_| ()),
+                    MVAL_KEY_INTEGER => (
+                        "integer",
+                        crate::cbor::from_parsed_value::<IntegerMatcher>(v).map(|_| ()),
+                    ),
+                    MVAL_KEY_FLOAT => (
+                        "float",
+                        crate::cbor::from_parsed_value::<FloatMatcher>(v).map(|_| ()),
                     ),
                     MVAL_KEY_TEXT => (
                         "text",

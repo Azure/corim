@@ -25,6 +25,9 @@ pub const TAG_EPOCH_TIME: u64 = 1;
 /// `signed-corim` = `#6.18(COSE-Sign1-corim)`.
 pub const TAG_SIGNED_CORIM: u64 = 18;
 
+/// `signed-corim` = `#6.98(COSE-Sign-corim)`, draft-ietf-rats-corim-12 §4.2.
+pub const TAG_MULTI_SIGNED_CORIM: u64 = 98;
+
 /// `uri` = `#6.32(tstr)` (RFC 8949 §3.4.5.3 and RFC 8610 Appendix D).
 pub const TAG_URI: u64 = 32;
 
@@ -111,9 +114,9 @@ pub const TAG_MASKED_RAW_VALUE: u64 = 563;
 /// `tagged-int-range` = `#6.564(int-range)`.
 pub const TAG_INT_RANGE: u64 = 564;
 
-/// Numeric range, editor's draft (2026-10-07) Section 5.1.4.9: `#6.565([min, max])`.
-pub const TAG_NUMBER_RANGE: u64 = 565;
-/// Numeric/text/byte set, editor's draft (2026-10-07) Section 5.1.4.9: `#6.566([2* value])`.
+/// Integer/float range, draft-ietf-rats-corim-12 §5.1.4.9: `#6.565([min, max])`.
+pub const TAG_NUMERIC_RANGE: u64 = 565;
+/// Integer/float/text/byte set, draft-ietf-rats-corim-12 §5.1.4.9: `#6.566([2* value])`.
 pub const TAG_MATCHER_SET: u64 = 566;
 
 // ===========================================================================
@@ -298,12 +301,14 @@ pub const MVAL_KEY_INTEGRITY_REGISTERS: i64 = 14;
 pub const MVAL_KEY_INT_RANGE: i64 = 15;
 /// `bool` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
 pub const MVAL_KEY_BOOL: i64 = 16;
-/// `number` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
-pub const MVAL_KEY_NUMBER: i64 = 17;
+/// `integer` measurement key, draft-ietf-rats-corim-12 §5.1.4.5.2.
+pub const MVAL_KEY_INTEGER: i64 = 17;
 /// `text` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
 pub const MVAL_KEY_TEXT: i64 = 18;
 /// `bytes` measurement key, editor's draft (2026-10-07) Section 5.1.4.5.2.
 pub const MVAL_KEY_BYTES: i64 = 19;
+/// `float` measurement key, draft-ietf-rats-corim-12 §5.1.4.5.2.
+pub const MVAL_KEY_FLOAT: i64 = 20;
 
 // ===========================================================================
 // Flags Map keys (§11.10 — "CoMID Flags Map" registry)

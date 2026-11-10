@@ -1,17 +1,18 @@
-//! Generic measurement matchers from the CoRIM editor's draft (2026-10-07)
-//! Sections 5.1.4.9 and 8.3.4.4.5.10-12.
+//! Generic measurement matchers, draft-ietf-rats-corim-12 §5.1.4.9
+//! and §8.3.4.4.5.11-12.
 //!
 //! ```text
 //! bool-matcher = bool
-//! number-matcher = number / #6.565([number / null, number / null]) / #6.566([2* number])
+//! integer-matcher = int / #6.565([int / null, int / null]) / #6.566([2* int])
+//! float-matcher = float / #6.565([float / null, float / null]) / #6.566([2* float])
 //! text-matcher = text / #6.566([2* text])
 //! bytes-matcher = bytes / #6.566([2* bytes])
 //! ```
 //!
 //! Sets and ranges express conditions, not observations. Set/range observations
-//! never match. Numeric comparisons are mathematical across integer/float types;
-//! NaN never matches, infinities compare normally, and range bounds cannot be NaN
-//! or reversed. Sets require at least two entries (duplicates are not removed).
+//! never match. Integer and float domains are distinct. NaN is invalid, exact/set
+//! infinities are allowed, and range bounds must be finite and ordered. At least
+//! one bound must be present. Sets require two entries; duplicates are allowed.
 //!
 //! Human-readable serialization uses `type`/`value` objects for sets/ranges,
 //! `integer` with a decimal string for integers outside i64, `float-bits` with
@@ -19,27 +20,25 @@
 //! for bare byte strings. Use `crate::json` to read these representations back.
 //!
 //! ```
-//! use corim::types::{MeasurementValuesMap, Number, NumberMatcher};
+//! use corim::types::{MeasurementValuesMap, IntegerMatcher};
 //! use corim::Validate;
 //!
 //! let mut values = MeasurementValuesMap::default();
 //! values.r#bool = Some(false);
-//! values.number = Some(NumberMatcher::Range {
-//!         min: Some(Number::Int(1)),
-//!         max: Some(Number::Float(3.5)),
+//! values.integer = Some(IntegerMatcher::Range {
+//!         min: Some(1),
+//!         max: Some(3),
 //!     });
 //! assert!(values.valid().is_ok());
-//! assert!(values.number.as_ref().unwrap().matches(
-//!     &NumberMatcher::Exact(Number::Float(2.5))
+//! assert!(values.integer.as_ref().unwrap().matches(
+//!     &IntegerMatcher::Exact(2)
 //! ));
 //! ```
 
-use super::numeric::compare_integer_float;
-use super::tags::{TAG_MATCHER_SET, TAG_NUMBER_RANGE};
+use super::tags::{TAG_MATCHER_SET, TAG_NUMERIC_RANGE};
 use crate::cbor::value::Value;
 use crate::nostd_prelude::*;
 use crate::Validate;
-use core::cmp::Ordering;
 use serde::{Deserialize, Serialize};
 
 /// Exact boolean matcher, editor's draft (2026-10-07) Section 5.1.4.9.
@@ -69,236 +68,163 @@ fn human_scalar(value: Value) -> Value {
     }
 }
 
-/// A CBOR integer or IEEE 754 number (Section 5.1.4.9). Integer identity is preserved.
-#[derive(Clone, Copy, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum Number {
-    /// CBOR integer, from -2^64 through 2^64-1 (RFC 8949 Section 3.1).
-    Int(i128),
-    /// Floating point, including infinities and NaN (RFC 8949 Section 3.3).
-    Float(f64),
+fn valid_integer(value: i128, _bound: bool) -> Result<(), String> {
+    if value < -1 - i128::from(u64::MAX) || value > i128::from(u64::MAX) {
+        return Err("integer is outside the CBOR range (RFC 8949 §3.1)".into());
+    }
+    Ok(())
 }
 
-impl Number {
-    fn compare(self, other: Self) -> Option<Ordering> {
-        match (self, other) {
-            (Self::Int(left), Self::Int(right)) => Some(left.cmp(&right)),
-            (Self::Float(left), Self::Float(right)) => left.partial_cmp(&right),
-            (Self::Int(integer), Self::Float(float)) => compare_integer_float(integer, float),
-            (Self::Float(float), Self::Int(integer)) => {
-                compare_integer_float(integer, float).map(Ordering::reverse)
-            }
-        }
+fn valid_float(value: f64, bound: bool) -> Result<(), String> {
+    if value.is_nan() || (bound && !value.is_finite()) {
+        return Err("float must not be NaN; range bounds must be finite".into());
     }
-
-    fn into_value(self) -> Value {
-        match self {
-            Self::Int(value) => Value::Integer(value),
-            Self::Float(value) => Value::Float(value),
-        }
-    }
-
-    fn from_value(value: Value) -> Result<Self, String> {
-        let number = match value {
-            Value::Integer(value) => Self::Int(value),
-            Value::Float(value) => Self::Float(value),
-            _ => return Err("expected integer or float".into()),
-        };
-        number.valid()?;
-        Ok(number)
-    }
+    Ok(())
 }
 
-impl Validate for Number {
-    fn valid(&self) -> Result<(), String> {
-        if let Self::Int(value) = self {
-            if *value < -1 - i128::from(u64::MAX) || *value > i128::from(u64::MAX) {
-                return Err("number integer is outside the CBOR range".into());
-            }
+macro_rules! numeric_matcher {
+    ($name:ident, $type:ty, $variant:ident, $validate:ident, $range:literal, $set:literal, $doc:literal $(, $eq:ident)?) => {
+        #[doc = $doc]
+        #[derive(Clone, Debug, PartialEq $(, $eq)?)]
+        #[non_exhaustive]
+        pub enum $name {
+            /// Bare assertion or exact condition, draft-12 §5.1.4.9.
+            Exact($type),
+            /// Inclusive condition; null is the only unbounded endpoint.
+            Range {
+                /// Inclusive lower bound.
+                min: Option<$type>,
+                /// Inclusive upper bound.
+                max: Option<$type>,
+            },
+            /// Condition with at least two alternatives (duplicates allowed).
+            Set(Vec<$type>),
         }
-        Ok(())
-    }
-}
 
-impl Serialize for Number {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.valid().map_err(serde::ser::Error::custom)?;
-        let value = self.into_value();
-        if serializer.is_human_readable() {
-            human_scalar(value)
-        } else {
-            value
-        }
-        .serialize(serializer)
-    }
-}
-impl<'de> Deserialize<'de> for Number {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        Self::from_value(Value::deserialize(deserializer)?).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Numeric condition or observation (Section 5.1.4.9). Only `Exact` is an observation.
-#[derive(Clone, Debug, PartialEq)]
-#[non_exhaustive]
-pub enum NumberMatcher {
-    /// Bare numeric value, compared by numeric equality.
-    Exact(Number),
-    /// Inclusive bounds; `None` is unbounded in that direction.
-    Range {
-        /// Lower bound.
-        min: Option<Number>,
-        /// Upper bound.
-        max: Option<Number>,
-    },
-    /// At least two numeric alternatives, encoded with tag 566.
-    Set(Vec<Number>),
-}
-
-impl NumberMatcher {
-    /// Whether an exact observation satisfies this condition (Section 8.3.4.4.5.10).
-    /// NaN never matches. Set/range observations and invalid conditions do not match.
-    pub fn matches(&self, observed: &Self) -> bool {
-        if self.valid().is_err() || observed.valid().is_err() {
-            return false;
-        }
-        let Self::Exact(value) = observed else {
-            return false;
-        };
-        if value.compare(*value).is_none() {
-            return false;
-        }
-        match self {
-            Self::Exact(expected) => expected.compare(*value) == Some(Ordering::Equal),
-            Self::Set(values) => values
-                .iter()
-                .any(|expected| expected.compare(*value) == Some(Ordering::Equal)),
-            Self::Range { min, max } => {
-                min.is_none_or(|min| {
-                    matches!(
-                        value.compare(min),
-                        Some(Ordering::Equal | Ordering::Greater)
-                    )
-                }) && max.is_none_or(|max| {
-                    matches!(value.compare(max), Some(Ordering::Equal | Ordering::Less))
-                })
-            }
-        }
-    }
-}
-
-impl Validate for NumberMatcher {
-    fn valid(&self) -> Result<(), String> {
-        match self {
-            Self::Exact(value) => value.valid(),
-            Self::Set(values) => {
-                if values.len() < 2 {
-                    return Err("number set requires at least two entries".into());
+        impl $name {
+            /// Whether an exact assertion satisfies this condition (draft-12 §8.3.4.4.5.11-12).
+            pub fn matches(&self, observed: &Self) -> bool {
+                if self.valid().is_err() || observed.valid().is_err() {
+                    return false;
                 }
-                for value in values {
-                    value.valid()?;
+                let Self::Exact(value) = observed else { return false; };
+                match self {
+                    Self::Exact(expected) => expected == value,
+                    Self::Set(values) => values.contains(value),
+                    Self::Range { min, max } =>
+                        min.is_none_or(|min| *value >= min)
+                            && max.is_none_or(|max| *value <= max),
                 }
-                Ok(())
             }
-            Self::Range { min, max } => {
-                for value in min.iter().chain(max.iter()) {
-                    value.valid()?;
-                    if value.compare(*value).is_none() {
-                        return Err("range bounds must not be NaN".into());
+        }
+
+        impl Validate for $name {
+            fn valid(&self) -> Result<(), String> {
+                match self {
+                    Self::Exact(value) => $validate(*value, false),
+                    Self::Set(values) => {
+                        if values.len() < 2 {
+                            return Err("matcher set requires at least two entries".into());
+                        }
+                        for value in values { $validate(*value, false)?; }
+                        Ok(())
+                    }
+                    Self::Range { min, max } => {
+                        if min.is_none() && max.is_none() {
+                            return Err("numeric range requires at least one bound".into());
+                        }
+                        for value in min.iter().chain(max.iter()) { $validate(*value, true)?; }
+                        if matches!((min, max), (Some(min), Some(max)) if min > max) {
+                            return Err("range minimum exceeds maximum".into());
+                        }
+                        Ok(())
                     }
                 }
-                if let (Some(min), Some(max)) = (min, max) {
-                    if min.compare(*max) == Some(Ordering::Greater) {
-                        return Err("range minimum exceeds maximum".into());
-                    }
-                }
-                Ok(())
             }
         }
-    }
+
+        impl Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                self.valid().map_err(serde::ser::Error::custom)?;
+                let human = serializer.is_human_readable();
+                let scalar = |value| {
+                    let value = Value::$variant(value);
+                    if human { human_scalar(value) } else { value }
+                };
+                let value = match self {
+                    Self::Exact(value) => scalar(*value),
+                    Self::Range { min, max } => {
+                        let bounds = Value::Array(vec![
+                            min.map_or(Value::Null, scalar),
+                            max.map_or(Value::Null, scalar),
+                        ]);
+                        if human { json_choice($range, bounds) }
+                        else { Value::Tag(TAG_NUMERIC_RANGE, Box::new(bounds)) }
+                    }
+                    Self::Set(values) => {
+                        let values = Value::Array(values.iter().copied().map(scalar).collect());
+                        if human { json_choice($set, values) }
+                        else { Value::Tag(TAG_MATCHER_SET, Box::new(values)) }
+                    }
+                };
+                value.serialize(serializer)
+            }
+        }
+
+        impl<'de> Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let scalar = |value| match value {
+                    Value::$variant(value) => Ok(value),
+                    _ => Err(serde::de::Error::custom("wrong numeric matcher primitive")),
+                };
+                let parsed = match Value::deserialize(deserializer)? {
+                    Value::$variant(value) => Self::Exact(value),
+                    Value::Tag(TAG_NUMERIC_RANGE, inner) => {
+                        let Value::Array(bounds) = *inner else {
+                            return Err(serde::de::Error::custom("numeric range must be an array"));
+                        };
+                        let [min, max]: [Value; 2] = bounds.try_into().map_err(|_|
+                            serde::de::Error::custom("numeric range requires two bounds"))?;
+                        let bound = |value| match value {
+                            Value::Null => Ok(None),
+                            value => scalar(value).map(Some),
+                        };
+                        Self::Range { min: bound(min)?, max: bound(max)? }
+                    }
+                    Value::Tag(TAG_MATCHER_SET, inner) => {
+                        let Value::Array(values) = *inner else {
+                            return Err(serde::de::Error::custom("numeric set must be an array"));
+                        };
+                        Self::Set(values.into_iter().map(scalar).collect::<Result<_, D::Error>>()?)
+                    }
+                    _ => return Err(serde::de::Error::custom("unexpected numeric matcher type or tag")),
+                };
+                parsed.valid().map_err(serde::de::Error::custom)?;
+                Ok(parsed)
+            }
+        }
+    };
 }
 
-impl Serialize for NumberMatcher {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        self.valid().map_err(serde::ser::Error::custom)?;
-        if serializer.is_human_readable() {
-            let value = match self {
-                Self::Exact(number) => human_scalar(number.into_value()),
-                Self::Range { min, max } => json_choice(
-                    "number-range",
-                    Value::Array(vec![
-                        min.map_or(Value::Null, |value| human_scalar(value.into_value())),
-                        max.map_or(Value::Null, |value| human_scalar(value.into_value())),
-                    ]),
-                ),
-                Self::Set(values) => json_choice(
-                    "number-set",
-                    Value::Array(
-                        values
-                            .iter()
-                            .map(|value| human_scalar(value.into_value()))
-                            .collect(),
-                    ),
-                ),
-            };
-            return value.serialize(serializer);
-        }
-        let value = match self {
-            Self::Exact(number) => number.into_value(),
-            Self::Range { min, max } => Value::Tag(
-                TAG_NUMBER_RANGE,
-                Box::new(Value::Array(vec![
-                    min.map_or(Value::Null, Number::into_value),
-                    max.map_or(Value::Null, Number::into_value),
-                ])),
-            ),
-            Self::Set(values) => Value::Tag(
-                TAG_MATCHER_SET,
-                Box::new(Value::Array(
-                    values.iter().map(|value| value.into_value()).collect(),
-                )),
-            ),
-        };
-        value.serialize(serializer)
-    }
-}
-impl<'de> Deserialize<'de> for NumberMatcher {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let parsed = match Value::deserialize(deserializer)? {
-            Value::Tag(TAG_NUMBER_RANGE, inner) => {
-                let Value::Array(bounds) = *inner else {
-                    return Err(serde::de::Error::custom("number range must be an array"));
-                };
-                let [min, max]: [Value; 2] = bounds
-                    .try_into()
-                    .map_err(|_| serde::de::Error::custom("number range requires two bounds"))?;
-                let bound = |value| match value {
-                    Value::Null => Ok(None),
-                    value => Number::from_value(value).map(Some),
-                };
-                Self::Range {
-                    min: bound(min).map_err(serde::de::Error::custom)?,
-                    max: bound(max).map_err(serde::de::Error::custom)?,
-                }
-            }
-            Value::Tag(TAG_MATCHER_SET, inner) => {
-                let Value::Array(values) = *inner else {
-                    return Err(serde::de::Error::custom("number set must be an array"));
-                };
-                Self::Set(
-                    values
-                        .into_iter()
-                        .map(Number::from_value)
-                        .collect::<Result<_, _>>()
-                        .map_err(serde::de::Error::custom)?,
-                )
-            }
-            value => Self::Exact(Number::from_value(value).map_err(serde::de::Error::custom)?),
-        };
-        parsed.valid().map_err(serde::de::Error::custom)?;
-        Ok(parsed)
-    }
-}
+numeric_matcher!(
+    IntegerMatcher,
+    i128,
+    Integer,
+    valid_integer,
+    "integer-range",
+    "integer-set",
+    "Integer condition or assertion, draft-ietf-rats-corim-12 §5.1.4.9 and §8.3.4.4.5.11.",
+    Eq
+);
+numeric_matcher!(
+    FloatMatcher,
+    f64,
+    Float,
+    valid_float,
+    "float-range",
+    "float-set",
+    "Float condition or assertion, draft-ietf-rats-corim-12 §5.1.4.9 and §8.3.4.4.5.12."
+);
 
 macro_rules! string_matcher {
     ($name:ident, $type:ty, $variant:ident, $json_set:literal, $doc:literal) => {

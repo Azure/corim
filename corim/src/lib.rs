@@ -4,7 +4,7 @@
 //! CoRIM (Concise Reference Integrity Manifest) — Rust library.
 //!
 //! This crate provides Rust types for the CoRIM/CoMID CDDL schema
-//! ([draft-ietf-rats-corim-11](https://www.ietf.org/archive/id/draft-ietf-rats-corim-11.html)),
+//! ([draft-ietf-rats-corim-12](https://www.ietf.org/archive/id/draft-ietf-rats-corim-12.html)),
 //! CBOR encoding/decoding (via a swappable backend), a builder API for
 //! constructing CoRIM and CoMID structures, and validation per the spec.
 //!
@@ -62,17 +62,18 @@
 //!   CDDL uses definite-length only.
 //! - **Float encoding is always float64** — half and single precision floats
 //!   are decoded correctly, but encoding always uses 8-byte float64. CoRIM
-//!   data rarely uses floats (only `cwt-claims` exp/nbf, which are `int`).
+//!   uses floats for CWT NumericDates and float matchers.
 //! - **No CBOR simple values** beyond `false`, `true`, `null` — other simple
 //!   values (0–19, 32–255) are rejected. Not used in CoRIM.
 //! - **No CBOR sequences** — only single top-level items. CoRIM always has
 //!   a single tagged wrapper.
-//! - **Maximum nesting depth** is limited by the call stack (~100+ levels).
-//!   CoRIM documents are typically 5–10 levels deep.
+//! - **Maximum nesting depth** defaults to 64 and is enforced alongside
+//!   byte, collection and aggregate-value budgets.
 //!
 //! # Compliance notes
 //!
-//! This crate implements CoRIM per draft-ietf-rats-corim-11.
+//! This crate implements CoRIM wire types and selected appraisal operations
+//! per draft-ietf-rats-corim-12, not the complete reference verifier.
 //!
 //! ## Tag coverage
 //!
@@ -84,14 +85,17 @@
 //! | **CoTL** (§6) | `#6.508` | ✅ Fully modeled — `ConciseTlTag`, `CotlBuilder`, validity checks |
 //! | **CoSWID** (RFC 9393) | `#6.505` | ✅ Structured — `ConciseSwidTag`, `SwidEntity`, `SwidLink`; payload/evidence opaque |
 //!
-//! ## Signed CoRIM (`#6.18`)
+//! ## Signed CoRIM (`#6.18` / `#6.98`)
 //!
 //! The crate supports **decoding, structural validation, and construction**
-//! of signed CoRIM documents (`COSE_Sign1-corim`) per §4.2. Cryptographic
+//! of signed CoRIM documents (`COSE_Sign1-corim` / `COSE_Sign-corim`) per §4.2. Cryptographic
 //! signature verification is intentionally **not** performed — the caller
 //! is responsible for verifying signatures using their preferred crypto
 //! library. The crate provides:
 //!
+//! - [`types::signed::SignedEnvelope`]: Common Sign1/Sign document dispatch
+//! - [`types::signed::MultiSignedCorimBuilder`]: Construct COSE_Sign with external signing
+//! - [`types::signed::CoseSignCorim::to_be_signed`]: Indexed signer TBS with original body/signer bytes
 //! - [`types::signed::decode_signed_corim`]: Parse `#6.18` COSE_Sign1 structures
 //! - [`types::signed::validate_signed_corim_payload`]: Validate attached payloads
 //! - [`types::signed::validate_signed_corim_payload_detached`]: Validate detached payloads

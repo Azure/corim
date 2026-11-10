@@ -11,7 +11,7 @@ use corim::builder::{ComidBuilder, CorimBuilder};
 use corim::types::common::{MeasuredElement, TagIdChoice};
 use corim::types::corim::{CorimId, CorimMap};
 use corim::types::environment::EnvironmentMap;
-use corim::types::matcher::{Number, NumberMatcher, TextMatcher};
+use corim::types::matcher::{FloatMatcher, TextMatcher};
 use corim::types::measurement::{
     Digest, IntegrityRegisterId, IntegrityRegisters, MeasurementMap, MeasurementValuesMap,
 };
@@ -23,10 +23,8 @@ fn measurement(marker: u8, reverse: bool) -> MeasurementMap {
         Digest::new(7, vec![marker]),
         Digest::new(7, vec![marker + 1]),
     ];
-    let mut texts = vec!["first".into(), "second".into(), "first".into()];
     if reverse {
         digests.reverse();
-        texts.reverse();
     }
     values.digests = Some(digests.clone());
     values.integrity_registers = Some(IntegrityRegisters(
@@ -36,7 +34,7 @@ fn measurement(marker: u8, reverse: bool) -> MeasurementMap {
         ]
         .into(),
     ));
-    values.text = Some(TextMatcher::Set(texts));
+    values.text = Some(TextMatcher::Exact("first".into()));
     MeasurementMap {
         mkey: Some(MeasuredElement::Text("same".into())),
         mval: values,
@@ -76,19 +74,16 @@ fn duplicate_typed_identities_reserve_nested_multiset_matches() {
 }
 
 #[test]
-fn floating_matcher_identity_uses_bits_including_nan_and_signed_zero() {
+fn floating_matcher_identity_preserves_infinities_and_signed_zero() {
     let with_number = |bits| {
         let mut entry = measurement(1, false);
-        entry.mval.number = Some(NumberMatcher::Set(vec![
-            Number::Float(f64::from_bits(bits)),
-            Number::Int(1),
-        ]));
+        entry.mval.float = Some(FloatMatcher::Exact(f64::from_bits(bits)));
         entry
     };
-    let nan = f64::NAN.to_bits();
-    for (first, second) in [(0.0f64.to_bits(), (-0.0f64).to_bits()), (nan, nan ^ 1)] {
-        // checked_comids normalizes NaNs through the CBOR engine. Compare
-        // identical decoded bit patterns, not their pre-encoding payloads.
+    for (first, second) in [
+        (0.0f64.to_bits(), (-0.0f64).to_bits()),
+        (f64::INFINITY.to_bits(), f64::NEG_INFINITY.to_bits()),
+    ] {
         let baseline = document(vec![with_number(first), with_number(second)]);
         let input = document(vec![with_number(second), with_number(first)]);
         let report = compare(&input, &baseline).unwrap();
@@ -154,7 +149,7 @@ fn extension_map_order_is_unordered_but_nested_arrays_remain_positional() {
 }
 
 #[test]
-fn decoded_flags_serialization_failures_remain_errors_on_either_side() {
+fn decoded_extension_flags_remain_comparable_on_either_side() {
     use corim::cbor::{self, value::Value};
     use corim::types::corim::ConciseTagChoice;
     use corim::types::tags::*;
@@ -191,9 +186,15 @@ fn decoded_flags_serialization_failures_remain_errors_on_either_side() {
     ));
     extension_only.tags[0] = ConciseTagChoice::Comid(cbor::encode(&comid).unwrap());
     for (input, baseline) in [(&extension_only, &valid), (&valid, &extension_only)] {
-        let error = compare(input, baseline).unwrap_err();
-        assert!(
-            matches!(error, corim::ValidationError::Invalid(ref detail) if detail.contains("non-empty constraint") && detail.contains("FlagsMap"))
-        );
+        let report = compare(input, baseline).unwrap();
+        assert!(!report.is_conformant());
+        assert!(report.structural_mismatches.iter().any(|mismatch| {
+            mismatch
+                .path
+                .contains(&corim::baseline::PathSegment::Field("flags"))
+        }));
     }
+    assert!(compare(&extension_only, &extension_only)
+        .unwrap()
+        .is_conformant());
 }

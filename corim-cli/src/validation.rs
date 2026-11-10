@@ -4,14 +4,14 @@ use corim::document::{
     self, CompatibilityNote, ProfileCoverage, TimeCheck, ValidationContext, ValidationCoverage,
 };
 use corim::profile::ProfileRegistry;
-use corim::types::signed::CoseSign1Corim;
+use corim::types::signed::SignedEnvelope;
 use corim::validate::ValidatedCorim;
 
 pub(crate) const PARTIAL_EXIT_CODE: i32 = 4;
 
 pub(crate) struct Document {
     pub payload: ValidatedCorim,
-    pub signed: Option<CoseSign1Corim>,
+    pub signed: Option<SignedEnvelope>,
     pub legacy_wrappers: bool,
     pub coverage: ValidationCoverage,
 }

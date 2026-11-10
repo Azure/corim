@@ -753,12 +753,13 @@ const MVAL: &[(i64, &str, Slot)] = &[
     (15, "int-range", one(Ctx::Leaf)),
     (corim::types::tags::MVAL_KEY_BOOL, "bool", one(Ctx::Leaf)),
     (
-        corim::types::tags::MVAL_KEY_NUMBER,
-        "number",
+        corim::types::tags::MVAL_KEY_INTEGER,
+        "integer",
         one(Ctx::Leaf),
     ),
     (corim::types::tags::MVAL_KEY_TEXT, "text", one(Ctx::Leaf)),
     (corim::types::tags::MVAL_KEY_BYTES, "bytes", one(Ctx::Leaf)),
+    (corim::types::tags::MVAL_KEY_FLOAT, "float", one(Ctx::Leaf)),
 ];
 
 const VERSION: &[(i64, &str, Slot)] = &[

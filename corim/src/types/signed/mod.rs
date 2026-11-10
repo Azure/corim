@@ -1,7 +1,7 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-//! Signed CoRIM (`#6.18(COSE-Sign1-corim)`) types per §4.2.
+//! Signed CoRIM (`COSE_Sign1` / `COSE_Sign`) types per draft-12 §4.2.
 //!
 //! Provides types for parsing and constructing signed CoRIM documents
 //! without requiring any cryptographic dependencies. The caller performs
@@ -10,7 +10,7 @@
 //! # Wire format
 //!
 //! ```text
-//! signed-corim = #6.18(COSE-Sign1-corim)
+//! signed-corim = #6.18(COSE-Sign1-corim) / #6.98(COSE-Sign-corim)
 //!
 //! COSE-Sign1-corim = [
 //!   protected: bstr .cbor protected-corim-header-map,
@@ -25,7 +25,7 @@
 //! - [`algorithm`] — [`CoseAlgorithm`] (RFC 9864)
 //! - [`x509`] — [`CoseX509`], [`CoseCertHash`], `kid`/`x5*` constants (RFC 9360)
 //! - [`cwt`] — [`CwtClaims`] + `CWT_CLAIM_*` constants (RFC 8392 / RFC 9597)
-//! - [`header`] — [`ProtectedCorimHeaderMap`] + builder + COSE header constants (§4.2.1)
+//! - [`header`] — [`ProtectedCorimHeaderMap`] + builder + COSE header constants (§4.2.2.1)
 //! - [`envelope`] — [`CoseSign1Corim`] + encode/decode/TBS helpers (§4.2)
 //! - [`builder`] — [`SignedCorimBuilder`] for assembling signed CoRIMs
 
@@ -64,6 +64,14 @@ pub use envelope::{
 
 pub mod builder;
 pub use builder::SignedCorimBuilder;
+
+pub mod multi;
+pub use multi::{
+    build_sig_structure, compare_signed_envelopes, decode_multi_signed_corim,
+    decode_multi_signed_corim_with_limits, decode_signed_envelope,
+    decode_signed_envelope_with_limits, encode_multi_signed_corim, CoseSignCorim, CoseSignature,
+    MultiSignedCorimBuilder, SignedEnvelope,
+};
 
 pub mod validation;
 pub use validation::{

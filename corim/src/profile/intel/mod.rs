@@ -190,6 +190,7 @@ impl Profile for IntelProfile {
     ///   check skipped)
     /// - all Intel keys `Pass` → `Some(core_fields_match(...))`
     /// - the reference has no Intel keys → `None` (defer to core)
+    /// - any unhandled condition extension alongside Intel keys → `Some(false)`
     ///
     /// If the reference references an Intel key whose entry is missing
     /// from evidence, the verdict is `Some(false)` — a verifier MUST
@@ -201,12 +202,21 @@ impl Profile for IntelProfile {
         evidence: &MeasurementMap,
         ctx: &MatchContext,
     ) -> Option<bool> {
+        if !reference
+            .mval
+            .extra_entries
+            .keys()
+            .any(|key| intel_mval_name(*key).is_some())
+        {
+            return None;
+        }
         let mut verdicts: Vec<eval::Verdict> = Vec::new();
         for (key, ref_val) in reference.mval.extra_entries.iter() {
             if intel_mval_name(*key).is_none() {
-                // Not an Intel-defined key; ignore (other profiles, or
-                // unknown extras, are not this profile's business).
-                continue;
+                if crate::validate::core_handles_mval_extension(reference, *key, ref_val) {
+                    continue;
+                }
+                return Some(false);
             }
             match evidence.mval.extra_entries.get(key) {
                 Some(ev_val) => verdicts.push(eval::evaluate_one_key(*key, ref_val, ev_val, ctx)),
