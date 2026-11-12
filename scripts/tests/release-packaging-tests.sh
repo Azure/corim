@@ -71,7 +71,7 @@ if grep -Eq 'continue-on-error:|if:.*always\(\)' "$workflow"; then
     echo 'release must not continue after failed verification or artifact upload' >&2
     exit 1
 fi
-grep -q 'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02' "$workflow"
+grep -q 'actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9' "$workflow"
 grep -q 'if-no-files-found: error' "$workflow"
 grep -q 'RUSTUP_TOOLCHAIN: 1.99.0' "$workflow"
 if grep -E 'run: cargo (test|clippy|build|package)' "$workflow" | grep -v -- '--locked'; then
